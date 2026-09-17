@@ -76,6 +76,8 @@ def argv_constraints(
         constraints.extend(sx.bool_not(_is(symbol, 0)) for symbol in symbols[:length])
         if length < len(symbols):
             constraints.append(_is(symbols[length], 0))
+    if 0 in prefix or 0 in suffix:
+        constraints.append(sx.FALSE)  # an argument never contains a NUL byte
     constraints.extend(_is(symbols[position], byte) for position, byte in enumerate(prefix))
     if suffix:
         # The string ends at `end`: a NUL there (or the terminator after the reserved
