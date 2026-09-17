@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
-from pathlib import Path
 
 from ppy_rev.diagnostics import ExportFormatError
 
@@ -19,12 +18,6 @@ type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValu
 def parse(data: bytes | str) -> JsonValue:
     document: JsonValue = json.loads(data)
     return document
-
-
-def dump(value: JsonValue, path: Path) -> None:
-    with path.open("w", encoding="utf-8") as stream:
-        json.dump(value, stream, indent=2, sort_keys=True)
-        stream.write("\n")
 
 
 class JsonObject:
@@ -42,9 +35,6 @@ class JsonObject:
         if key not in self._items:
             raise ExportFormatError(f"{self.path}: missing field {key!r}")
         return self._items[key]
-
-    def has(self, key: str) -> bool:
-        return key in self._items
 
     def string(self, key: str) -> str:
         value = self._get(key)
@@ -105,9 +95,6 @@ class JsonArray:
 
     def __len__(self) -> int:
         return len(self._items)
-
-    def raw(self, index: int) -> JsonValue:
-        return self._items[index]
 
     def objects(self) -> Iterator[JsonObject]:
         for index, item in enumerate(self._items):

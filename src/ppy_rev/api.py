@@ -9,6 +9,7 @@ from ppy_rev.elf import read_elf_header
 from ppy_rev.ghidra.frontend import export_binary
 from ppy_rev.ghidra.schema import GhidraExport
 from ppy_rev.info import ProgramInfo, program_info
+from ppy_rev.lift.lifter import LiftResult, lift_export
 
 
 class Analyzer:
@@ -21,3 +22,7 @@ class Analyzer:
 
     def info(self, binary: Path) -> ProgramInfo:
         return program_info(self.export(binary), read_elf_header(binary))
+
+    def lift(self, binary: Path) -> LiftResult:
+        """Lift every function Ghidra recovered into RevIR."""
+        return lift_export(self.export(binary))

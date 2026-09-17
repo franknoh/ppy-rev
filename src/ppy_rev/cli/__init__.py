@@ -6,14 +6,16 @@ import argparse
 import sys
 import traceback
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
 from ppy_rev._version import __version__
 from ppy_rev.api import Analyzer
 from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
-from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.diagnostics import PpyRevError, Severity
 from ppy_rev.info import ProgramInfo
+from ppy_rev.ir.text import format_module
 
 EXIT_ERROR = 1
 EXIT_INTERNAL = 70
@@ -39,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     info.add_argument("binary", type=Path)
     info.set_defaults(handler=_info)
+
+    lift = subcommands.add_parser("lift", parents=[common], help="lift a binary into RevIR")
+    lift.add_argument("binary", type=Path)
+    lift.add_argument("--emit-ir", action="store_true", help="print the RevIR text form")
+    lift.add_argument("-o", "--output", type=Path, help="write output here instead of stdout")
+    lift.add_argument("--function", action="append", help="limit output to these functions")
+    lift.set_defaults(handler=_lift)
     return parser
 
 
@@ -87,6 +96,31 @@ def _analyzer(arguments: argparse.Namespace) -> Analyzer:
 def _info(arguments: argparse.Namespace, out: TextIO) -> int:
     binary: Path = arguments.binary
     render_info(_analyzer(arguments).info(binary), out)
+    return 0
+
+
+def _lift(arguments: argparse.Namespace, out: TextIO) -> int:
+    binary: Path = arguments.binary
+    output: Path | None = arguments.output
+    selected: list[str] | None = arguments.function
+    result = _analyzer(arguments).lift(binary)
+    module = result.module
+    if selected:
+        missing = sorted(set(selected) - {function.name for function in module.functions})
+        if missing:
+            raise PpyRevError(f"no lifted function named {', '.join(missing)}")
+        module = replace(
+            module,
+            functions=tuple(f for f in module.functions if f.name in set(selected)),
+        )
+    for diagnostic in result.diagnostics:
+        if _verbosity(arguments) > 0 or diagnostic.severity == Severity.ERROR:
+            sys.stderr.write(diagnostic.render() + "\n")
+    text = format_module(module)
+    if output is None:
+        out.write(text)
+    else:
+        output.write_text(text, encoding="utf-8")
     return 0
 
 

@@ -1,0 +1,5719 @@
+{
+ "schema_version": 1,
+ "producer": {
+  "ghidra_version": "12.1.3",
+  "decompiled": true
+ },
+ "binary": {
+  "name": "xor_check_gcc_O0",
+  "format": "Executable and Linking Format (ELF)",
+  "sha256": "26f8bcbcf814d64cad79683f664903899b7cd54568075bd627d581a7c358ef65",
+  "language": "x86:LE:64:default",
+  "processor": "x86",
+  "endianness": "little",
+  "pointer_size": 8,
+  "compiler_spec": "gcc",
+  "image_base": "0x100000",
+  "program_counter": "RIP",
+  "stack_pointer": "RSP",
+  "entry_points": [
+   "0x101000",
+   "0x101080",
+   "0x101120",
+   "0x101160",
+   "0x1011de",
+   "0x101250",
+   "0x102000",
+   "0x104000",
+   "0x104008",
+   "0x104010",
+   "0x104018"
+  ]
+ },
+ "address_spaces": [
+  {
+   "name": "const",
+   "kind": "constant",
+   "size": 8,
+   "word_size": 1
+  },
+  {
+   "name": "ram",
+   "kind": "ram",
+   "size": 8,
+   "word_size": 1
+  },
+  {
+   "name": "register",
+   "kind": "register",
+   "size": 4,
+   "word_size": 1
+  },
+  {
+   "name": "unique",
+   "kind": "unique",
+   "size": 4,
+   "word_size": 1
+  }
+ ],
+ "registers": [
+  {
+   "name": "RAX",
+   "offset": "0x0",
+   "size": 8,
+   "base": "RAX"
+  },
+  {
+   "name": "EAX",
+   "offset": "0x0",
+   "size": 4,
+   "base": "RAX"
+  },
+  {
+   "name": "AX",
+   "offset": "0x0",
+   "size": 2,
+   "base": "RAX"
+  },
+  {
+   "name": "AL",
+   "offset": "0x0",
+   "size": 1,
+   "base": "RAX"
+  },
+  {
+   "name": "AH",
+   "offset": "0x1",
+   "size": 1,
+   "base": "RAX"
+  },
+  {
+   "name": "RCX",
+   "offset": "0x8",
+   "size": 8,
+   "base": "RCX"
+  },
+  {
+   "name": "ECX",
+   "offset": "0x8",
+   "size": 4,
+   "base": "RCX"
+  },
+  {
+   "name": "CX",
+   "offset": "0x8",
+   "size": 2,
+   "base": "RCX"
+  },
+  {
+   "name": "CL",
+   "offset": "0x8",
+   "size": 1,
+   "base": "RCX"
+  },
+  {
+   "name": "CH",
+   "offset": "0x9",
+   "size": 1,
+   "base": "RCX"
+  },
+  {
+   "name": "RDX",
+   "offset": "0x10",
+   "size": 8,
+   "base": "RDX"
+  },
+  {
+   "name": "EDX",
+   "offset": "0x10",
+   "size": 4,
+   "base": "RDX"
+  },
+  {
+   "name": "DX",
+   "offset": "0x10",
+   "size": 2,
+   "base": "RDX"
+  },
+  {
+   "name": "DL",
+   "offset": "0x10",
+   "size": 1,
+   "base": "RDX"
+  },
+  {
+   "name": "DH",
+   "offset": "0x11",
+   "size": 1,
+   "base": "RDX"
+  },
+  {
+   "name": "RSP",
+   "offset": "0x20",
+   "size": 8,
+   "base": "RSP"
+  },
+  {
+   "name": "ESP",
+   "offset": "0x20",
+   "size": 4,
+   "base": "RSP"
+  },
+  {
+   "name": "SP",
+   "offset": "0x20",
+   "size": 2,
+   "base": "RSP"
+  },
+  {
+   "name": "SPL",
+   "offset": "0x20",
+   "size": 1,
+   "base": "RSP"
+  },
+  {
+   "name": "RBP",
+   "offset": "0x28",
+   "size": 8,
+   "base": "RBP"
+  },
+  {
+   "name": "EBP",
+   "offset": "0x28",
+   "size": 4,
+   "base": "RBP"
+  },
+  {
+   "name": "BP",
+   "offset": "0x28",
+   "size": 2,
+   "base": "RBP"
+  },
+  {
+   "name": "BPL",
+   "offset": "0x28",
+   "size": 1,
+   "base": "RBP"
+  },
+  {
+   "name": "RSI",
+   "offset": "0x30",
+   "size": 8,
+   "base": "RSI"
+  },
+  {
+   "name": "ESI",
+   "offset": "0x30",
+   "size": 4,
+   "base": "RSI"
+  },
+  {
+   "name": "SI",
+   "offset": "0x30",
+   "size": 2,
+   "base": "RSI"
+  },
+  {
+   "name": "SIL",
+   "offset": "0x30",
+   "size": 1,
+   "base": "RSI"
+  },
+  {
+   "name": "RDI",
+   "offset": "0x38",
+   "size": 8,
+   "base": "RDI"
+  },
+  {
+   "name": "EDI",
+   "offset": "0x38",
+   "size": 4,
+   "base": "RDI"
+  },
+  {
+   "name": "DI",
+   "offset": "0x38",
+   "size": 2,
+   "base": "RDI"
+  },
+  {
+   "name": "DIL",
+   "offset": "0x38",
+   "size": 1,
+   "base": "RDI"
+  },
+  {
+   "name": "CF",
+   "offset": "0x200",
+   "size": 1,
+   "base": "CF"
+  },
+  {
+   "name": "PF",
+   "offset": "0x202",
+   "size": 1,
+   "base": "PF"
+  },
+  {
+   "name": "ZF",
+   "offset": "0x206",
+   "size": 1,
+   "base": "ZF"
+  },
+  {
+   "name": "SF",
+   "offset": "0x207",
+   "size": 1,
+   "base": "SF"
+  },
+  {
+   "name": "OF",
+   "offset": "0x20b",
+   "size": 1,
+   "base": "OF"
+  },
+  {
+   "name": "RIP",
+   "offset": "0x288",
+   "size": 8,
+   "base": "RIP"
+  },
+  {
+   "name": "EIP",
+   "offset": "0x288",
+   "size": 4,
+   "base": "RIP"
+  },
+  {
+   "name": "IP",
+   "offset": "0x288",
+   "size": 2,
+   "base": "RIP"
+  }
+ ],
+ "user_ops": [],
+ "memory_blocks": [
+  {
+   "name": ".rodata",
+   "space": "ram",
+   "start": "0x102000",
+   "size": 60,
+   "read": true,
+   "write": false,
+   "execute": false,
+   "initialized": true,
+   "loaded": true,
+   "external": false,
+   "artificial": false,
+   "bytes": "AQACAAAAAAAwJzQdKzEdJyMxO3VzYWdlOiB4b3JfY2hlY2sgPGlucHV0PgBDb3JyZWN0IQBXcm9uZyEA"
+  }
+ ],
+ "symbols": [],
+ "strings": [
+  {
+   "address": "0x10202c",
+   "length": 9,
+   "value": "Correct!",
+   "charset": "US-ASCII",
+   "bytes": "436f72726563742100",
+   "references": [
+    {
+     "from": "0x101224",
+     "type": "DATA"
+    },
+    {
+     "from": "0x10122b",
+     "type": "PARAM"
+    }
+   ]
+  },
+  {
+   "address": "0x102035",
+   "length": 7,
+   "value": "Wrong!",
+   "charset": "US-ASCII",
+   "bytes": "57726f6e672100",
+   "references": [
+    {
+     "from": "0x10123a",
+     "type": "DATA"
+    },
+    {
+     "from": "0x101241",
+     "type": "PARAM"
+    }
+   ]
+  }
+ ],
+ "external_functions": [
+  {
+   "name": "puts",
+   "external_address": "0x2",
+   "library": "<EXTERNAL>",
+   "original_name": null,
+   "no_return": false,
+   "signature": "int puts(char * __s)"
+  },
+  {
+   "name": "strlen",
+   "external_address": "0x3",
+   "library": "<EXTERNAL>",
+   "original_name": null,
+   "no_return": false,
+   "signature": "size_t strlen(char * __s)"
+  }
+ ],
+ "functions": [
+  {
+   "name": "puts",
+   "entry": "0x101060",
+   "no_return": false,
+   "calling_convention": "unknown",
+   "signature": "int puts(char * __s)",
+   "signature_source": "IMPORTED",
+   "varargs": false,
+   "thunk_target": {
+    "name": "puts",
+    "external": true,
+    "address": "0x2"
+   },
+   "parameters": [
+    {
+     "name": "__s",
+     "ordinal": 0,
+     "type": "char *",
+     "size": 8,
+     "storage": [
+      [
+       "register",
+       "0x38",
+       8
+      ]
+     ]
+    }
+   ],
+   "return": {
+    "type": "int",
+    "size": 4,
+    "storage": [
+     [
+      "register",
+      "0x0",
+      4
+     ]
+    ]
+   },
+   "body": [
+    [
+     "0x101060",
+     "0x101069"
+    ]
+   ],
+   "blocks": [],
+   "high": null
+  },
+  {
+   "name": "strlen",
+   "entry": "0x101070",
+   "no_return": false,
+   "calling_convention": "unknown",
+   "signature": "size_t strlen(char * __s)",
+   "signature_source": "IMPORTED",
+   "varargs": false,
+   "thunk_target": {
+    "name": "strlen",
+    "external": true,
+    "address": "0x3"
+   },
+   "parameters": [
+    {
+     "name": "__s",
+     "ordinal": 0,
+     "type": "char *",
+     "size": 8,
+     "storage": [
+      [
+       "register",
+       "0x38",
+       8
+      ]
+     ]
+    }
+   ],
+   "return": {
+    "type": "size_t",
+    "size": 8,
+    "storage": [
+     [
+      "register",
+      "0x0",
+      8
+     ]
+    ]
+   },
+   "body": [
+    [
+     "0x101070",
+     "0x101079"
+    ]
+   ],
+   "blocks": [],
+   "high": null
+  },
+  {
+   "name": "check",
+   "entry": "0x101169",
+   "no_return": false,
+   "calling_convention": "unknown",
+   "signature": "undefined check()",
+   "signature_source": "DEFAULT",
+   "varargs": false,
+   "thunk_target": null,
+   "parameters": [],
+   "return": {
+    "type": "undefined",
+    "size": 1,
+    "storage": []
+   },
+   "body": [
+    [
+     "0x101169",
+     "0x1011dd"
+    ]
+   ],
+   "blocks": [],
+   "high": null
+  },
+  {
+   "name": "main",
+   "entry": "0x1011de",
+   "no_return": false,
+   "calling_convention": "unknown",
+   "signature": "undefined main()",
+   "signature_source": "DEFAULT",
+   "varargs": false,
+   "thunk_target": null,
+   "parameters": [],
+   "return": {
+    "type": "undefined",
+    "size": 1,
+    "storage": []
+   },
+   "body": [
+    [
+     "0x1011de",
+     "0x10124f"
+    ]
+   ],
+   "blocks": [],
+   "high": null
+  }
+ ],
+ "instructions": [
+  {
+   "address": "0x101169",
+   "length": 4,
+   "bytes": "f30f1efa",
+   "mnemonic": "ENDBR64",
+   "text": "ENDBR64",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10116d",
+   "flows": [],
+   "references": [],
+   "pcode": []
+  },
+  {
+   "address": "0x10116d",
+   "length": 1,
+   "bytes": "55",
+   "mnemonic": "PUSH",
+   "text": "PUSH RBP",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10116e",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x4f900",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "unique",
+       "0x4f900",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    }
+   ]
+  },
+  {
+   "address": "0x10116e",
+   "length": 3,
+   "bytes": "4889e5",
+   "mnemonic": "MOV",
+   "text": "MOV RBP,RSP",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101171",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x28",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101171",
+   "length": 4,
+   "bytes": "4883ec20",
+   "mnemonic": "SUB",
+   "text": "SUB RSP,0x20",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101175",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "INT_LESS",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SBORROW",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101175",
+   "length": 4,
+   "bytes": "48897de8",
+   "mnemonic": "MOV",
+   "text": "MOV qword ptr [RBP + -0x18],RDI",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101179",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xffffffffffffffe0",
+     "type": "WRITE",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xffffffffffffffe8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x38",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ],
+      [
+       "unique",
+       "0xd500",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    }
+   ]
+  },
+  {
+   "address": "0x101179",
+   "length": 4,
+   "bytes": "488b45e8",
+   "mnemonic": "MOV",
+   "text": "MOV RAX,qword ptr [RBP + -0x18]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10117d",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xffffffffffffffe0",
+     "type": "READ",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xffffffffffffffe8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10117d",
+   "length": 3,
+   "bytes": "4889c7",
+   "mnemonic": "MOV",
+   "text": "MOV RDI,RAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101180",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x38",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101180",
+   "length": 5,
+   "bytes": "e8ebfeffff",
+   "mnemonic": "CALL",
+   "text": "CALL 0x00101070",
+   "flow": "UNCONDITIONAL_CALL",
+   "fallthrough": "0x101185",
+   "flows": [
+    "0x101070"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x101070",
+     "type": "UNCONDITIONAL_CALL",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x101185",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "CALL",
+     "inputs": [
+      [
+       "ram",
+       "0x101070",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101185",
+   "length": 4,
+   "bytes": "4883f80b",
+   "mnemonic": "CMP",
+   "text": "CMP RAX,0xb",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101189",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x78e00",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_LESS",
+     "inputs": [
+      [
+       "unique",
+       "0x78e00",
+       8
+      ],
+      [
+       "const",
+       "0xb",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SBORROW",
+     "inputs": [
+      [
+       "unique",
+       "0x78e00",
+       8
+      ],
+      [
+       "const",
+       "0xb",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "unique",
+       "0x78e00",
+       8
+      ],
+      [
+       "const",
+       "0xb",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x79000",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "unique",
+       "0x79000",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x79000",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x79000",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101189",
+   "length": 2,
+   "bytes": "7407",
+   "mnemonic": "JZ",
+   "text": "JZ 0x00101192",
+   "flow": "CONDITIONAL_JUMP",
+   "fallthrough": "0x10118b",
+   "flows": [
+    "0x101192"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x101192",
+     "type": "CONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "CBRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x101192",
+       8
+      ],
+      [
+       "register",
+       "0x206",
+       1
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x10118b",
+   "length": 5,
+   "bytes": "b800000000",
+   "mnemonic": "MOV",
+   "text": "MOV EAX,0x0",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101190",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101190",
+   "length": 2,
+   "bytes": "eb4a",
+   "mnemonic": "JMP",
+   "text": "JMP 0x001011dc",
+   "flow": "UNCONDITIONAL_JUMP",
+   "fallthrough": null,
+   "flows": [
+    "0x1011dc"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x1011dc",
+     "type": "UNCONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "BRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x1011dc",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101192",
+   "length": 8,
+   "bytes": "48c745f800000000",
+   "mnemonic": "MOV",
+   "text": "MOV qword ptr [RBP + -0x8],0x0",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10119a",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff0",
+     "type": "WRITE",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ],
+      [
+       "unique",
+       "0xd500",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    }
+   ]
+  },
+  {
+   "address": "0x10119a",
+   "length": 2,
+   "bytes": "eb34",
+   "mnemonic": "JMP",
+   "text": "JMP 0x001011d0",
+   "flow": "UNCONDITIONAL_JUMP",
+   "fallthrough": null,
+   "flows": [
+    "0x1011d0"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x1011d0",
+     "type": "UNCONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "BRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x1011d0",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x10119c",
+   "length": 4,
+   "bytes": "488b55e8",
+   "mnemonic": "MOV",
+   "text": "MOV RDX,qword ptr [RBP + -0x18]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011a0",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xffffffffffffffe0",
+     "type": "READ",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xffffffffffffffe8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x10",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011a0",
+   "length": 4,
+   "bytes": "488b45f8",
+   "mnemonic": "MOV",
+   "text": "MOV RAX,qword ptr [RBP + -0x8]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011a4",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff0",
+     "type": "READ",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011a4",
+   "length": 3,
+   "bytes": "4801d0",
+   "mnemonic": "ADD",
+   "text": "ADD RAX,RDX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011a7",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "INT_CARRY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "register",
+       "0x10",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SCARRY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "register",
+       "0x10",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "register",
+       "0x10",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011a7",
+   "length": 3,
+   "bytes": "0fb600",
+   "mnemonic": "MOVZX",
+   "text": "MOVZX EAX,byte ptr [RAX]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011aa",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23b00",
+      1
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ZEXT",
+     "inputs": [
+      [
+       "unique",
+       "0x23b00",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_ZEXT",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011aa",
+   "length": 3,
+   "bytes": "83f042",
+   "mnemonic": "XOR",
+   "text": "XOR EAX,0x42",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011ad",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_XOR",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ],
+      [
+       "const",
+       "0x42",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_ZEXT",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ],
+      [
+       "const",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ],
+      [
+       "const",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ],
+      [
+       "const",
+       "0xff",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      4
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011ad",
+   "length": 2,
+   "bytes": "89c2",
+   "mnemonic": "MOV",
+   "text": "MOV EDX,EAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011af",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x10",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_ZEXT",
+     "inputs": [
+      [
+       "register",
+       "0x10",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x10",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011af",
+   "length": 7,
+   "bytes": "488d0d520e0000",
+   "mnemonic": "LEA",
+   "text": "LEA RCX,[0x102008]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011b6",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x102008",
+     "type": "DATA",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x102008",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x8",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011b6",
+   "length": 4,
+   "bytes": "488b45f8",
+   "mnemonic": "MOV",
+   "text": "MOV RAX,qword ptr [RBP + -0x8]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011ba",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff0",
+     "type": "READ",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011ba",
+   "length": 3,
+   "bytes": "4801c8",
+   "mnemonic": "ADD",
+   "text": "ADD RAX,RCX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011bd",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "INT_CARRY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "register",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SCARRY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "register",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "register",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011bd",
+   "length": 3,
+   "bytes": "0fb600",
+   "mnemonic": "MOVZX",
+   "text": "MOVZX EAX,byte ptr [RAX]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011c0",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x102008",
+     "type": "DATA",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23b00",
+      1
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ZEXT",
+     "inputs": [
+      [
+       "unique",
+       "0x23b00",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_ZEXT",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011c0",
+   "length": 2,
+   "bytes": "38c2",
+   "mnemonic": "CMP",
+   "text": "CMP DL,AL",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011c2",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x10",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x79100",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_LESS",
+     "inputs": [
+      [
+       "unique",
+       "0x79100",
+       1
+      ],
+      [
+       "register",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SBORROW",
+     "inputs": [
+      [
+       "unique",
+       "0x79100",
+       1
+      ],
+      [
+       "register",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "unique",
+       "0x79100",
+       1
+      ],
+      [
+       "register",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x79300",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "unique",
+       "0x79300",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x79300",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x79300",
+       1
+      ],
+      [
+       "const",
+       "0xff",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      1
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011c2",
+   "length": 2,
+   "bytes": "7407",
+   "mnemonic": "JZ",
+   "text": "JZ 0x001011cb",
+   "flow": "CONDITIONAL_JUMP",
+   "fallthrough": "0x1011c4",
+   "flows": [
+    "0x1011cb"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x1011cb",
+     "type": "CONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "CBRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x1011cb",
+       8
+      ],
+      [
+       "register",
+       "0x206",
+       1
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x1011c4",
+   "length": 5,
+   "bytes": "b800000000",
+   "mnemonic": "MOV",
+   "text": "MOV EAX,0x0",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011c9",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011c9",
+   "length": 2,
+   "bytes": "eb11",
+   "mnemonic": "JMP",
+   "text": "JMP 0x001011dc",
+   "flow": "UNCONDITIONAL_JUMP",
+   "fallthrough": null,
+   "flows": [
+    "0x1011dc"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x1011dc",
+     "type": "UNCONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "BRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x1011dc",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x1011cb",
+   "length": 5,
+   "bytes": "488345f801",
+   "mnemonic": "ADD",
+   "text": "ADD qword ptr [RBP + -0x8],0x1",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011d0",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff0",
+     "type": "READ_WRITE",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_CARRY",
+     "inputs": [
+      [
+       "unique",
+       "0xd500",
+       8
+      ],
+      [
+       "const",
+       "0x1",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_SCARRY",
+     "inputs": [
+      [
+       "unique",
+       "0xd500",
+       8
+      ],
+      [
+       "const",
+       "0x1",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "unique",
+       "0xd500",
+       8
+      ],
+      [
+       "const",
+       "0x1",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ],
+      [
+       "unique",
+       "0xd500",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "unique",
+       "0xd500",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0xd500",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0xd500",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011d0",
+   "length": 5,
+   "bytes": "48837df80a",
+   "mnemonic": "CMP",
+   "text": "CMP qword ptr [RBP + -0x8],0xa",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011d5",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff0",
+     "type": "READ",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff8",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x78e00",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_LESS",
+     "inputs": [
+      [
+       "unique",
+       "0x78e00",
+       8
+      ],
+      [
+       "const",
+       "0xa",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SBORROW",
+     "inputs": [
+      [
+       "unique",
+       "0x78e00",
+       8
+      ],
+      [
+       "const",
+       "0xa",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "unique",
+       "0x78e00",
+       8
+      ],
+      [
+       "const",
+       "0xa",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x79000",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "unique",
+       "0x79000",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x79000",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x79000",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011d5",
+   "length": 2,
+   "bytes": "76c5",
+   "mnemonic": "JBE",
+   "text": "JBE 0x0010119c",
+   "flow": "CONDITIONAL_JUMP",
+   "fallthrough": "0x1011d7",
+   "flows": [
+    "0x10119c"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10119c",
+     "type": "CONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "BOOL_OR",
+     "inputs": [
+      [
+       "register",
+       "0x200",
+       1
+      ],
+      [
+       "register",
+       "0x206",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x25100",
+      1
+     ]
+    },
+    {
+     "opcode": "CBRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x10119c",
+       8
+      ],
+      [
+       "unique",
+       "0x25100",
+       1
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x1011d7",
+   "length": 5,
+   "bytes": "b801000000",
+   "mnemonic": "MOV",
+   "text": "MOV EAX,0x1",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011dc",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x1",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011dc",
+   "length": 1,
+   "bytes": "c9",
+   "mnemonic": "LEAVE",
+   "text": "LEAVE",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011dd",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x28",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011dd",
+   "length": 1,
+   "bytes": "c3",
+   "mnemonic": "RET",
+   "text": "RET",
+   "flow": "TERMINATOR",
+   "fallthrough": null,
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x288",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "RETURN",
+     "inputs": [
+      [
+       "register",
+       "0x288",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x1011de",
+   "length": 4,
+   "bytes": "f30f1efa",
+   "mnemonic": "ENDBR64",
+   "text": "ENDBR64",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011e2",
+   "flows": [],
+   "references": [],
+   "pcode": []
+  },
+  {
+   "address": "0x1011e2",
+   "length": 1,
+   "bytes": "55",
+   "mnemonic": "PUSH",
+   "text": "PUSH RBP",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011e3",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x4f900",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "unique",
+       "0x4f900",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    }
+   ]
+  },
+  {
+   "address": "0x1011e3",
+   "length": 3,
+   "bytes": "4889e5",
+   "mnemonic": "MOV",
+   "text": "MOV RBP,RSP",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011e6",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x28",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011e6",
+   "length": 4,
+   "bytes": "4883ec10",
+   "mnemonic": "SUB",
+   "text": "SUB RSP,0x10",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011ea",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "INT_LESS",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x10",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SBORROW",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x10",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x10",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011ea",
+   "length": 3,
+   "bytes": "897dfc",
+   "mnemonic": "MOV",
+   "text": "MOV dword ptr [RBP + -0x4],EDI",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011ed",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff4",
+     "type": "WRITE",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffffc",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x38",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd400",
+      4
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ],
+      [
+       "unique",
+       "0xd400",
+       4
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    }
+   ]
+  },
+  {
+   "address": "0x1011ed",
+   "length": 4,
+   "bytes": "488975f0",
+   "mnemonic": "MOV",
+   "text": "MOV qword ptr [RBP + -0x10],RSI",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011f1",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xffffffffffffffe8",
+     "type": "WRITE",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x30",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd500",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ],
+      [
+       "unique",
+       "0xd500",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    }
+   ]
+  },
+  {
+   "address": "0x1011f1",
+   "length": 4,
+   "bytes": "837dfc02",
+   "mnemonic": "CMP",
+   "text": "CMP dword ptr [RBP + -0x4],0x2",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011f5",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xfffffffffffffff4",
+     "type": "READ",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffffc",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23d00",
+      4
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23d00",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x78b00",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_LESS",
+     "inputs": [
+      [
+       "unique",
+       "0x78b00",
+       4
+      ],
+      [
+       "const",
+       "0x2",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SBORROW",
+     "inputs": [
+      [
+       "unique",
+       "0x78b00",
+       4
+      ],
+      [
+       "const",
+       "0x2",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "unique",
+       "0x78b00",
+       4
+      ],
+      [
+       "const",
+       "0x2",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x78d00",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "unique",
+       "0x78d00",
+       4
+      ],
+      [
+       "const",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x78d00",
+       4
+      ],
+      [
+       "const",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x78d00",
+       4
+      ],
+      [
+       "const",
+       "0xff",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      4
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011f5",
+   "length": 2,
+   "bytes": "7416",
+   "mnemonic": "JZ",
+   "text": "JZ 0x0010120d",
+   "flow": "CONDITIONAL_JUMP",
+   "fallthrough": "0x1011f7",
+   "flows": [
+    "0x10120d"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10120d",
+     "type": "CONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "CBRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x10120d",
+       8
+      ],
+      [
+       "register",
+       "0x206",
+       1
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x1011f7",
+   "length": 7,
+   "bytes": "488d05150e0000",
+   "mnemonic": "LEA",
+   "text": "LEA RAX,[0x102013]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x1011fe",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x102013",
+     "type": "DATA",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x102013",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x1011fe",
+   "length": 3,
+   "bytes": "4889c7",
+   "mnemonic": "MOV",
+   "text": "MOV RDI,RAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101201",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x102013",
+     "type": "PARAM",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x38",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101201",
+   "length": 5,
+   "bytes": "e85afeffff",
+   "mnemonic": "CALL",
+   "text": "CALL 0x00101060",
+   "flow": "UNCONDITIONAL_CALL",
+   "fallthrough": "0x101206",
+   "flows": [
+    "0x101060"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x101060",
+     "type": "UNCONDITIONAL_CALL",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x101206",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "CALL",
+     "inputs": [
+      [
+       "ram",
+       "0x101060",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101206",
+   "length": 5,
+   "bytes": "b802000000",
+   "mnemonic": "MOV",
+   "text": "MOV EAX,0x2",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10120b",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x2",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10120b",
+   "length": 2,
+   "bytes": "eb41",
+   "mnemonic": "JMP",
+   "text": "JMP 0x0010124e",
+   "flow": "UNCONDITIONAL_JUMP",
+   "fallthrough": null,
+   "flows": [
+    "0x10124e"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10124e",
+     "type": "UNCONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "BRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x10124e",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x10120d",
+   "length": 4,
+   "bytes": "488b45f0",
+   "mnemonic": "MOV",
+   "text": "MOV RAX,qword ptr [RBP + -0x10]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101211",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "stack",
+     "to": "0xffffffffffffffe8",
+     "type": "READ",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ],
+      [
+       "const",
+       "0xfffffffffffffff0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x8f00",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "unique",
+       "0x8f00",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101211",
+   "length": 4,
+   "bytes": "4883c008",
+   "mnemonic": "ADD",
+   "text": "ADD RAX,0x8",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101215",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "INT_CARRY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_SCARRY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ],
+      [
+       "const",
+       "0xff",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      8
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101215",
+   "length": 3,
+   "bytes": "488b00",
+   "mnemonic": "MOV",
+   "text": "MOV RAX,qword ptr [RAX]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101218",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       4
+      ],
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x23e00",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "unique",
+       "0x23e00",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101218",
+   "length": 3,
+   "bytes": "4889c7",
+   "mnemonic": "MOV",
+   "text": "MOV RDI,RAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10121b",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x38",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10121b",
+   "length": 5,
+   "bytes": "e849ffffff",
+   "mnemonic": "CALL",
+   "text": "CALL 0x00101169",
+   "flow": "UNCONDITIONAL_CALL",
+   "fallthrough": "0x101220",
+   "flows": [
+    "0x101169"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x101169",
+     "type": "UNCONDITIONAL_CALL",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x101220",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "CALL",
+     "inputs": [
+      [
+       "ram",
+       "0x101169",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101220",
+   "length": 2,
+   "bytes": "85c0",
+   "mnemonic": "TEST",
+   "text": "TEST EAX,EAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101222",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x200",
+      1
+     ]
+    },
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20b",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       4
+      ],
+      [
+       "register",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0xd3300",
+      4
+     ]
+    },
+    {
+     "opcode": "INT_SLESS",
+     "inputs": [
+      [
+       "unique",
+       "0xd3300",
+       4
+      ],
+      [
+       "const",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x207",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0xd3300",
+       4
+      ],
+      [
+       "const",
+       "0x0",
+       4
+      ]
+     ],
+     "output": [
+      "register",
+      "0x206",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0xd3300",
+       4
+      ],
+      [
+       "const",
+       "0xff",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58300",
+      4
+     ]
+    },
+    {
+     "opcode": "POPCOUNT",
+     "inputs": [
+      [
+       "unique",
+       "0x58300",
+       4
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58400",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_AND",
+     "inputs": [
+      [
+       "unique",
+       "0x58400",
+       1
+      ],
+      [
+       "const",
+       "0x1",
+       1
+      ]
+     ],
+     "output": [
+      "unique",
+      "0x58500",
+      1
+     ]
+    },
+    {
+     "opcode": "INT_EQUAL",
+     "inputs": [
+      [
+       "unique",
+       "0x58500",
+       1
+      ],
+      [
+       "const",
+       "0x0",
+       1
+      ]
+     ],
+     "output": [
+      "register",
+      "0x202",
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101222",
+   "length": 2,
+   "bytes": "7416",
+   "mnemonic": "JZ",
+   "text": "JZ 0x0010123a",
+   "flow": "CONDITIONAL_JUMP",
+   "fallthrough": "0x101224",
+   "flows": [
+    "0x10123a"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10123a",
+     "type": "CONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "CBRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x10123a",
+       8
+      ],
+      [
+       "register",
+       "0x206",
+       1
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101224",
+   "length": 7,
+   "bytes": "488d05010e0000",
+   "mnemonic": "LEA",
+   "text": "LEA RAX,[0x10202c]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10122b",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10202c",
+     "type": "DATA",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x10202c",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10122b",
+   "length": 3,
+   "bytes": "4889c7",
+   "mnemonic": "MOV",
+   "text": "MOV RDI,RAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10122e",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10202c",
+     "type": "PARAM",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x38",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10122e",
+   "length": 5,
+   "bytes": "e82dfeffff",
+   "mnemonic": "CALL",
+   "text": "CALL 0x00101060",
+   "flow": "UNCONDITIONAL_CALL",
+   "fallthrough": "0x101233",
+   "flows": [
+    "0x101060"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x101060",
+     "type": "UNCONDITIONAL_CALL",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x101233",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "CALL",
+     "inputs": [
+      [
+       "ram",
+       "0x101060",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101233",
+   "length": 5,
+   "bytes": "b800000000",
+   "mnemonic": "MOV",
+   "text": "MOV EAX,0x0",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101238",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101238",
+   "length": 2,
+   "bytes": "eb14",
+   "mnemonic": "JMP",
+   "text": "JMP 0x0010124e",
+   "flow": "UNCONDITIONAL_JUMP",
+   "fallthrough": null,
+   "flows": [
+    "0x10124e"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x10124e",
+     "type": "UNCONDITIONAL_JUMP",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "BRANCH",
+     "inputs": [
+      [
+       "ram",
+       "0x10124e",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x10123a",
+   "length": 7,
+   "bytes": "488d05f40d0000",
+   "mnemonic": "LEA",
+   "text": "LEA RAX,[0x102035]",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101241",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x102035",
+     "type": "DATA",
+     "operand": 1
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x102035",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101241",
+   "length": 3,
+   "bytes": "4889c7",
+   "mnemonic": "MOV",
+   "text": "MOV RDI,RAX",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x101244",
+   "flows": [],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x102035",
+     "type": "PARAM",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x0",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x38",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x101244",
+   "length": 5,
+   "bytes": "e817feffff",
+   "mnemonic": "CALL",
+   "text": "CALL 0x00101060",
+   "flow": "UNCONDITIONAL_CALL",
+   "fallthrough": "0x101249",
+   "flows": [
+    "0x101060"
+   ],
+   "references": [
+    {
+     "to_space": "ram",
+     "to": "0x101060",
+     "type": "UNCONDITIONAL_CALL",
+     "operand": 0
+    }
+   ],
+   "pcode": [
+    {
+     "opcode": "INT_SUB",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "STORE",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x101249",
+       8
+      ]
+     ],
+     "output": null,
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "CALL",
+     "inputs": [
+      [
+       "ram",
+       "0x101060",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  },
+  {
+   "address": "0x101249",
+   "length": 5,
+   "bytes": "b801000000",
+   "mnemonic": "MOV",
+   "text": "MOV EAX,0x1",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10124e",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "const",
+       "0x1",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x0",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10124e",
+   "length": 1,
+   "bytes": "c9",
+   "mnemonic": "LEAVE",
+   "text": "LEAVE",
+   "flow": "FALL_THROUGH",
+   "fallthrough": "0x10124f",
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "COPY",
+     "inputs": [
+      [
+       "register",
+       "0x28",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x28",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "address": "0x10124f",
+   "length": 1,
+   "bytes": "c3",
+   "mnemonic": "RET",
+   "text": "RET",
+   "flow": "TERMINATOR",
+   "fallthrough": null,
+   "flows": [],
+   "references": [],
+   "pcode": [
+    {
+     "opcode": "LOAD",
+     "inputs": [
+      [
+       "const",
+       "0x1b1",
+       8
+      ],
+      [
+       "register",
+       "0x20",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x288",
+      8
+     ],
+     "memory_space": "ram"
+    },
+    {
+     "opcode": "INT_ADD",
+     "inputs": [
+      [
+       "register",
+       "0x20",
+       8
+      ],
+      [
+       "const",
+       "0x8",
+       8
+      ]
+     ],
+     "output": [
+      "register",
+      "0x20",
+      8
+     ]
+    },
+    {
+     "opcode": "RETURN",
+     "inputs": [
+      [
+       "register",
+       "0x288",
+       8
+      ]
+     ],
+     "output": null
+    }
+   ]
+  }
+ ]
+}
