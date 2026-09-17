@@ -363,12 +363,33 @@ def _solutions(
     all_symbols = symbols.all()
     has_stdin = any(item.kind is InputKind.STDIN for item in inputs)
 
+    def shortest(state: State, extra: list[Expr]) -> list[Expr]:
+        """A bound making each argv string as short as this path allows."""
+        bounds: list[Expr] = []
+        for _, content in sorted(symbols.argv.items()):
+            low, high = 0, len(content) - 1
+            while low < high:
+                middle = (low + high) // 2
+                ends = sx.equal(content[middle], sx.const(0, 8))
+                if executor.solve_with(state, [], [*extra, *bounds, ends]) is None:
+                    low = middle + 1
+                else:
+                    high = middle
+            bounds.append(sx.equal(content[low], sx.const(0, 8)))
+        return bounds
+
     def extract(state: State, extra: list[Expr]) -> bool:
         """Add solutions from `state` under `extra`; report whether any model existed."""
+        if executor.solve_with(state, [], extra) is None:
+            return False
         blocking: list[Expr] = []
+        bounds = shortest(state, extra)
         found = False
         while len(solutions) < request.solutions:
-            model = executor.solve_with(state, all_symbols, [*blocking, *extra])
+            model = executor.solve_with(state, all_symbols, [*blocking, *extra, *bounds])
+            if model is None and bounds:
+                bounds = []  # other solutions may need longer strings
+                continue
             if model is None:
                 break
             found = True

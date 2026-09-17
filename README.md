@@ -83,7 +83,7 @@ C functions crackmes typically use (`strlen`, `strcmp`, `memcmp`, `read`, `fgets
 `exit`, ...), checked against glibc by differential tests. Where a model approximates,
 the result says so, and an approximation that could hide paths turns `unsat` into
 `analysis incomplete`. Every solution is re-run on the concrete RevIR interpreter before
-it is reported.
+it is reported, and the shortest argv string is preferred.
 
 Discovery can be overridden: `--argv INDEX` or `--stdin LENGTH`, `--goal-address` or
 `--goal-string`, `--avoid-address`/`--avoid-string`. Constraints are never assumed

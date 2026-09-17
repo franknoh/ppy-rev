@@ -35,6 +35,8 @@ SUCCESS = {
     "dispatch_check": b"Access granted",
 }
 STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
+SHORTEST = {"xor_check": b"rev_is_easy", "atoi_check": b"12345", "recursive_check": b"recursive"}
+"""Solutions that are unique once the shortest input is preferred."""
 VARIANTS = [(compiler, level) for compiler in ("gcc", "clang") for level in ("O0", "O2")]
 
 
@@ -73,6 +75,8 @@ def test_solution_is_accepted_by_the_binary(
     expected_input = "stdin" if name in STDIN_FIXTURES else "argv[1]"
     assert f"Input:\n  {expected_input}\n" in text
     assert SUCCESS[name] in _native_output(binary, name, output.read_bytes())
+    if name in SHORTEST:
+        assert output.read_bytes() == SHORTEST[name]
 
 
 def test_explicit_goal_string_and_constraints(
