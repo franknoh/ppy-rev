@@ -96,8 +96,12 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
             f"  seconds: {statistics.seconds:.2f}\n"
         )
     out.write(f"\nSolver:\n  backend: {result.backend}\n  result: {result.status}\n")
+    hints = [note for note in result.notes if note.startswith("the program mentions")]
     if result.status is not SolveStatus.SAT or verbose:
         for note in result.notes:
+            out.write(f"  note: {note}\n")
+    else:
+        for note in hints:
             out.write(f"  note: {note}\n")
     for index, solution in enumerate(result.solutions):
         heading = "Solution" if len(result.solutions) == 1 else f"Solution {index + 1}"

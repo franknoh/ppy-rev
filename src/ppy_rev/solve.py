@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from ppy_rev.abi import calling_convention
+from ppy_rev.analysis.flags import flag_prefixes
 from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import find_main, reachable_functions, string_references
@@ -275,7 +276,11 @@ def solve_module(
             peak_states=statistics.peak_states,
             path_constraints=0 if reached is None else len(reached.constraints),
         ),
-        notes=tuple(dict.fromkeys(notes + _unsat_notes(status, inputs))),
+        notes=tuple(
+            dict.fromkeys(
+                notes + _unsat_notes(status, inputs) + _flag_format_note(module, request, solutions)
+            )
+        ),
         smt2=smt2,
     )
 
@@ -784,6 +789,24 @@ def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
         for constraint in state.constraints
         if constraint.kind is not ConstraintKind.INPUT
     )
+
+
+def _flag_format_note(
+    module: Module, request: SolveRequest, solutions: list[Solution]
+) -> list[str]:
+    """Point at `--flag-format` when the program mentions a flag the answer does not match."""
+    if not solutions or request.prefix or request.suffix:
+        return []
+    prefixes = flag_prefixes(module)
+    if not prefixes:
+        return []
+    answers = [solution.argv or solution.stdin or b"" for solution in solutions]
+    if any(
+        answer.startswith(prefix.encode("latin-1")) for answer in answers for prefix in prefixes
+    ):
+        return []
+    shape = f"{prefixes[0]}*}}"
+    return [f"the program mentions {prefixes[0]!r}: try --flag-format {shape!r} for the flag"]
 
 
 def _incomplete_notes(exploration: Exploration) -> list[str]:

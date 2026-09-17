@@ -146,7 +146,10 @@ Discovery can be overridden: `--argv INDEX` or `--stdin LENGTH`, `--goal-address
 given: `--length`, `--max-length` (default 64 for argv; stdin defaults to 256 bytes),
 `--prefix`, `--suffix`, `--charset {printable,ascii,alnum,alpha,digits,hex}`. For stdin,
 length, prefix, and suffix describe the first line. `--flag-format 'CTF{*}'` is shorthand
-for `--prefix 'CTF{' --suffix '}'`. Printable solutions are preferred but not required. `--solutions N` asks for distinct inputs, `--output FILE`
+for `--prefix 'CTF{' --suffix '}'`; when the program mentions a flag shape of its own and
+the answer does not match it, `solve` says so. Printable solutions are preferred but not
+required, and the shortest answer wins: the shortest argv string, the first line ending as
+early as the program allows. `--solutions N` asks for distinct inputs, `--output FILE`
 writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's constraints as
 SMT-LIB, and `-v`/`-vv` show evidence, statistics, and path constraints. Limits:
 `--timeout` (seconds), `--max-states`, `--max-steps`, `--max-call-depth`,
