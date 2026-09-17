@@ -1,0 +1,98 @@
+[project]
+name = "ppy-rev"
+dynamic = ["version"]
+description = "Ghidra-based lifting, symbolic execution, and automated solving for ELF reversing challenges"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "franknoh" }]
+keywords = ["reverse-engineering", "ghidra", "symbolic-execution", "smt", "ppy"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Disassemblers",
+    "Typing :: Typed",
+]
+dependencies = [
+    "ppy-lang==0.3.5",
+    "z3-solver>=4.15",
+]
+
+[project.urls]
+Repository = "https://github.com/franknoh/ppy-rev"
+
+[project.scripts]
+ppy-rev = "ppy_rev.cli:main"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.100",
+    "pyright>=1.1.400",
+    "pytest>=8.3",
+    "ruff>=0.12",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/ppy_rev/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppy_rev"]
+
+[tool.pyright]
+include = ["src", "tests", "scripts"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+stubPath = "typings"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "B",
+    "BLE",
+    "C4",
+    "E",
+    "F",
+    "I",
+    "N",
+    "PIE",
+    "PTH",
+    "RET",
+    "RUF",
+    "S",
+    "SIM",
+    "T20",
+    "TID",
+    "UP",
+    "W",
+]
+ignore = [
+    # Every subprocess call in this project passes an argument vector; the rule
+    # cannot tell those apart from shell strings. `shell=True` (S602) stays banned.
+    "S603",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S607"]
+"scripts/**" = ["T20"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+markers = [
+    "ghidra: requires a Ghidra installation (PPY_REV_GHIDRA_HOME)",
+    "native: compiles and runs test fixtures on the host",
+]

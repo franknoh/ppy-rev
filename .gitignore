@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+dist/
+build/
+*.egg-info/
+
+# Gradle
+.gradle/
+ghidra/build/
+
+# Local analysis output and fixture builds
+out/
+tests/fixtures/build/

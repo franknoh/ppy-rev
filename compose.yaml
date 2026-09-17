@@ -1,0 +1,9 @@
+services:
+  dev:
+    build:
+      context: .
+      args:
+        DEV_UID: ${DEV_UID:-1000}
+    image: ppy-rev-dev
+    volumes:
+      - .:/work
