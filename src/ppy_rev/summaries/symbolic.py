@@ -672,17 +672,59 @@ def _strtol_expression(text: list[Expr]) -> tuple[Expr, Expr, Expr]:
 
 _PLAIN_DIGITS = 10
 """Digits of a plain number: enough for any 32-bit value, never enough to overflow long."""
+_SAFE_DIGITS = 18
+"""Digits that can never overflow a 64-bit long."""
+
+
+def _token_values(digits: list[Expr], negative: Expr) -> list[Expr]:
+    """strtol's saturated value of a sign and the first k `digits`, for every k from 1.
+
+    Exactly what `_strtol_expression` computes for such a token, built once for all
+    lengths: each value extends the previous one.
+    """
+    cutoff = sx.const((1 << 64) // 10, 64)
+    last_digit = sx.const(((1 << 64) - 1) % 10, 64)
+    limit = sx.const(1 << 63, 64)
+    saturated = sx.ite(negative, limit, sx.const((1 << 63) - 1, 64))
+    value = sx.const(0, 64)
+    overflow = sx.FALSE
+    values: list[Expr] = []
+    for index, byte in enumerate(digits):
+        numeral = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+        if index < _SAFE_DIGITS:
+            value = sx.add(sx.mul(value, sx.const(10, 64)), numeral)
+            values.append(sx.ite(negative, sx.negate(value), value))
+            continue
+        too_big = sx.bool_or(
+            sx.unsigned_less(cutoff, value),
+            sx.bool_and(sx.equal(value, cutoff), sx.unsigned_less(last_digit, numeral)),
+        )
+        overflow = sx.bool_or(overflow, too_big)
+        value = sx.ite(too_big, value, sx.add(sx.mul(value, sx.const(10, 64)), numeral))
+        too_large = sx.bool_or(
+            overflow,
+            sx.bool_and(negative, sx.unsigned_less(limit, value)),
+            sx.bool_and(sx.bool_not(negative), sx.unsigned_less_equal(limit, value)),
+        )
+        values.append(sx.ite(too_large, saturated, sx.ite(negative, sx.negate(value), value)))
+    return values
 
 
 def _split[T](
     call: _Call, state: State, options: list[tuple[Expr, T]], note: str
 ) -> list[tuple[State, T]]:
-    """One state per feasible option; the options' conditions must exclude each other."""
+    """One state per feasible option; the options' conditions must exclude each other.
+
+    Options come in the order they should be explored (plain before unusual, short before
+    long): the last one continues in `state`, renumbered so that it does not go first.
+    """
     executor = call.executor
     chosen: list[tuple[State, T]] = []
     live = [(condition, tag) for condition, tag in options if condition is not sx.FALSE]
     for index, (condition, tag) in enumerate(live):
         child = state if index == len(live) - 1 else state.fork(executor.new_state_id())
+        if child is state and index:
+            executor.renumber(child)
         executor.add_constraint(child, condition, ConstraintKind.LIBRARY, call.origin, note)
         if condition is not sx.TRUE and executor.feasible(child) is Status.UNSAT:
             continue
@@ -901,14 +943,19 @@ class _Scanner:
                     ends = sx.bool_not(_is_digit(after))
                 options.append((sx.bool_and(head, digits, ends), (signed, count)))
         result: list[_Scan] = []
+        values: dict[int, list[Expr]] = {}
         for branch, (signed, count) in self._fork(scan, options):
             if count == 0:
                 branch.position = start + signed
                 branch.result = branch.assigned
                 result.append(branch)
                 continue
-            token = list(stdin[start : start + signed + count])
-            value, _, _ = _strtol_expression(token)
+            if signed not in values:
+                negative = sx.equal(first, sx.const(0x2D, 8)) if signed else sx.FALSE
+                values[signed] = _token_values(
+                    list(stdin[start + signed : start + limit]), negative
+                )
+            value = values[signed][count - 1]
             size = directive.store_size
             self._store(
                 branch, directive, [sx.extract(value, 8 * index, 8) for index in range(size)]

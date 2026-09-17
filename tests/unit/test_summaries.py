@@ -177,6 +177,30 @@ def test_scanf(template: bytes, data: bytes) -> None:
     _run_both("scanf", pointers, template, b"", stdin=data, concrete_left=True)
 
 
+@settings(max_examples=60, deadline=None)
+@given(
+    st.sampled_from([b"%d", b"%ld", b"%hhd"]),
+    st.sampled_from([b"", b"+", b"-"]),
+    st.sampled_from(
+        [
+            b"9223372036854775807",
+            b"9223372036854775808",
+            b"18446744073709551615",
+            b"18446744073709551616",
+            b"184467440737095516150",
+            b"000000000000000000000042",
+            b"99999999999999999999999",
+            b"4294967295",
+            b"1844674407370955161",
+        ]
+    ),
+    st.sampled_from([b"", b" ", b"x"]),
+)
+def test_scanf_long_numbers(template: bytes, sign: bytes, digits: bytes, tail: bytes) -> None:
+    """Numbers past 18 digits saturate like strtol; the value then keeps its low bytes."""
+    _run_both("scanf", [OUT], template, b"", stdin=sign + digits + tail, concrete_left=True)
+
+
 def test_character_functions() -> None:
     character = sx.symbol("c", 64)
     concrete = ConcreteLibc(SYSV_X86_64)

@@ -576,13 +576,15 @@ def bool_not(operand: Expr) -> Expr:
 def bool_and(*operands: Expr) -> Expr:
     _require_bool(*operands)
     flattened: list[Expr] = []
+    seen: set[int] = set()
     for operand in operands:
         if operand is FALSE:
             return FALSE
         if operand is TRUE:
             continue
         for part in operand.args if operand.op is Op.BOOL_AND else (operand,):
-            if part not in flattened:
+            if id(part) not in seen:
+                seen.add(id(part))
                 flattened.append(part)
     if not flattened:
         return TRUE
@@ -594,13 +596,15 @@ def bool_and(*operands: Expr) -> Expr:
 def bool_or(*operands: Expr) -> Expr:
     _require_bool(*operands)
     flattened: list[Expr] = []
+    seen: set[int] = set()
     for operand in operands:
         if operand is TRUE:
             return TRUE
         if operand is FALSE:
             continue
         for part in operand.args if operand.op is Op.BOOL_OR else (operand,):
-            if part not in flattened:
+            if id(part) not in seen:
+                seen.add(id(part))
                 flattened.append(part)
     if not flattened:
         return FALSE

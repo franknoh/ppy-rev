@@ -276,6 +276,11 @@ class Executor:
         self.statistics.states += 1
         return self._next_state
 
+    def renumber(self, state: State) -> None:
+        """Give `state` the newest id: among equally deep states it is explored last."""
+        self._next_state += 1
+        state.id = self._next_state
+
     def _check(self, assumptions: list[Expr], symbols: Sequence[Expr] = ()) -> CheckResult:
         self.statistics.solver_calls += 1
         started = time.monotonic()
