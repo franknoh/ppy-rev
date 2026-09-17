@@ -110,3 +110,19 @@ fetch angstrom_checkers/checkers "$ARCHIVE/angstromCTF/2023/rev/checkers/checker
     f0dbcf2e7bd063c49de33b14e5360c79c6b7c669af69a88983c649b8da6a9245
 fetch sunshinectf_baseic/BASEic "$ARCHIVE/SunshineCTF/2025/rev/BASEic/BASEic" \
     066d19861c781164a49ad6951752144a0d87972c6a42ce4d743da2f4ea36bab9
+fetch bluehens_intro_to_reverse/flagchecker "$ARCHIVE/BlueHens/2024/rev/Training_Problem_Intro_to_Reverse/flagchecker" \
+    4f9b9fff59a5ecdf6f0cd721b2a2c009c6d8bc06edf795ea567c5062b0f91250
+fetch foobarctf_babyrev/chall "$ARCHIVE/FooBarCTF/2022/rev/BabyRev/chall" \
+    033ae1c8fab31d584ec0a5f3103b83a4a07c1d4ca4ab9b3cfb08f6688042bfb5
+fetch metactf_revvy_chevy/chall "$ARCHIVE/MetaCTF/2021/rev/Revvy_Chevy/chall" \
+    2aa7624288fa4cbdcdd64a1bcdf1d35bcb203fc497f9b4f1f32b70e45b9cc7b1
+fetch foobarctf_cipher_maze/chall "$ARCHIVE/FooBarCTF/2025/rev/Cipher_Maze/chall" \
+    dcdb5de0b998e22fe9d47b2fe6f888ff37e0068638993a6145e864bfb74e3ccd
+fetch metactf_no_strings/strings "$ARCHIVE/MetaCTF/2021/rev/There_Are_No_Strings_on_Me/strings" \
+    90e5536f4be66c48cd3d17359f5a4cb7a2f9b7fcb23e7a102dc5d0656f718aad
+fetch rarctf_verybabyrev/verybabyrev "$ARCHIVE/RaRCTF/2021/rev/verybabyrev/verybabyrev" \
+    87805f86d9491875d16d3b74125566379fe7bb76f6a4a009d40c9cf83bd87f69
+fetch ricerca_crackme/crackme "$ARCHIVE/Ricerca/2023/rev/crackme/crackme" \
+    0e1b69e1f57356dfdf416e73431d06ca6ae5a076266d271b80df89ff8a12e027
+fetch idekctf_intro_to_gdb/Intro_to_GDB "$ARCHIVE/idekCTF/2021/rev/Intro_To_GDB/Intro_to_GDB" \
+    0053bd2013b7a07a662bb56363d7f14ae59584ce555d1ce87f82d898cd5095ed
