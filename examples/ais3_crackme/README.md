@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Origin | AIS3 summer school crackme by Tyler Nighswander, distributed with the [angr examples](https://github.com/angr/angr-doc/tree/master/examples/ais3_crackme) |
+| Origin | AIS3 crackme, by Tyler Nighswander ([files](https://github.com/angr/angr-doc/tree/master/examples/ais3_crackme)) |
 | Binary | `ais3_crackme`, x86-64 ELF, not stripped |
 | Input | `argv[1]` |
 | Hints needed | none |
