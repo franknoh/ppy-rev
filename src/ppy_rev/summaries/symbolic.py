@@ -81,6 +81,7 @@ class SymbolicLibc:
             "printf": self._printf,
             "__printf_chk": self._printf,
             "fflush": self._returns_zero,
+            "setbuf": self._returns_zero,
             "setvbuf": self._returns_zero,
             "free": self._returns_zero,
             "exit": self._exit,

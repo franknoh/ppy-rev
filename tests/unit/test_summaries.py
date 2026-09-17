@@ -142,6 +142,13 @@ def test_string_copies_and_strcspn(left: bytes, right: bytes) -> None:
 
 @settings(max_examples=60, deadline=None)
 @given(st.binary(min_size=1, max_size=20), st.integers(1, 24))
+def test_output_setup_functions_do_nothing(stdin: bytes, size: int) -> None:
+    _run_both("setbuf", [STANDARD_STREAMS["stdout"], 0], b"", b"", stdin)
+    _run_both("setvbuf", [STANDARD_STREAMS["stdout"], 0, 2, size], b"", b"", stdin)
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.binary(min_size=1, max_size=20), st.integers(1, 24))
 def test_read_and_fgets(stdin: bytes, size: int) -> None:
     _run_both("read", [0, OUT, size], b"", b"", stdin)
     _run_both("fgets", [OUT, size, STANDARD_STREAMS["stdin"]], b"", b"", stdin)

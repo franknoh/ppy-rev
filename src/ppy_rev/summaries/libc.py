@@ -38,6 +38,7 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("putchar", 1),
         LibraryFunction("fputs", 2),
         LibraryFunction("fflush", 1),
+        LibraryFunction("setbuf", 2),
         LibraryFunction("setvbuf", 4),
         LibraryFunction("printf", 1, variadic=True),
         LibraryFunction("__printf_chk", 2, variadic=True),

@@ -67,6 +67,7 @@ class ConcreteLibc:
             "putchar": self._putchar,
             "fputs": self._fputs,
             "fflush": lambda arguments, memory: 0,
+            "setbuf": lambda arguments, memory: 0,
             "setvbuf": lambda arguments, memory: 0,
             "printf": self._printf,
             "__printf_chk": self._printf_chk,
