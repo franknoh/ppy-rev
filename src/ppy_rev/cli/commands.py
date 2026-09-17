@@ -113,10 +113,25 @@ def lift(arguments: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+def _affixes(arguments: argparse.Namespace) -> tuple[bytes, bytes]:
+    """The prefix and suffix, from their options or from a `--flag-format`."""
+    prefix: str | None = arguments.prefix
+    suffix: str | None = arguments.suffix
+    flag_format: str | None = arguments.flag_format
+    if flag_format is None:
+        return (prefix or "").encode("latin-1"), (suffix or "").encode("latin-1")
+    if flag_format.count("*") != 1:
+        raise PpyRevError("--flag-format marks the unknown part with one '*', as in 'CTF{*}'")
+    if prefix is not None or suffix is not None:
+        raise PpyRevError("--flag-format already gives the prefix and suffix")
+    head, tail = flag_format.split("*")
+    return head.encode("latin-1"), tail.encode("latin-1")
+
+
 def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
     binary: Path = arguments.binary
+    prefix, suffix = _affixes(arguments)
     charset: str | None = arguments.charset
-    prefix: str | None = arguments.prefix
     goal_address: int | None = arguments.goal_address
     avoid_address: list[int] | None = arguments.avoid_address
     avoid_string: list[str] | None = arguments.avoid_string
@@ -138,7 +153,8 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
         avoid_strings=tuple(avoid_string or ()),
         length=arguments.length,
         max_length=arguments.max_length,
-        prefix=b"" if prefix is None else prefix.encode("latin-1"),
+        prefix=prefix,
+        suffix=suffix,
         charset=None if charset is None else Charset(charset),
         solutions=arguments.solutions,
         budget=Budget(

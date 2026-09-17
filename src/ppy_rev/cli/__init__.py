@@ -124,7 +124,14 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
         "--max-length", type=int, default=64, help="longest argv input considered (default 64)"
     )
     constraints.add_argument("--prefix", metavar="TEXT")
+    constraints.add_argument("--suffix", metavar="TEXT")
     constraints.add_argument("--charset", choices=[charset.value for charset in Charset])
+    constraints.add_argument(
+        "--flag-format",
+        metavar="FORMAT",
+        help="a known flag shape, '*' for the unknown part: 'CTF{*}' is --prefix 'CTF{' "
+        "--suffix '}'",
+    )
     outputs = solve.add_argument_group("output")
     outputs.add_argument("--solutions", type=int, default=1, metavar="COUNT")
     outputs.add_argument("--output", type=Path, help="write the first solution's bytes here")

@@ -63,6 +63,7 @@ def argv_constraints(
     symbols: tuple[Expr, ...],
     length: int | None,
     prefix: bytes,
+    suffix: bytes,
     charset: Charset | None,
 ) -> list[Expr]:
     constraints: list[Expr] = []
@@ -76,6 +77,14 @@ def argv_constraints(
         if length < len(symbols):
             constraints.append(_is(symbols[length], 0))
     constraints.extend(_is(symbols[position], byte) for position, byte in enumerate(prefix))
+    if suffix:
+        # The string ends at `end`: a NUL there (or the terminator after the reserved
+        # bytes), and none before it.
+        ends: list[tuple[int, Expr]] = []
+        for end in range(len(suffix), len(symbols) + 1):
+            terminated = _is(symbols[end], 0) if end < len(symbols) else sx.TRUE
+            ends.append((end, sx.bool_and(terminated, sx.bool_not(_is(symbols[end - 1], 0)))))
+        constraints.append(_ends_with(symbols, suffix, length, ends))
     if charset is not None:
         constraints.extend(
             sx.bool_or(_is(symbol, 0), in_charset(symbol, charset)) for symbol in symbols
@@ -87,6 +96,7 @@ def stdin_constraints(
     symbols: tuple[Expr, ...],
     line_length: int | None,
     prefix: bytes,
+    suffix: bytes,
     charset: Charset | None,
 ) -> list[Expr]:
     constraints: list[Expr] = []
@@ -95,11 +105,39 @@ def stdin_constraints(
         if line_length < len(symbols):
             constraints.append(_is(symbols[line_length], NEWLINE))
     constraints.extend(_is(symbols[position], byte) for position, byte in enumerate(prefix))
+    if suffix:
+        # The first line ends at `end`: a newline there and none before it, or no newline
+        # anywhere in the bytes offered.
+        ends: list[tuple[int, Expr]] = []
+        no_newline = sx.TRUE
+        for end, symbol in enumerate(symbols):
+            if end >= len(suffix):
+                ends.append((end, sx.bool_and(no_newline, _is(symbol, NEWLINE))))
+            no_newline = sx.bool_and(no_newline, sx.bool_not(_is(symbol, NEWLINE)))
+        if len(symbols) >= len(suffix):
+            ends.append((len(symbols), no_newline))
+        constraints.append(_ends_with(symbols, suffix, line_length, ends))
     if charset is not None:
         constraints.extend(
             sx.bool_or(_is(symbol, NEWLINE), in_charset(symbol, charset)) for symbol in symbols
         )
     return constraints
+
+
+def _ends_with(
+    symbols: tuple[Expr, ...], suffix: bytes, length: int | None, ends: list[tuple[int, Expr]]
+) -> Expr:
+    """The input ends with `suffix`, wherever it ends (at `length`, when that is given)."""
+
+    def matches(end: int) -> Expr:
+        start = end - len(suffix)
+        return sx.bool_and(
+            *(_is(symbols[start + offset], byte) for offset, byte in enumerate(suffix))
+        )
+
+    if length is not None:
+        return matches(length) if len(suffix) <= length <= len(symbols) else sx.FALSE
+    return sx.bool_or(*(sx.bool_and(condition, matches(end)) for end, condition in ends))
 
 
 def argv_solution(symbols: tuple[Expr, ...], model: dict[str, int]) -> bytes:

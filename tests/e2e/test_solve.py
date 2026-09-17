@@ -121,6 +121,33 @@ def test_contradictory_constraints_are_unsat_with_an_explanation(
     assert "none reaches the goal with argv[1] up to 64 bytes" in text
 
 
+def test_flag_format_hints(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    del analyzer
+    output = tmp_path / "solution"
+    argv_binary = compile_fixture.build("xor_check", "gcc", "O2")
+    code, text = _solve(
+        argv_binary, "--flag-format", "rev_*easy", "--output", str(output), capsys=capsys
+    )
+    assert code == 0, text
+    assert output.read_bytes() == b"rev_is_easy"
+    code, text = _solve(argv_binary, "--suffix", "zz", capsys=capsys)
+    assert code == 2
+    assert "result: unsat" in text
+    stdin_binary = compile_fixture.build("fgets_check", "clang", "O2")
+    code, text = _solve(
+        stdin_binary, "--flag-format", "gg*sr", "--output", str(output), capsys=capsys
+    )
+    assert code == 0, text
+    assert output.read_bytes() == b"gg/dq2_o2sr\n"
+    assert main(["solve", str(stdin_binary), "--flag-format", "CTF{"]) == 1
+    assert "one '*'" in capsys.readouterr().err
+
+
 def test_several_distinct_solutions_and_smt2(
     analyzer: Analyzer,
     compile_fixture: type[FixtureCompiler],

@@ -69,6 +69,8 @@ class SolveRequest:
     max_length: int = 64
     """Longest argv string considered when no exact length is given."""
     prefix: bytes = b""
+    suffix: bytes = b""
+    """The argv string, or the first stdin line, ends with these bytes."""
     charset: Charset | None = None
     solutions: int = 1
     budget: Budget = field(default_factory=Budget)
@@ -416,7 +418,8 @@ def _select_inputs(module: Module, main: Function, request: SolveRequest) -> lis
 
 def _argv_capacity(request: SolveRequest) -> int:
     """Symbolic bytes for an argv string: the longest input considered, plus its NUL."""
-    return max(request.max_length, request.length or 0, len(request.prefix)) + 1
+    hinted = len(request.prefix) + len(request.suffix)
+    return max(request.max_length, request.length or 0, hinted) + 1
 
 
 def _describe(candidate: InputCandidate, request: SolveRequest) -> InputDescription:
@@ -469,13 +472,18 @@ def _initial_state(
         symbols.argv[index] = content
         for offset, symbol in enumerate(content):
             memory.write_byte(entry.argv_strings[index] + offset, symbol)
-        for condition in argv_constraints(content, request.length, request.prefix, request.charset):
+        for condition in argv_constraints(
+            content, request.length, request.prefix, request.suffix, request.charset
+        ):
             executor.add_constraint(state, condition, ConstraintKind.INPUT, None, f"argv[{index}]")
     if stdin_length:
         symbols = _Symbols(symbols.argv, state.io.stdin)
         line_length = None if argv_inputs else request.length
         prefix = b"" if argv_inputs else request.prefix
-        for condition in stdin_constraints(state.io.stdin, line_length, prefix, request.charset):
+        suffix = b"" if argv_inputs else request.suffix
+        for condition in stdin_constraints(
+            state.io.stdin, line_length, prefix, suffix, request.charset
+        ):
             executor.add_constraint(state, condition, ConstraintKind.INPUT, None, "stdin")
     values = {
         item.value.id: sx.const(entry.registers.get(item.register, 0), item.value.width)
