@@ -27,3 +27,18 @@ jobs:
       # Run against the sources copied into the image rather than a bind mount,
       # so file ownership does not depend on the runner's uid.
       - run: docker run --rm ppy-rev-dev scripts/check.sh
+
+  sandbox:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.15"
+      - run: uv sync --frozen
+      # The sandbox never pulls images; provide the one the tests run in.
+      - run: docker pull ubuntu:24.04
+      - run: uv run pytest tests/unit/test_sandbox.py tests/integration/test_sandbox_container.py
+        env:
+          PPY_REV_SANDBOX_IMAGE: ubuntu:24.04
+          PPY_REV_REQUIRE_TOOLS: "1"
