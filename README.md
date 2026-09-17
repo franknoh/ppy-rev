@@ -24,6 +24,46 @@ export PPY_REV_GHIDRA_HOME=/path/to/ghidra_12.1.3_PUBLIC
 `ppy-rev` never downloads Ghidra itself. The Docker image (`docker compose build`)
 contains a checksum-verified Ghidra and every tool the test suite needs.
 
+Run the CLI inside the project environment: `uv run ppy-rev ...`, or plain `ppy-rev`
+with `.venv` activated.
+
+## Usage
+
+Try it on real CTF challenges first: [`examples/`](examples/README.md) has five classic
+crackmes, each with its own walkthrough.
+
+```bash
+examples/fetch.sh                                       # download the original binaries
+uv run ppy-rev solve examples/ais3_crackme/ais3_crackme  # prints ais3{I_tak3_g00d_n0t3s}
+```
+
+A typical session with a new binary:
+
+1. `ppy-rev analyze ./chall` shows what solving will work with: where the input comes from
+   (`argv[1]`, stdin), which printed strings look like success and failure, and whether
+   there is a bytecode VM.
+2. `ppy-rev solve ./chall` searches for an input that reaches the success output, checks
+   the answer by running the lifted program, and prints it. When the guesses from step 1
+   are right, that is all.
+3. Otherwise, tell it what you know:
+
+   | Situation | Options |
+   |---|---|
+   | The input is elsewhere | `--argv 2`, `--stdin 64` |
+   | No success message, or the wrong one | `--goal-string 'Nice'`, `--goal-address 0x1014d6`, `--avoid-string 'Nope'` |
+   | You know the flag format | `--flag-format 'flag{*}'`, or `--prefix` and `--suffix` |
+   | You know the length | `--length 33` |
+   | The answer is valid but not the flag | a flag format, `--charset printable`, `--solutions 5` |
+   | It runs out of time | `--timeout 600`, `--strategy concolic --seed 'flag{aaaa}'` |
+   | A bytecode interpreter checks the input | `ppy-rev vm detect`, then `ppy-rev vm solve` |
+
+4. Use the answer: `--output answer.bin` writes its exact bytes (`./chall "$(cat answer.bin)"`
+   or `./chall < answer.bin`), and `--verify` also runs the binary on it in a locked-down
+   container.
+
+`solve` exits with status 0 only when it found an answer; `-v` shows why it chose the
+input and goal, and what the search did.
+
 ## Commands
 
 ```bash

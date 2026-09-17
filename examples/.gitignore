@@ -1,0 +1,3 @@
+# Challenge binaries are downloaded by fetch.sh, not stored in the repository.
+*/*
+!*/README.md
