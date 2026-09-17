@@ -11,7 +11,7 @@ from __future__ import annotations
 import heapq
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol
@@ -53,6 +53,7 @@ from ppy_rev.solver.backend import SolverBackend, Status
 from ppy_rev.symbolic import encode
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.bounds import unsigned_bounds
+from ppy_rev.symbolic.evaluate import UnassignedSymbolError, evaluate
 from ppy_rev.symbolic.expr import Expr
 from ppy_rev.symbolic.regions import MergeRegion, RegionFinder
 from ppy_rev.symbolic.state import Constraint, ConstraintKind, Frame, State
@@ -117,6 +118,18 @@ class CallCondition:
     """The call instruction."""
     register: str
     value: int
+
+
+@dataclass(frozen=True, slots=True)
+class Flip:
+    """A choice a seeded run did not take: the path condition up to it and the other side."""
+
+    conditions: tuple[Expr, ...]
+    location: tuple[tuple[int, int], ...]
+    """(function entry, block) of every frame, where the untaken side would continue."""
+    address: int | None
+    depth: int
+    """Constraints on the path before the choice."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +254,9 @@ class Executor:
         self._auxiliary = 0
         self._pending: list[tuple[int, int, State]] = []
         self._regions = RegionFinder()
+        self.seed: Mapping[str, int] | None = None
+        """When set, runs follow this input instead of forking, recording `flips`."""
+        self.flips: list[Flip] = []
         self._started = time.monotonic()
         self._exploration = Exploration([], [], self.statistics)
 
@@ -260,6 +276,15 @@ class Executor:
 
     def solve(self, state: State, symbols: list[Expr]) -> dict[str, int] | None:
         return self.solve_with(state, symbols, [])
+
+    def solve_conditions(
+        self, conditions: Sequence[Expr], symbols: list[Expr]
+    ) -> dict[str, int] | None:
+        self.statistics.solver_calls += 1
+        result = self.session.check(
+            list(conditions), symbols, timeout_ms=self.budget.solver_timeout_ms
+        )
+        return dict(result.model) if result.status is Status.SAT else None
 
     def solve_with(
         self, state: State, symbols: list[Expr], extra: list[Expr]
@@ -478,6 +503,10 @@ class Executor:
         self, state: State, address: Expr, size: int, write: bool, limit: int
     ) -> list[int]:
         low, high = unsigned_bounds(address)
+        if high - low + 1 > limit and self.seed is not None:
+            concrete = self._seed_value(address)
+            if concrete is not None:
+                return self._concretize(state, address, concrete, size, write)
         if high - low + 1 > limit:
             low, high = self._feasible_bounds(state, address, low, high)
         if high - low + 1 > limit:
@@ -492,6 +521,27 @@ class Executor:
             for candidate in range(low, high + 1)
             if state.memory.accessible(candidate, size, write)
         ]
+
+    def _concretize(
+        self, state: State, address: Expr, value: int, size: int, write: bool
+    ) -> list[int]:
+        """Fix a too-wide symbolic pointer to its value under the seed; flip the choice."""
+        fixed = sx.equal(address, sx.const(value, address.width))
+        self.flips.append(
+            Flip(
+                (*state.conditions(), sx.bool_not(fixed)),
+                self._locations(state),
+                None,
+                len(state.constraints),
+            )
+        )
+        self.add_constraint(
+            state, fixed, ConstraintKind.POINTER, None, "fixed to its value for the seed input"
+        )
+        self.approximate(
+            state, "a wide symbolic pointer was fixed to its seed value", may_hide_paths=True
+        )
+        return [value] if state.memory.accessible(value, size, write) else []
 
     def _feasible_bounds(self, state: State, address: Expr, low: int, high: int) -> tuple[int, int]:
         """Tighten `address`'s range to what the path condition allows, by binary search.
@@ -697,9 +747,13 @@ class Executor:
                 f"call to {address:#x}, which is neither lifted nor imported",
                 DiagnosticCode.UNSUPPORTED_OPERATION,
             )
+        before = len(state.constraints)
+        prefix = tuple(state.conditions())
         outcomes = self.externals.call(self, state, name, arguments, call.origin)
         if outcomes is None:
             raise _Stop(StopReason.UNSUPPORTED, f"no model for imported function {name}")
+        if self.seed is not None and len(outcomes) > 1:
+            outcomes = self._seeded_outcomes(outcomes, before, prefix, call.origin.address)
         successors: list[State] = []
         stopped: list[Stopped] = []
         for outcome in outcomes:
@@ -720,6 +774,21 @@ class Executor:
         if len(successors) == 1 and not stopped and successors[0] is state:
             return None
         return successors, stopped
+
+    def _seeded_outcomes(
+        self, outcomes: list[ExternalOutcome], before: int, prefix: tuple[Expr, ...], address: int
+    ) -> list[ExternalOutcome]:
+        """Of a model's alternatives, the one the seed input selects; the rest become flips."""
+        chosen: ExternalOutcome | None = None
+        for outcome in outcomes:
+            added = tuple(item.condition for item in outcome.state.constraints[before:])
+            values = [self._seed_value(condition) for condition in added]
+            if chosen is None and all(value == 1 for value in values):
+                chosen = outcome
+            else:
+                location = self._locations(outcome.state) if outcome.state.frames else ()
+                self.flips.append(Flip(prefix + added, location, address, len(prefix)))
+        return [chosen] if chosen is not None else outcomes
 
     def _argument(self, arguments: dict[str, Expr], register: str, callee: Function) -> Expr:
         found = arguments.get(register)
@@ -829,7 +898,7 @@ class Executor:
                 ]
                 region = (
                     self._regions.region(frame.function, block.id)
-                    if self.budget.merge_paths
+                    if self.budget.merge_paths and self.seed is None
                     else None
                 )
                 if region is not None:
@@ -886,6 +955,10 @@ class Executor:
                 f"branch at {origin.address:#x} forked more than "
                 f"{self.budget.max_branch_visits} times on one path",
             )
+        if self.seed is not None:
+            followed = self._follow_seed(state, choices, origin)
+            if followed is not None:
+                return followed
         source = frame.block
         successors: list[State] = []
         stopped: list[Stopped] = []
@@ -917,6 +990,56 @@ class Executor:
             for successor in successors:
                 successor.decisions += 1
         return successors, stopped
+
+    # -- seeded runs -----------------------------------------------------------------------
+
+    def _seed_value(self, expression: Expr) -> int | None:
+        if self.seed is None:
+            return None
+        try:
+            return evaluate(expression, self.seed)
+        except UnassignedSymbolError:
+            return None
+
+    def _locations(self, state: State, block: int | None = None) -> tuple[tuple[int, int], ...]:
+        frames = [(frame.function.entry, frame.block) for frame in state.frames]
+        if block is not None and frames:
+            frames[-1] = (frames[-1][0], block)
+        return tuple(frames)
+
+    def _follow_seed(
+        self, state: State, choices: list[tuple[Expr, int]], origin: Origin
+    ) -> tuple[list[State], list[Stopped]] | None:
+        """Take the choice the seed input takes; remember the others as flips.
+
+        Returns None when the seed does not decide the choice (it involves values the
+        seed does not assign), so the caller forks as usual.
+        """
+        values = [self._seed_value(condition) for condition, _ in choices]
+        if any(value is None for value in values) or sum(1 for value in values if value) != 1:
+            return None
+        prefix = tuple(state.conditions())
+        for (condition, target), value in zip(choices, values, strict=True):
+            if not value:
+                self.flips.append(
+                    Flip(
+                        (*prefix, condition),
+                        self._locations(state, target),
+                        origin.address,
+                        len(prefix),
+                    )
+                )
+        condition, target = next(
+            choice for choice, value in zip(choices, values, strict=True) if value
+        )
+        self.add_constraint(state, condition, ConstraintKind.BRANCH, origin)
+        self._transfer(state.frame, state.frame.block, target)
+        if self.reachability is not None and not self.reachability.can_reach(
+            self._locations(state)
+        ):
+            self.statistics.pruned += 1
+            return [], []
+        return [state], []
 
     # -- merging ---------------------------------------------------------------------------
 

@@ -22,7 +22,14 @@ from ppy_rev.diagnostics import PpyRevError, Severity
 from ppy_rev.ir.text import format_module
 from ppy_rev.ppy.check import check_ppy
 from ppy_rev.ppy.emit import emit_module
-from ppy_rev.solve import SolveRequest, SolveResult, SolveStatus, solve_module, verify_on
+from ppy_rev.solve import (
+    SolveRequest,
+    SolveResult,
+    SolveStatus,
+    Strategy,
+    solve_module,
+    verify_on,
+)
 from ppy_rev.symbolic.executor import Budget
 from ppy_rev.symbolic.inputs import Charset
 from ppy_rev.verify.sandbox import SandboxOptions
@@ -117,6 +124,8 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
     verify: bool = arguments.verify
     sandbox_runtime: Path | None = arguments.sandbox_runtime
     sandbox_image: str = arguments.sandbox_image
+    strategy: str = arguments.strategy
+    seed: str | None = arguments.seed
     return SolveRequest(
         binary=binary,
         argv=arguments.argv,
@@ -137,6 +146,8 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
         ),
         emit_smt2=arguments.emit_smt2,
         native=SandboxOptions(runtime=sandbox_runtime, image=sandbox_image) if verify else None,
+        strategy=Strategy(strategy),
+        seed=None if seed is None else seed.encode("latin-1"),
     )
 
 

@@ -196,3 +196,28 @@ def test_vm_lift_and_solve(
             assert "verified on the original interpreter" in text
             assert output.read_bytes() == answer
             assert SUCCESS[name] in _native_output(binary, name, answer)
+
+
+def test_concolic_strategy(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    del analyzer
+    binary = compile_fixture.build("nested_branch", "gcc", "O2")
+    output = tmp_path / "solution"
+    code, text = _solve(
+        binary,
+        "--strategy",
+        "concolic",
+        "--seed",
+        "nnnnnnnn",
+        "-v",
+        "--output",
+        str(output),
+        capsys=capsys,
+    )
+    assert code == 0, text
+    assert "note: concolic search:" in text
+    assert SUCCESS["nested_branch"] in _native_output(binary, "nested_branch", output.read_bytes())

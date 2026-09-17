@@ -10,8 +10,9 @@ from ppy_rev.lift.lifter import lift_export
 from ppy_rev.simplify.pipeline import simplify_module
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.symbolic import expr as sx
-from ppy_rev.symbolic.executor import Budget, Goal, StopReason
-from ppy_rev.symbolic.harness import FunctionSolution, solve_function
+from ppy_rev.symbolic.concolic import concolic_search
+from ppy_rev.symbolic.executor import Budget, Executor, Goal, StopReason
+from ppy_rev.symbolic.harness import FunctionSolution, call_state, solve_function
 from support.exports import ProgramBuilder, call, const, op, ram, reg, ret
 
 
@@ -285,3 +286,43 @@ def test_paths_disagreeing_on_a_concrete_address_are_not_merged() -> None:
     statistics = solution.exploration.statistics
     assert statistics.merges == 0
     assert statistics.stops[StopReason.GOAL] == 1
+
+
+def test_seeded_run_follows_the_seed_and_records_flips() -> None:
+    program = ProgramBuilder()
+    _xor_check(program)
+    program.function("f", 0x1000)
+    module = _module(program, simplify=False)
+    function = module.function_named("f")
+    assert function is not None
+    x = sx.symbol("x", 64)
+    seeded = Executor(module, Z3Backend(), _rax_is(1))
+    seeded.seed = {"x": 0}
+    exploration = seeded.explore(call_state(seeded, module, function, {"RDI": x}))
+    assert exploration.reached == []
+    assert exploration.statistics.stops[StopReason.RETURNED] == 1
+    (flip,) = seeded.flips
+    assert seeded.solve_conditions(flip.conditions, [x]) == {"x": 0x53}
+
+
+def test_concolic_search_flips_its_way_to_the_goal() -> None:
+    program = ProgramBuilder()
+    _xor_check(program)
+    program.function("f", 0x1000)
+    module = _module(program)
+    function = module.function_named("f")
+    assert function is not None
+    x = sx.symbol("x", 64)
+    search = Executor(module, Z3Backend(), _rax_is(1))
+    result = concolic_search(
+        search,
+        lambda: call_state(search, module, function, {"RDI": x}),
+        [x],
+        {"x": 0},
+        None,
+        max_runs=8,
+        max_seconds=30,
+    )
+    assert (result.runs, result.flips) == (2, 1)
+    (reached,) = result.exploration.reached
+    assert search.solve(reached.state, [x]) == {"x": 0x53}

@@ -21,6 +21,7 @@ from ppy_rev.solver.backend import SolverBackend
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.summaries.symbolic import SymbolicLibc
 from ppy_rev.symbolic import expr as sx
+from ppy_rev.symbolic.concolic import ConcolicResult, concolic_search
 from ppy_rev.symbolic.executor import (
     INCOMPLETE_REASONS,
     Budget,
@@ -73,6 +74,17 @@ class SolveRequest:
     emit_smt2: Path | None = None
     native: SandboxOptions | None = None
     """Also run each solution natively in this sandbox (never done unless requested)."""
+    strategy: Strategy = field(default_factory=lambda: Strategy.AUTO)
+    seed: bytes | None = None
+    """The first input concolic search follows (default: any input the constraints allow)."""
+    max_concolic_runs: int = 2000
+
+
+class Strategy(StrEnum):
+    AUTO = "auto"
+    """Symbolic search, then concolic search if that ends without an answer."""
+    SYMBOLIC = "symbolic"
+    CONCOLIC = "concolic"
 
 
 class SolveStatus(StrEnum):
@@ -164,24 +176,60 @@ def solve_module(
     reachable = reachable_functions(module, main)
     goal, avoid = _select_goals(module, reachable, request)
     inputs = _select_inputs(module, main, request)
-    executor = Executor(
-        module,
-        backend,
-        _executor_goal(goal, avoid),
-        SymbolicLibc(calling_convention(module.target)),
-        request.budget,
-        GoalReachability(module, frozenset({goal.address})),
-    )
-    state, symbols = _initial_state(executor, module, main, inputs, request)
-    exploration = executor.explore(state, max_reached=max(1, request.solutions))
-    solutions, notes = _solutions(
-        executor, module, main, request, inputs, symbols, exploration, goal, avoid
-    )
-    reached = exploration.reached[0].state if exploration.reached else None
+    reachability = GoalReachability(module, frozenset({goal.address}))
+
+    def executor() -> Executor:
+        return Executor(
+            module,
+            backend,
+            _executor_goal(goal, avoid),
+            SymbolicLibc(calling_convention(module.target)),
+            request.budget,
+            reachability,
+        )
+
+    search = executor()
+    state, symbols = _initial_state(search, module, main, inputs, request)
+    notes: list[str] = []
+    solutions: list[Solution] = []
+    exploration: Exploration | None = None
+    status = SolveStatus.INCOMPLETE
+    if request.strategy is not Strategy.CONCOLIC:
+        exploration = search.explore(state, max_reached=max(1, request.solutions))
+        solutions, notes = _solutions(
+            search, module, main, request, inputs, symbols, exploration, goal, avoid
+        )
+        status = _status(exploration, solutions)
+        notes += _incomplete_notes(exploration)
+    if request.strategy is Strategy.CONCOLIC or (
+        request.strategy is Strategy.AUTO and status in _CONCOLIC_FALLBACK
+    ):
+        concolic = executor()
+        start_state, _ = _initial_state(concolic, module, main, inputs, request)
+        result = concolic_search(
+            concolic,
+            lambda: _initial_state(concolic, module, main, inputs, request)[0],
+            symbols.all(),
+            _seed(concolic, start_state, symbols, request),
+            reachability,
+            request.max_concolic_runs,
+            request.budget.max_seconds,
+        )
+        notes.append(
+            f"concolic search: {result.runs} runs, {result.flips} flipped choices"
+            + ("" if result.exploration.reached else ", no run reached the goal")
+        )
+        if result.exploration.reached or request.strategy is Strategy.CONCOLIC:
+            search, exploration = concolic, result.exploration
+            solutions, concolic_notes = _solutions(
+                search, module, main, request, inputs, symbols, exploration, goal, avoid
+            )
+            notes += concolic_notes
+            status = _concolic_status(result, solutions)
+    reached = exploration.reached[0].state if exploration and exploration.reached else None
     if request.emit_smt2 is not None and reached is not None:
-        request.emit_smt2.write_text(executor.session.smt2(reached.conditions()), encoding="utf-8")
-    statistics = exploration.statistics
-    status = _status(exploration, solutions)
+        request.emit_smt2.write_text(search.session.smt2(reached.conditions()), encoding="utf-8")
+    statistics = search.statistics
     return SolveResult(
         target=f"{module.target.architecture} Linux ELF",
         entry=main.name,
@@ -201,8 +249,55 @@ def solve_module(
             solver_calls=statistics.solver_calls,
             seconds=time.monotonic() - started,
         ),
-        notes=tuple(notes + _incomplete_notes(exploration) + _unsat_notes(status, inputs)),
+        notes=tuple(dict.fromkeys(notes + _unsat_notes(status, inputs))),
     )
+
+
+_CONCOLIC_FALLBACK = frozenset(
+    {
+        SolveStatus.BUDGET_EXHAUSTED,
+        SolveStatus.TIMEOUT,
+        SolveStatus.INCOMPLETE,
+        SolveStatus.UNSUPPORTED,
+        SolveStatus.UNKNOWN,
+    }
+)
+
+
+def _concolic_status(result: ConcolicResult, solutions: list[Solution]) -> SolveStatus:
+    if solutions:
+        return SolveStatus.SAT
+    exploration = result.exploration
+    if exploration.reached:
+        return SolveStatus.UNKNOWN
+    if not result.exhausted:
+        return SolveStatus.BUDGET_EXHAUSTED
+    # Every choice of every run was flipped: all paths were followed, unless something
+    # was approximated or cut short on the way.
+    if exploration.statistics.hiding_approximations or exploration.incomplete:
+        return SolveStatus.INCOMPLETE
+    return SolveStatus.UNSAT
+
+
+def _seed(
+    executor: Executor, state: State, symbols: _Symbols, request: SolveRequest
+) -> dict[str, int]:
+    """The first input concolic search follows."""
+    if request.seed is not None:
+        assignment: dict[str, int] = {}
+        for content in symbols.argv.values():
+            data = request.seed[: len(content) - 1]
+            for position, symbol in enumerate(content):
+                assignment[symbol.name] = data[position] if position < len(data) else 0
+        for position, symbol in enumerate(symbols.stdin):
+            assignment[symbol.name] = (
+                request.seed[position] if position < len(request.seed) else 0x0A
+            )
+        return assignment
+    preferred = executor.solve_with(state, symbols.all(), _printable_preference(symbols))
+    if preferred is not None:
+        return preferred
+    return executor.solve(state, symbols.all()) or {}
 
 
 def reach(module: Module, request: SolveRequest, address: int) -> State | None:

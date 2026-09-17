@@ -9,6 +9,8 @@ discards a state that could reach the goal.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ppy_rev.ir.cfg import control_flow
 from ppy_rev.ir.model import (
     Call,
@@ -85,7 +87,7 @@ class GoalReachability:
                     work.append(predecessor)
         return reached
 
-    def can_reach(self, frames: list[tuple[int, int]]) -> bool:
+    def can_reach(self, frames: Sequence[tuple[int, int]]) -> bool:
         """`frames` lists (function entry, current block id) from outermost to innermost."""
         for depth in range(len(frames) - 1, -1, -1):
             entry, block = frames[depth]

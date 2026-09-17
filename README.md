@@ -98,6 +98,14 @@ solutions are preferred but not required. `--solutions N` asks for distinct inpu
 and `-v`/`-vv` show evidence, statistics, and path constraints. Limits: `--timeout`
 seconds and `--max-states`.
 
+When symbolic search ends without an answer (a budget, or a symbolic pointer too wide to
+model), `solve` falls back to concolic search (`--strategy auto`, the default; `symbolic`
+or `concolic` pick one). Concolic search runs the program on a concrete seed input
+(`--seed TEXT`, or any input the constraints allow), records the choices that input did
+not take, and turns the most promising one into the next seed with the solver, deepest
+choices and uncovered code first. A too-wide pointer is fixed to its seed value; that is
+reported as an approximation, so a search that finds nothing is not reported as `unsat`.
+
 `--verify` additionally runs each solution natively, and only then: a copy of the
 binary runs under Docker or Podman with no network, a read-only root file system, no
 capabilities, an unprivileged user, and memory, process, CPU, time, and output limits.

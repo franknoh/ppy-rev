@@ -12,6 +12,7 @@ from typing import TextIO
 from ppy_rev._version import __version__
 from ppy_rev.cli import commands
 from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.solve import Strategy
 from ppy_rev.symbolic.inputs import Charset
 from ppy_rev.verify.sandbox import DEFAULT_IMAGE
 
@@ -129,6 +130,14 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
         metavar="IMAGE",
         help=f"local image providing the C library (default {DEFAULT_IMAGE}; never pulled)",
     )
+    search = solve.add_argument_group("search")
+    search.add_argument(
+        "--strategy",
+        choices=[strategy.value for strategy in Strategy],
+        default=Strategy.AUTO.value,
+        help="symbolic search, concolic search, or symbolic then concolic (default auto)",
+    )
+    search.add_argument("--seed", metavar="TEXT", help="the first input concolic search follows")
     limits = solve.add_argument_group("limits")
     limits.add_argument("--timeout", type=float, default=600.0, metavar="SECONDS")
     limits.add_argument("--max-states", type=int, default=20_000)
