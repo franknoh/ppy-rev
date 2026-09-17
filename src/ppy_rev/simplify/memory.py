@@ -37,14 +37,14 @@ from ppy_rev.ir.transform import Use, map_operation, resolver, substitute
 
 
 @dataclass(frozen=True, slots=True)
-class _Address:
+class CanonicalAddress:
     base: int | None
     offset: int
 
 
 @dataclass(frozen=True, slots=True)
 class _Fact:
-    address: _Address
+    address: CanonicalAddress
     width: int
     value: Operand
 
@@ -84,7 +84,7 @@ def _forward_block(
         current = map_operation(operation, use)
         match current:
             case Load(output=output, address=address):
-                key = _canonical(address, definitions, pointer_width)
+                key = canonical_address(address, definitions, pointer_width)
                 known = next(
                     (fact for fact in reversed(facts) if _covers(fact, key, output.width)), None
                 )
@@ -95,7 +95,7 @@ def _forward_block(
                     current = UnaryOp(UnaryOpcode.TRUNCATE, output, known.value, current.origin)
                 facts.append(_Fact(key, output.width, output))
             case Store(address=address, value=value):
-                key = _canonical(address, definitions, pointer_width)
+                key = canonical_address(address, definitions, pointer_width)
                 facts = [
                     fact
                     for fact in facts
@@ -117,7 +117,9 @@ def _forward_block(
     )
 
 
-def _canonical(address: Operand, definitions: dict[int, BinaryOp], width: int) -> _Address:
+def canonical_address(
+    address: Operand, definitions: dict[int, BinaryOp], width: int
+) -> CanonicalAddress:
     offset = 0
     current = address
     while not isinstance(current, Const):
@@ -127,19 +129,23 @@ def _canonical(address: Operand, definitions: dict[int, BinaryOp], width: int) -
             or definition.opcode not in (BinaryOpcode.ADD, BinaryOpcode.SUB)
             or not isinstance(definition.right, Const)
         ):
-            return _Address(current.id, offset & mask(width))
+            return CanonicalAddress(current.id, offset & mask(width))
         delta = definition.right.value
         offset += delta if definition.opcode is BinaryOpcode.ADD else -delta
         current = definition.left
-    return _Address(None, (offset + current.value) & mask(width))
+    return CanonicalAddress(None, (offset + current.value) & mask(width))
 
 
-def _covers(fact: _Fact, address: _Address, width: int) -> bool:
+def _covers(fact: _Fact, address: CanonicalAddress, width: int) -> bool:
     return fact.address == address and fact.width >= width
 
 
 def _disjoint(
-    first: _Address, first_width: int, second: _Address, second_width: int, pointer_width: int
+    first: CanonicalAddress,
+    first_width: int,
+    second: CanonicalAddress,
+    second_width: int,
+    pointer_width: int,
 ) -> bool:
     if first.base != second.base:
         return False
