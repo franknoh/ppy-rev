@@ -41,7 +41,17 @@ class Z3Session:
         timeout_ms: int | None = None,
     ) -> CheckResult:
         self._solver.set("timeout", 0 if timeout_ms is None else max(1, timeout_ms))
-        outcome = self._solver.check(*(self.boolean(assumption) for assumption in assumptions))
+        booleans = [self.boolean(assumption).as_ast() for assumption in assumptions]
+        # `Solver.check` would cast and sort-check every assumption again in Python, which
+        # costs more than solving on long paths; these are translated booleans already.
+        outcome = z3.CheckSatResult(
+            z3.Z3_solver_check_assumptions(
+                self._context.ref(),
+                self._solver.solver,
+                len(booleans),
+                (z3.Ast * len(booleans))(*booleans),
+            )
+        )
         if outcome == z3.sat:
             model = self._solver.model()
             return CheckResult(
