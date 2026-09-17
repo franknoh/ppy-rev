@@ -33,6 +33,7 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("strcspn", 2),
         LibraryFunction("read", 3),
         LibraryFunction("fgets", 3),
+        LibraryFunction("gets", 1),
         LibraryFunction("getchar", 0),
         LibraryFunction("puts", 1),
         LibraryFunction("putchar", 1),

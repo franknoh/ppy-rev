@@ -62,6 +62,7 @@ class ConcreteLibc:
             "strcspn": self._strcspn,
             "read": self._read,
             "fgets": self._fgets,
+            "gets": self._gets,
             "getchar": self._getchar,
             "puts": self._puts,
             "putchar": self._putchar,
@@ -204,6 +205,16 @@ class ConcreteLibc:
         memory.write(buffer, taken + b"\0")
         self.io.stdin_position += len(taken)
         return buffer
+
+    def _gets(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        remaining = self.io.stdin[self.io.stdin_position :]
+        if not remaining:
+            return 0
+        newline = remaining.find(b"\n")
+        line = remaining if newline < 0 else remaining[:newline]
+        memory.write(arguments[0], line + b"\0")
+        self.io.stdin_position += len(line) + (newline >= 0)
+        return arguments[0]
 
     def _getchar(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del arguments, memory

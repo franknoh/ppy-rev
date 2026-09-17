@@ -74,6 +74,7 @@ class SymbolicLibc:
             "strcspn": self._strcspn,
             "read": self._read,
             "fgets": self._fgets,
+            "gets": self._gets,
             "getchar": self._getchar,
             "puts": self._puts,
             "putchar": self._putchar,
@@ -360,6 +361,48 @@ class SymbolicLibc:
             )
         else:
             io.stdin_position += consumed
+        return self._returns(call, sx.const(buffer, 64))
+
+    def _gets(self, call: _Call) -> list[ExternalOutcome]:
+        """A line without its newline, however long: bytes the program cannot hold crash it."""
+        buffer = self._concrete(call, call.arguments[0], "buffer")
+        io = call.state.io
+        remaining = io.stdin[io.stdin_position :]
+        if not remaining:
+            return self._returns(call, sx.const(0, 64))
+        length = sx.const(len(remaining), 64)
+        for index in reversed(range(len(remaining))):
+            length = sx.ite(sx.equal(remaining[index], _NEWLINE), sx.const(index, 64), length)
+        for index in range(len(remaining) + 1):
+            address = buffer + index
+            position = sx.const(index, 64)
+            if not call.state.memory.accessible(address, 1, write=True):
+                # A longer line overruns into memory that faults in the real program too.
+                call.executor.add_constraint(
+                    call.state,
+                    sx.unsigned_less(length, position),
+                    ConstraintKind.LIBRARY,
+                    call.origin,
+                    "gets line fits in writable memory",
+                )
+                break
+            byte = remaining[index] if index < len(remaining) else _ZERO_BYTE
+            old = call.state.memory.read_byte(address)
+            terminator = sx.ite(sx.equal(position, length), _ZERO_BYTE, old)
+            call.state.memory.write_byte(
+                address, sx.ite(sx.unsigned_less(position, length), byte, terminator)
+            )
+        io.stdin_reads.append((io.stdin_position, io.stdin_position + len(remaining), True))
+        consumed = call.executor.unique_value(call.state, length)
+        if consumed is None:
+            io.stdin = io.stdin[: io.stdin_position]
+            call.executor.approximate(
+                call.state,
+                "stdin after a symbolic-length gets line is treated as empty",
+                may_hide_paths=True,
+            )
+        else:
+            io.stdin_position += consumed + (consumed < len(remaining))
         return self._returns(call, sx.const(buffer, 64))
 
     def _getchar(self, call: _Call) -> list[ExternalOutcome]:

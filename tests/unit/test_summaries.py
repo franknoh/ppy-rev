@@ -101,7 +101,7 @@ def _run_both(
     assert isinstance(outcome, Returned), outcome
     result = evaluate(outcome.outputs["RAX"], assignment)
     assert result == concrete["RAX"], (name, left, right, stdin, result, concrete["RAX"])
-    assert outcome.state.io.stdin_position == io.stdin_position or name == "fgets"
+    assert outcome.state.io.stdin_position == io.stdin_position or name in ("fgets", "gets")
     for address in range(DATA, DATA + 0x400):
         symbolic_byte = evaluate(outcome.state.memory.read_byte(address), assignment)
         assert symbolic_byte == concrete_memory.read(address, 1)[0], (name, hex(address))
@@ -152,6 +152,7 @@ def test_output_setup_functions_do_nothing(stdin: bytes, size: int) -> None:
 def test_read_and_fgets(stdin: bytes, size: int) -> None:
     _run_both("read", [0, OUT, size], b"", b"", stdin)
     _run_both("fgets", [OUT, size, STANDARD_STREAMS["stdin"]], b"", b"", stdin)
+    _run_both("gets", [OUT], b"", b"", stdin)
 
 
 def test_strcspn_refuses_a_symbolic_rejected_set() -> None:
