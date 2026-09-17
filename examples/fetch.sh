@@ -126,3 +126,15 @@ fetch ricerca_crackme/crackme "$ARCHIVE/Ricerca/2023/rev/crackme/crackme" \
     0e1b69e1f57356dfdf416e73431d06ca6ae5a076266d271b80df89ff8a12e027
 fetch idekctf_intro_to_gdb/Intro_to_GDB "$ARCHIVE/idekCTF/2021/rev/Intro_To_GDB/Intro_to_GDB" \
     0053bd2013b7a07a662bb56363d7f14ae59584ce555d1ce87f82d898cd5095ed
+fetch ijctf_sanity/sanity "$ARCHIVE/IJCTF/2021/rev/Sanity/sanity" \
+    6df1b3479f868b39eabdcb52a665fd2b6fd48cac755863cb39a9f69656c2bbe7
+fetch litctf_minimalist/minimalist "$ARCHIVE/LexingtonInformaticsTournament/2022/rev/minimalist/minimalist" \
+    d64e0e7e15b44558889241ba9d404c1ba2c39c8cd55eb29d627af8e03c7b5a8b
+fetch litctf_addition/addition "$ARCHIVE/LexingtonInformaticsTournament/2022/rev/addition/addition" \
+    767194e36e6b32a114676187953c791b496287c203cb7b1467ce40c5d4c20768
+fetch litctf_sequence_lock/seqlock "$ARCHIVE/LexingtonInformaticsTournament/2026/rev/sequence_lock/seqlock" \
+    a180b827aa361f32ce1fb19cbd95b8b41c2262f3fc4b2634b1b588d873b61195
+fetch l3akctf_hidden/hidden "$ARCHIVE/L3akCTF/2024/rev/Hidden/hidden" \
+    86d0940167bf29453256e52679a3bba8790979fb4222e9443231561b776d60be
+fetch l3akctf_angry/angry_patched_skill_issues "$ARCHIVE/L3akCTF/2024/rev/Angry/angry_patched_skill_issues" \
+    8184fa1b6334197d6804644dfd7bee96b4091f6a43443a6a995382a1c978b1f8

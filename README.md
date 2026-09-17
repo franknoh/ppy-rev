@@ -29,7 +29,7 @@ with `.venv` activated.
 
 ## Usage
 
-Try it on real CTF challenges first: [`examples/`](examples/README.md) has forty-six of
+Try it on real CTF challenges first: [`examples/`](examples/README.md) has fifty-two of
 them, from picoCTF to Google CTF, each with its own walkthrough. Most need no options at
 all, and `examples/check.sh` re-solves every one of them.
 
