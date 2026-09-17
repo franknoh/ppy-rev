@@ -252,6 +252,22 @@ def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:
     }
 
 
+def test_scanning_unconstrained_input_needs_no_solver() -> None:
+    """Input shapes are tests on single bytes: feasibility follows without asking Z3."""
+    image = _image()
+    image.write(LEFT, b"%d\0")
+    memory = SymbolicMemory(image)
+    stdin = tuple(sx.symbol(f"in_{index}", 8) for index in range(8))
+    state = State(id=1, frames=[], memory=memory, io=SymbolicIO(stdin=stdin))
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    arguments = {"RDI": sx.const(LEFT, 64), "RSI": sx.const(OUT, 64)}
+    outcomes = SymbolicLibc(SYSV_X86_64).call(executor, state, "scanf", arguments, Origin(0, 0))
+    assert outcomes is not None
+    # One state per way the number can end, and every one of them is reachable.
+    assert len(outcomes) > 8
+    assert executor.statistics.solver_calls == 0
+
+
 def test_rand_follows_the_seed_in_both_models() -> None:
     concrete = ConcreteLibc(SYSV_X86_64)
     memory = _image()

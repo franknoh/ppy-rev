@@ -19,6 +19,7 @@ from ppy_rev.solver.backend import Status
 from ppy_rev.summaries import ctype, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
+from ppy_rev.symbolic.evaluate import evaluate
 from ppy_rev.symbolic.executor import (
     Executor,
     Exited,
@@ -776,12 +777,16 @@ def _split[T](
     executor = call.executor
     chosen: list[tuple[State, T]] = []
     live = [(condition, tag) for condition, tag in options if condition is not sx.FALSE]
+    known = _ByteTests.of(state)
     for index, (condition, tag) in enumerate(live):
         child = state if index == len(live) - 1 else state.fork(executor.new_state_id())
         if child is state and index:
             executor.renumber(child)
         executor.add_constraint(child, condition, ConstraintKind.LIBRARY, call.origin, note)
-        if condition is not sx.TRUE and executor.feasible(child) is Status.UNSAT:
+        if condition is sx.TRUE or known.satisfiable(condition):
+            chosen.append((child, tag))
+            continue
+        if executor.feasible(child) is Status.UNSAT:
             continue
         chosen.append((child, tag))
     if len(chosen) > 1:
@@ -790,6 +795,70 @@ def _split[T](
         for position, (child, _) in enumerate(chosen):
             child.decisions += 1 + position
     return chosen
+
+
+_SATISFYING: dict[Expr, frozenset[int]] = {}
+
+
+def _satisfying_values(test: Expr, name: str) -> frozenset[int]:
+    """The byte values a single-byte test allows; the same tests recur constantly."""
+    known = _SATISFYING.get(test)
+    if known is None:
+        known = frozenset(value for value in range(256) if evaluate(test, {name: value}))
+        _SATISFYING[test] = known
+    return known
+
+
+def _conjuncts(condition: Expr) -> tuple[Expr, ...]:
+    return condition.args if condition.op is sx.Op.BOOL_AND else (condition,)
+
+
+def _single_byte(condition: Expr) -> str | None:
+    """The one input byte `condition` tests, if that is all it does."""
+    found = sx.symbols(condition)
+    return found[0].name if len(found) == 1 and found[0].width == 8 else None
+
+
+@dataclass(frozen=True, slots=True)
+class _ByteTests:
+    """The path condition's tests on individual bytes, and the bytes it ties to others."""
+
+    per_byte: dict[str, list[Expr]]
+    entangled: frozenset[str]
+
+    @classmethod
+    def of(cls, state: State) -> _ByteTests:
+        per_byte: dict[str, list[Expr]] = {}
+        entangled: set[str] = set()
+        for constraint in state.constraints:
+            for part in _conjuncts(constraint.condition):
+                name = _single_byte(part)
+                if name is None:
+                    entangled.update(symbol.name for symbol in sx.symbols(part))
+                else:
+                    per_byte.setdefault(name, []).append(part)
+        return cls(per_byte, frozenset(entangled))
+
+    def satisfiable(self, condition: Expr) -> bool:
+        """Whether the path condition plus `condition` holds for some input, without a solver.
+
+        The shapes a scan forks on test single input bytes. When nothing else ties those
+        bytes to the rest of the path, each byte can be tried over all 256 values on its
+        own: the rest of the path already has a model, and these bytes cannot spoil it.
+        """
+        tests: dict[str, list[Expr]] = {}
+        for part in _conjuncts(condition):
+            name = _single_byte(part)
+            if name is None or name in self.entangled:
+                return False
+            tests.setdefault(name, []).append(part)
+        for name, group in tests.items():
+            allowed = set(range(256))
+            for test in (*self.per_byte.get(name, []), *group):
+                allowed &= _satisfying_values(test, name)
+                if not allowed:
+                    return False
+        return True
 
 
 def _in_range(byte: Expr, low: int, high: int) -> Expr:

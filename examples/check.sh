@@ -4,9 +4,11 @@
 #
 #     examples/check.sh            # all of them
 #     examples/check.sh lactf      # only examples whose name contains "lactf"
+#     VERIFY=1 examples/check.sh   # also run each answer on the real binary, in a container
 set -uo pipefail
 cd "$(dirname "$0")/.."
 filter=${1:-}
+verify=${VERIFY:+--verify}
 failures=0
 
 for readme in examples/*/README.md; do
@@ -21,10 +23,11 @@ for readme in examples/*/README.md; do
         continue
     fi
     started=$(date +%s)
-    output=$(eval "uv run ppy-rev solve $command" 2>&1)
+    output=$(eval "uv run ppy-rev solve $command ${verify:-}" 2>&1)
     seconds=$(($(date +%s) - started))
-    if grep -qF -- "$answer" <<<"$output"; then
-        printf 'ok    %-28s %3ds\n' "$name" "$seconds"
+    native=$(sed -n 's/.*native (sandboxed): \([a-z]*\).*/ \1 natively/p' <<<"$output" | head -1)
+    if grep -qF -- "$answer" <<<"$output" && [[ -z $verify || $native != " failed natively" ]]; then
+        printf 'ok    %-28s %3ds%s\n' "$name" "$seconds" "$native"
     else
         printf 'FAIL  %-28s %3ds  %s\n' "$name" "$seconds" "$(grep -A1 '^Solution' <<<"$output" | tail -1)"
         failures=$((failures + 1))
