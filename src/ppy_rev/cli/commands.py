@@ -11,6 +11,7 @@ from typing import TextIO
 
 from ppy_rev.api import Analyzer
 from ppy_rev.cli.render import (
+    render_analysis,
     render_dispatchers,
     render_info,
     render_lifted_vm,
@@ -219,4 +220,10 @@ def vm_solve(arguments: argparse.Namespace, out: TextIO) -> int:
 def cache_clear(arguments: argparse.Namespace, out: TextIO) -> int:
     removed = analyzer(arguments).clear_cache()
     out.write(f"removed {removed} cached export{'s' if removed != 1 else ''}\n")
+    return 0
+
+
+def analyze(arguments: argparse.Namespace, out: TextIO) -> int:
+    binary: Path = arguments.binary
+    render_analysis(analyzer(arguments).analyze(binary), out, verbosity(arguments))
     return 0

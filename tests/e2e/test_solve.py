@@ -221,3 +221,20 @@ def test_concolic_strategy(
     assert code == 0, text
     assert "note: concolic search:" in text
     assert SUCCESS["nested_branch"] in _native_output(binary, "nested_branch", output.read_bytes())
+
+
+def test_analyze_reports_what_solving_uses(
+    analyzer: Analyzer, compile_fixture: type[FixtureCompiler], capsys: pytest.CaptureFixture[str]
+) -> None:
+    del analyzer
+    arguments = ["--cache-dir", str(BUILD_ROOT / "cache")]
+    assert (
+        main(["analyze", str(compile_fixture.build("fgets_check", "gcc", "O2")), *arguments]) == 0
+    )
+    text = capsys.readouterr().out
+    assert "Inputs:\n  stdin\n" in text
+    assert 'puts("Access granted")' in text.split("Failure candidates:")[0]
+    assert 'puts("Access denied")' in text.split("Failure candidates:")[1]
+    assert "operations sliced away: " in text
+    assert main(["analyze", str(compile_fixture.build("simple_vm", "gcc", "O2")), *arguments]) == 0
+    assert "(confidence 0.9" in capsys.readouterr().out.split("VM dispatchers:")[1]

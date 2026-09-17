@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ppy_rev.abi import calling_convention
+from ppy_rev.analysis.report import AnalysisReport, analyze_module
 from ppy_rev.config import AnalyzerConfig
 from ppy_rev.elf import read_elf_header
 from ppy_rev.ghidra.cache import ExportCache
@@ -46,6 +47,11 @@ class Analyzer:
 
     def simplified(self, binary: Path) -> Module:
         return self.simplify(self.lift(binary)).module
+
+    def analyze(self, binary: Path) -> AnalysisReport:
+        """What solving would work with: inputs, likely outcomes, relevant code, VMs."""
+        lifted = self.simplify(self.lift(binary))
+        return analyze_module(lifted.module, lifted.diagnostics)
 
     def solve(self, request: SolveRequest) -> SolveResult:
         """Find inputs that drive the program to its success outcome."""

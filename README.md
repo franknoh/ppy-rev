@@ -28,6 +28,7 @@ contains a checksum-verified Ghidra and every tool the test suite needs.
 
 ```bash
 ppy-rev info ./chall                # architecture, entry point, sections, functions
+ppy-rev analyze ./chall             # inputs, likely outcomes, relevant code, VMs, diagnostics
 ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function (--no-simplify: raw)
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ppy-rev lift ./chall --emit-ppy -o out --check-ppy
@@ -82,9 +83,8 @@ the success string *with that string as its argument*, so branchless selection o
 message (`cmov`) is handled. Symbolic execution then searches paths with the fewest
 symbolic decisions first, pruning states that can no longer reach the goal and merging
 the paths of loop-free branch regions where they join (inside a loop, paths that leave
-the loop continue on their own).
-A backward slice from the goal skips work that cannot matter: messages printed along the
-way, and helper functions that only print. Library calls use models of the
+the loop continue on their own). A backward slice from the goal skips work that cannot
+matter: messages printed along the way, and helper functions that only print. Library calls use models of the
 C functions crackmes typically use (`strlen`, `strcmp`, `memcmp`, `read`, `fgets`,
 `scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the ctype tables, `puts`, `printf`,
 `exit`, ...), checked against glibc by differential tests. Where a model approximates,
@@ -177,7 +177,7 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
 - `ppy_rev.summaries`: C library models, concrete (for the interpreter) and symbolic,
   tested against each other.
 - `ppy_rev.analysis`: whole-program facts for solving: `main`, input discovery, goal
-  ranking from strings, and goal reachability.
+  ranking from strings, goal reachability, backward slicing, and the `analyze` report.
 - `ppy_rev.vm`: bytecode interpreters: dispatcher detection, specialization of the
   interpreter to its bytecode (VM lifting), and the instruction set description.
 - `ppy_rev.verify`: sandboxed native execution for `solve --verify`.

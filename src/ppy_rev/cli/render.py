@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TextIO
 
+from ppy_rev.analysis.goals import GoalCandidate
+from ppy_rev.analysis.report import AnalysisReport
 from ppy_rev.info import ProgramInfo
 from ppy_rev.solve import Solution, SolveResult, SolveStatus
 from ppy_rev.vm.detect import Dispatcher
@@ -202,3 +204,63 @@ def render_lifted_vm(target: str, lifted: LiftedVm, out: TextIO) -> None:
         out.write(f"  {item.counter:#06x}  {item.name:<6} {item.bytes.hex(' '):<14} {flow}\n")
         for effect in item.effects:
             out.write(f"          {effect}\n")
+
+
+def _outcome(candidate: GoalCandidate) -> str:
+    text = json.dumps(candidate.text)
+    use = f"{candidate.call}({text})" if candidate.call else f"uses {text}"
+    return f"  {candidate.confidence:.2f}  {candidate.address:#x}  {use} in {candidate.function}\n"
+
+
+def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
+    out.write(f"Target: {report.target}\n")
+    out.write(f"Entry: {report.main or 'main not found'}\n")
+    out.write("\nInputs:\n")
+    if not report.inputs:
+        out.write("  none discovered\n")
+    for item in report.inputs:
+        label = f"argv[{item.index}]" if item.index is not None else "stdin"
+        out.write(f"  {label}\n")
+        for evidence in item.evidence if verbose else item.evidence[:1]:
+            out.write(f"    evidence: {evidence}\n")
+    out.write("\nSuccess candidates:\n")
+    for candidate in report.successes or ():
+        out.write(_outcome(candidate))
+    if not report.successes:
+        out.write("  none (pass --goal-address or --goal-string to solve)\n")
+    out.write("\nFailure candidates:\n")
+    for candidate in report.failures:
+        out.write(_outcome(candidate))
+    if not report.failures:
+        out.write("  none\n")
+    reachable = [item for item in report.functions if item.reachable]
+    out.write(
+        f"\nRelevant code:\n"
+        f"  functions reachable from main: {len(reachable)} of {len(report.functions)}\n"
+    )
+    toward_goal = [item.name for item in reachable if item.reaches_goal]
+    if toward_goal:
+        out.write(f"  can reach the best success candidate: {', '.join(toward_goal)}\n")
+    output_only = [item.name for item in reachable if item.output_only]
+    if output_only:
+        out.write(f"  only print, skipped when solving: {', '.join(output_only)}\n")
+    out.write(f"  operations sliced away: {report.sliced_operations}\n")
+    if verbose:
+        for item in reachable:
+            out.write(
+                f"    {item.entry:#x}  {item.name}: {item.blocks} blocks, "
+                f"{item.operations} operations\n"
+            )
+    out.write("\nVM dispatchers:\n")
+    if not report.dispatchers:
+        out.write("  none\n")
+    for dispatcher in report.dispatchers:
+        out.write(
+            f"  {dispatcher.address:#x} in {dispatcher.function} "
+            f"(confidence {dispatcher.confidence:.2f}, {len(dispatcher.handlers)} handlers)\n"
+        )
+    out.write("\nLifting diagnostics in reachable code:\n")
+    if not report.diagnostics:
+        out.write("  none\n")
+    for code, count in report.diagnostics:
+        out.write(f"  {code}: {count}\n")

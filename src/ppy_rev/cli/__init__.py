@@ -63,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lift.set_defaults(handler=commands.lift)
 
+    analyze = subcommands.add_parser(
+        "analyze", parents=[common], help="show inputs, likely outcomes, and relevant code"
+    )
+    analyze.add_argument("binary", type=Path)
+    analyze.set_defaults(handler=commands.analyze)
+
     solve = subcommands.add_parser(
         "solve", parents=[common], help="find an input that reaches the success outcome"
     )
