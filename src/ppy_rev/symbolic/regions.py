@@ -17,7 +17,17 @@ from ppy_rev.ir.model import (
     Call,
     Function,
     IndirectJump,
+    IndirectTarget,
     Jump,
+    Load,
+    Operand,
+    Operation,
+    Phi,
+    Store,
+    TailCall,
+    Var,
+    operation_inputs,
+    operation_output,
     successors,
 )
 
@@ -37,6 +47,18 @@ class RegionFinder:
         self.max_blocks = max_blocks
         self._post_dominators: dict[int, tuple[int | None, ...]] = {}
         self._regions: dict[tuple[int, int], MergeRegion | None] = {}
+        self._addressing: dict[int, frozenset[int]] = {}
+
+    def addressing(self, function: Function) -> frozenset[int]:
+        """Values that flow into a memory address or a jump or call target.
+
+        Merging paths that disagree on such a value would make those accesses symbolic.
+        """
+        known = self._addressing.get(function.entry)
+        if known is None:
+            known = _addressing(function)
+            self._addressing[function.entry] = known
+        return known
 
     def region(self, function: Function, branch: int) -> MergeRegion | None:
         key = (function.entry, branch)
@@ -90,3 +112,45 @@ def _acyclic(function: Function, blocks: set[int]) -> bool:
         return True
 
     return all(visit(block_id) for block_id in sorted(blocks))
+
+
+def _addressing(function: Function) -> frozenset[int]:
+    definitions: dict[int, Phi | Operation] = {}
+    roots: list[Operand] = []
+    for block in function.blocks:
+        for phi in block.phis:
+            definitions[phi.output.id] = phi
+        for operation in block.operations:
+            for output in operation_output(operation):
+                definitions[output.id] = operation
+            match operation:
+                case Load(address=address) | Store(address=address):
+                    roots.append(address)
+                case Call(target=IndirectTarget(address=address)):
+                    roots.append(address)
+                case _:
+                    pass
+        match block.terminator:
+            case IndirectJump(address=address):
+                roots.append(address)
+            case TailCall(call=Call(target=IndirectTarget(address=address))):
+                roots.append(address)
+            case _:
+                pass
+    marked: set[int] = set()
+    work = [root for root in roots if isinstance(root, Var)]
+    while work:
+        var = work.pop()
+        if var.id in marked:
+            continue
+        marked.add(var.id)
+        match definitions.get(var.id):
+            case Phi(incoming=incoming):
+                work.extend(value for _, value in incoming if isinstance(value, Var))
+            case Load() | Call() | None:
+                pass  # a loaded or returned value starts a new chain
+            case operation:
+                work.extend(
+                    value for value in operation_inputs(operation) if isinstance(value, Var)
+                )
+    return frozenset(marked)

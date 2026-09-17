@@ -255,3 +255,33 @@ def test_branch_diamonds_in_a_loop_are_merged() -> None:
     separate = _solve(module, _rax_is(1 + 4 + 15), replace(budget, merge_paths=False))
     assert separate.model is None
     assert separate.exploration.budget_exhausted is not None
+
+
+def test_paths_disagreeing_on_a_concrete_address_are_not_merged() -> None:
+    # rcx = (rdi == 0x41) ? 1 : 2; rax = table[rcx]: merging would make the load symbolic.
+    program = ProgramBuilder()
+    program.data(".rodata", 0x3000, bytes([0x10, 0x20, 0x30]))
+    after = program.code(
+        0x1000,
+        [
+            op("COPY", [const(1, 8)], reg("RCX")),
+            op("INT_EQUAL", [reg("RDI"), const(0x41, 8)], reg("ZF")),
+            op("CBRANCH", [ram(0x1008), reg("ZF")]),
+        ],
+    )
+    after = program.code(after, [op("COPY", [const(2, 8)], reg("RCX"))])
+    after = program.code(
+        after,
+        [
+            op("INT_ADD", [reg("RCX"), const(0x3000, 8)], reg("RCX")),
+            op("LOAD", [reg("RCX")], reg("AL")),
+            op("INT_ZEXT", [reg("AL")], reg("RAX")),
+        ],
+    )
+    program.code(after, ret(), length=1)
+    program.function("f", 0x1000)
+    solution = _solve(_module(program), _rax_is(0x20))
+    assert solution.model == {"x": 0x41}
+    statistics = solution.exploration.statistics
+    assert statistics.merges == 0
+    assert statistics.stops[StopReason.GOAL] == 1

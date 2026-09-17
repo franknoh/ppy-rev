@@ -949,50 +949,53 @@ class Executor:
         if len(arrived) <= 1:
             return arrived, stopped
         merged = self._merge(arrived, shared_constraints, checkpoint, origin)
+        if merged is None:
+            return arrived, stopped
         merged.decisions = decisions + 1
         return [merged], stopped
 
     def _merge(
         self, states: list[State], shared_constraints: int, checkpoint: object, origin: Origin
-    ) -> State:
+    ) -> State | None:
         """Fold states that forked after `shared_constraints` into the last one.
 
         Their constraint suffixes are mutually exclusive (each starts with a different
         branch outcome), so each value is an if-then-else chain over those suffixes.
+        States that disagree between concrete values used as addresses (a buffer index, an
+        interpreter's program counter), or between concrete bytes in memory, are not
+        merged: making that state symbolic would turn later memory accesses symbolic.
         """
-        self.statistics.merges += len(states) - 1
         selectors = [
             sx.bool_and(*(item.condition for item in current.constraints[shared_constraints:]))
             for current in states
         ]
         merged = states[-1]
-
-        def choose(values: list[tuple[Expr, Expr]]) -> Expr:
-            result = values[-1][1]
-            for selector, value in reversed(values[:-1]):
-                result = sx.ite(selector, value, result)
-            return result
-
         frame_values = [current.frame.values for current in states]
-        for identifier in set[int]().union(*frame_values):
-            present = [
-                (selector, values[identifier])
-                for selector, values in zip(selectors, frame_values, strict=True)
-                if identifier in values
-            ]
-            merged.frame.values[identifier] = choose(present)
+        # Values some path never defined were defined inside the region and cannot be used
+        # after its join, which none of those definitions dominate.
+        shared = set(frame_values[0]).intersection(*frame_values[1:])
+        addressing = self._regions.addressing(merged.frame.function)
+        values: dict[int, Expr] = {}
+        for identifier in shared:
+            candidates = [current[identifier] for current in frame_values]
+            choice = _choose(selectors, candidates, identifier not in addressing)
+            if choice is None:
+                return None
+            values[identifier] = choice
         written = set[int]().union(
             *(current.memory.written_since(checkpoint) for current in states)
         )
+        bytes_: dict[int, Expr] = {}
         for address in sorted(written):
-            current_byte = merged.memory.read_byte(address)
-            byte = choose(
-                [
-                    (selector, current.memory.read_byte(address))
-                    for selector, current in zip(selectors, states, strict=True)
-                ]
-            )
-            if byte is not current_byte:
+            candidates = [current.memory.read_byte(address) for current in states]
+            choice = _choose(selectors, candidates, allow_constants=False)
+            if choice is None:
+                return None
+            bytes_[address] = choice
+        self.statistics.merges += len(states) - 1
+        merged.frame.values.update(values)
+        for address, byte in bytes_.items():
+            if byte is not merged.memory.read_byte(address):
                 merged.memory.write_byte(address, byte)
         for current in states[:-1]:
             merged.steps = max(merged.steps, current.steps)
@@ -1007,6 +1010,19 @@ class Executor:
             f"one of {len(states)} merged paths",
         )
         return merged
+
+
+def _choose(selectors: list[Expr], values: list[Expr], allow_constants: bool) -> Expr | None:
+    """The if-then-else of `values` by `selectors`.
+
+    None when concrete values disagree and that is not allowed.
+    """
+    if not allow_constants and len({value.value for value in values if value.is_const}) > 1:
+        return None
+    result = values[-1]
+    for selector, value in zip(reversed(selectors[:-1]), reversed(values[:-1]), strict=True):
+        result = sx.ite(selector, value, result)
+    return result
 
 
 def _address(function: Function, frame: Frame) -> int | None:

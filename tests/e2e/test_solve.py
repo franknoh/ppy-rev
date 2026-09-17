@@ -34,9 +34,15 @@ SUCCESS = {
     "ctype_check": b"Well done",
     "recursive_check": b"Correct!",
     "dispatch_check": b"Access granted",
+    "vm_check": b"Granted",
 }
 STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
-SHORTEST = {"xor_check": b"rev_is_easy", "atoi_check": b"12345", "recursive_check": b"recursive"}
+SHORTEST = {
+    "xor_check": b"rev_is_easy",
+    "atoi_check": b"12345",
+    "recursive_check": b"recursive",
+    "vm_check": b"Vm_0k!",
+}
 """Solutions that are unique once the shortest input is preferred."""
 VARIANTS = [(compiler, level) for compiler in ("gcc", "clang") for level in ("O0", "O2")]
 
