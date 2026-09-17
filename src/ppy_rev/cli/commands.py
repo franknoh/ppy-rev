@@ -144,7 +144,7 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
             solver_timeout_ms=int(min(timeout, 600) * 1000),
             max_states=max_states,
         ),
-        emit_smt2=arguments.emit_smt2,
+        emit_smt2=arguments.emit_smt2 is not None,
         native=SandboxOptions(runtime=sandbox_runtime, image=sandbox_image) if verify else None,
         strategy=Strategy(strategy),
         seed=None if seed is None else seed.encode("latin-1"),
@@ -159,9 +159,15 @@ def solve(arguments: argparse.Namespace, out: TextIO) -> int:
 
 def _report_solution(arguments: argparse.Namespace, result: SolveResult, out: TextIO) -> int:
     output: Path | None = arguments.output
+    smt2_target: str | None = arguments.emit_smt2
     render_solve(result, out, verbosity(arguments))
     if output is not None and result.solutions:
         output.write_bytes(solution_bytes(result.solutions[0]))
+    if smt2_target is not None and result.smt2 is not None:
+        if smt2_target == "-":
+            out.write(f"\nSMT-LIB:\n{result.smt2}")
+        else:
+            Path(smt2_target).write_text(result.smt2, encoding="utf-8")
     return 0 if result.status is SolveStatus.SAT else EXIT_UNSOLVED
 
 
@@ -208,3 +214,9 @@ def vm_solve(arguments: argparse.Namespace, out: TextIO) -> int:
         *result.notes,
     )
     return _report_solution(arguments, replace(result, notes=notes), out)
+
+
+def cache_clear(arguments: argparse.Namespace, out: TextIO) -> int:
+    removed = analyzer(arguments).clear_cache()
+    out.write(f"removed {removed} cached export{'s' if removed != 1 else ''}\n")
+    return 0

@@ -71,7 +71,8 @@ class SolveRequest:
     charset: Charset | None = None
     solutions: int = 1
     budget: Budget = field(default_factory=Budget)
-    emit_smt2: Path | None = None
+    emit_smt2: bool = False
+    """Include the goal path's constraints as SMT-LIB in the result."""
     native: SandboxOptions | None = None
     """Also run each solution natively in this sandbox (never done unless requested)."""
     strategy: Strategy = field(default_factory=lambda: Strategy.AUTO)
@@ -165,6 +166,8 @@ class SolveResult:
     constraints: tuple[ConstraintRecord, ...]
     statistics: SolveStatistics
     notes: tuple[str, ...]
+    smt2: str | None = None
+    """The goal path's constraints as SMT-LIB, when requested and a path was found."""
 
 
 def solve_module(
@@ -227,8 +230,11 @@ def solve_module(
             notes += concolic_notes
             status = _concolic_status(result, solutions)
     reached = exploration.reached[0].state if exploration and exploration.reached else None
-    if request.emit_smt2 is not None and reached is not None:
-        request.emit_smt2.write_text(search.session.smt2(reached.conditions()), encoding="utf-8")
+    smt2 = (
+        search.session.smt2(reached.conditions())
+        if request.emit_smt2 and reached is not None
+        else None
+    )
     statistics = search.statistics
     return SolveResult(
         target=f"{module.target.architecture} Linux ELF",
@@ -250,6 +256,7 @@ def solve_module(
             seconds=time.monotonic() - started,
         ),
         notes=tuple(dict.fromkeys(notes + _unsat_notes(status, inputs))),
+        smt2=smt2,
     )
 
 

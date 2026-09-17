@@ -47,7 +47,8 @@ explicit block dispatch, so arbitrary control flow is preserved exactly.
 Ghidra analysis runs headlessly in a throwaway project. Validated exports are
 cached under `$PPY_REV_CACHE_DIR` (default `~/.cache/ppy-rev`), keyed by the
 binary's SHA-256, the Ghidra version, the export bridge sources, and the
-analysis options; `--no-cache` forces a fresh analysis.
+analysis options; `--no-cache` forces a fresh analysis, and `ppy-rev cache clear`
+deletes them.
 
 ### Solving
 
@@ -94,7 +95,8 @@ Discovery can be overridden: `--argv INDEX` or `--stdin LENGTH`, `--goal-address
 unless given: `--length`, `--max-length` (default 64 for argv; stdin defaults to 256
 bytes), `--prefix`, `--charset {printable,ascii,alnum,alpha,digits,hex}`. Printable
 solutions are preferred but not required. `--solutions N` asks for distinct inputs,
-`--output FILE` writes the first one's raw bytes, `--emit-smt2 FILE` the solver input,
+`--output FILE` writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's
+constraints as SMT-LIB,
 and `-v`/`-vv` show evidence, statistics, and path constraints. Limits: `--timeout`
 seconds and `--max-states`.
 

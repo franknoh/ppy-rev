@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     _solve_options(solve)
     solve.set_defaults(handler=commands.solve)
 
+    cache = subcommands.add_parser("cache", help="manage cached Ghidra exports")
+    cache_commands = cache.add_subparsers(dest="cache_command", metavar="command")
+    clear = cache_commands.add_parser("clear", parents=[common], help="delete every cached export")
+    clear.set_defaults(handler=commands.cache_clear)
+
     vm = subcommands.add_parser("vm", help="analyze bytecode interpreters")
     vm_commands = vm.add_subparsers(dest="vm_command", metavar="command")
     detect = vm_commands.add_parser(
@@ -116,7 +121,13 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
     outputs = solve.add_argument_group("output")
     outputs.add_argument("--solutions", type=int, default=1, metavar="COUNT")
     outputs.add_argument("--output", type=Path, help="write the first solution's bytes here")
-    outputs.add_argument("--emit-smt2", type=Path, metavar="PATH", help="write the solver input")
+    outputs.add_argument(
+        "--emit-smt2",
+        nargs="?",
+        const="-",
+        metavar="PATH",
+        help="write the goal path's constraints as SMT-LIB (to stdout without PATH)",
+    )
     native = solve.add_argument_group("native verification (runs the target; off by default)")
     native.add_argument(
         "--verify",

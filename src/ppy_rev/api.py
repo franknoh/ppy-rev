@@ -8,6 +8,7 @@ from pathlib import Path
 from ppy_rev.abi import calling_convention
 from ppy_rev.config import AnalyzerConfig
 from ppy_rev.elf import read_elf_header
+from ppy_rev.ghidra.cache import ExportCache
 from ppy_rev.ghidra.frontend import export_binary
 from ppy_rev.ghidra.schema import GhidraExport
 from ppy_rev.info import ProgramInfo, program_info
@@ -21,6 +22,10 @@ from ppy_rev.summaries.libc import modeled_reads
 class Analyzer:
     def __init__(self, config: AnalyzerConfig | None = None) -> None:
         self.config = config if config is not None else AnalyzerConfig()
+
+    def clear_cache(self) -> int:
+        """Delete every cached Ghidra export; returns how many were removed."""
+        return ExportCache(self.config.cache.resolve_directory()).clear()
 
     def export(self, binary: Path) -> GhidraExport:
         """Run (or reuse a cached) Ghidra analysis and return the validated export."""
