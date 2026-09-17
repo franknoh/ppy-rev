@@ -1,0 +1,48 @@
+// Compiles and tests the Ghidra export bridge against a local Ghidra installation.
+// The sources live inside the Python package so they ship with it; Ghidra compiles
+// them itself when the headless analyzer runs the export script.
+plugins {
+    id 'java'
+}
+
+def ghidraHome = providers.gradleProperty('ghidraHome')
+    .orElse(providers.environmentVariable('PPY_REV_GHIDRA_HOME'))
+    .getOrElse(null)
+if (ghidraHome == null) {
+    throw new GradleException('Set PPY_REV_GHIDRA_HOME or -PghidraHome to a Ghidra installation')
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['../src/ppy_rev/ghidra/bridge']
+        }
+    }
+}
+
+dependencies {
+    compileOnly fileTree(dir: "${ghidraHome}/Ghidra", include: ['**/lib/*.jar'])
+    testImplementation fileTree(dir: "${ghidraHome}/Ghidra/Framework/Generic/lib", include: ['gson-*.jar'])
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['-Xlint:all', '-Werror']
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

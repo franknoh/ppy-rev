@@ -52,6 +52,7 @@ include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 stubPath = "typings"
+extraPaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
@@ -90,6 +91,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 xfail_strict = true
 markers = [

@@ -35,6 +35,7 @@ RUN userdel --remove ubuntu 2>/dev/null; useradd --create-home --uid "${DEV_UID}
     && chown dev:dev /work /opt/venv
 
 ENV PPY_REV_GHIDRA_HOME=/opt/ghidra \
+    PPY_REV_REQUIRE_TOOLS=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy
@@ -45,7 +46,11 @@ WORKDIR /work
 COPY --chown=dev:dev pyproject.toml uv.lock .python-version README.md LICENSE ./
 RUN uv sync --frozen --no-install-project
 
+COPY --chown=dev:dev ghidra ghidra
+RUN cd ghidra && ./gradlew --no-daemon --quiet --console=plain dependencies > /dev/null
+
 COPY --chown=dev:dev . .
-RUN uv sync --frozen
+# pyright fetches its Node runtime on first use; do that at build time, not test time.
+RUN uv sync --frozen && uv run pyright --version
 
 CMD ["scripts/check.sh"]
