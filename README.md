@@ -193,6 +193,7 @@ as metadata.
 ```bash
 scripts/check.sh                    # ruff, pyright, Java bridge build, pytest
 scripts/build_fixtures.sh           # compile C fixtures with gcc/clang at -O0..-O3
+uv run python scripts/benchmark.py  # time Ghidra, lifting, simplification, slicing, search, SMT
 docker compose build && docker compose run --rm dev scripts/check.sh
 ```
 

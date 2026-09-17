@@ -51,7 +51,7 @@ from ppy_rev.ir.model import (
     UserOp,
     Var,
 )
-from ppy_rev.solver.backend import SolverBackend, Status
+from ppy_rev.solver.backend import CheckResult, SolverBackend, Status
 from ppy_rev.symbolic import encode
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.bounds import unsigned_bounds
@@ -161,6 +161,9 @@ class Statistics:
     hiding_approximations: set[str] = field(default_factory=set[str])
     sliced: int = 0
     """Operations skipped because the backward slice showed they cannot matter."""
+    solver_seconds: float = 0.0
+    peak_states: int = 0
+    """The most states waiting to be explored at once."""
     """Approximations made on some path that may have excluded feasible behaviour."""
 
 
@@ -273,12 +276,18 @@ class Executor:
         self.statistics.states += 1
         return self._next_state
 
-    def feasible(self, state: State, extra: list[Expr] | None = None) -> Status:
+    def _check(self, assumptions: list[Expr], symbols: Sequence[Expr] = ()) -> CheckResult:
         self.statistics.solver_calls += 1
-        result = self.session.check(
-            [*state.conditions(), *(extra or [])], timeout_ms=self.budget.solver_timeout_ms
-        )
-        return result.status
+        started = time.monotonic()
+        try:
+            return self.session.check(
+                assumptions, symbols, timeout_ms=self.budget.solver_timeout_ms
+            )
+        finally:
+            self.statistics.solver_seconds += time.monotonic() - started
+
+    def feasible(self, state: State, extra: list[Expr] | None = None) -> Status:
+        return self._check([*state.conditions(), *(extra or [])]).status
 
     def solve(self, state: State, symbols: list[Expr]) -> dict[str, int] | None:
         return self.solve_with(state, symbols, [])
@@ -286,20 +295,14 @@ class Executor:
     def solve_conditions(
         self, conditions: Sequence[Expr], symbols: list[Expr]
     ) -> dict[str, int] | None:
-        self.statistics.solver_calls += 1
-        result = self.session.check(
-            list(conditions), symbols, timeout_ms=self.budget.solver_timeout_ms
-        )
+        result = self._check(list(conditions), symbols)
         return dict(result.model) if result.status is Status.SAT else None
 
     def solve_with(
         self, state: State, symbols: list[Expr], extra: list[Expr]
     ) -> dict[str, int] | None:
         """A model of the path condition plus `extra`, reporting `symbols`."""
-        self.statistics.solver_calls += 1
-        result = self.session.check(
-            [*state.conditions(), *extra], symbols, timeout_ms=self.budget.solver_timeout_ms
-        )
+        result = self._check([*state.conditions(), *extra], symbols)
         return dict(result.model) if result.status is Status.SAT else None
 
     def unique_value(self, state: State, value: Expr) -> int | None:
@@ -308,12 +311,7 @@ class Executor:
             return value.value
         self._auxiliary += 1
         probe = sx.symbol(f"__probe_{self._auxiliary}", value.width)
-        self.statistics.solver_calls += 1
-        first = self.session.check(
-            [*state.conditions(), sx.equal(probe, value)],
-            [probe],
-            timeout_ms=self.budget.solver_timeout_ms,
-        )
+        first = self._check([*state.conditions(), sx.equal(probe, value)], [probe])
         if first.status is not Status.SAT:
             return None
         candidate = first.model[probe.name]
@@ -347,6 +345,7 @@ class Executor:
             successors, stopped = self._run(state)
             for successor in successors:
                 heapq.heappush(pending, (successor.decisions, successor.id, successor))
+            self.statistics.peak_states = max(self.statistics.peak_states, len(pending))
             for stop in stopped:
                 self.statistics.stops[stop.reason] += 1
                 if stop.reason is StopReason.GOAL:

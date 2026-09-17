@@ -154,6 +154,10 @@ class SolveStatistics:
     seconds: float
     sliced_operations: int = 0
     """Operations skipped because they cannot influence reaching the goal."""
+    solver_seconds: float = 0.0
+    peak_states: int = 0
+    path_constraints: int = 0
+    """Constraints on the path to the first solution."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +268,9 @@ def solve_module(
             solver_calls=statistics.solver_calls,
             seconds=time.monotonic() - started,
             sliced_operations=statistics.sliced,
+            solver_seconds=statistics.solver_seconds,
+            peak_states=statistics.peak_states,
+            path_constraints=0 if reached is None else len(reached.constraints),
         ),
         notes=tuple(dict.fromkeys(notes + _unsat_notes(status, inputs))),
         smt2=smt2,
