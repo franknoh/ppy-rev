@@ -9,6 +9,7 @@ wrong ones.
 from __future__ import annotations
 
 import random
+import subprocess
 
 import pytest
 
@@ -70,6 +71,10 @@ def test_lifted_bytecode_behaves_like_the_interpreter(
         original = run_program(module, find_main(module), arguments, reserve=reserve)
         lifted_run = run_program(patched, find_main(patched), arguments, reserve=reserve)
         assert (lifted_run.outcome, lifted_run.stdout) == (original.outcome, original.stdout), data
+        native = subprocess.run(
+            [str(binary), data.decode("latin-1")], capture_output=True, timeout=30, check=False
+        )
+        assert lifted_run.stdout == native.stdout, data
 
 
 def test_lifted_bytecode_refuses_other_interpreter_states(
