@@ -32,6 +32,31 @@ class Constraint:
 
 
 @dataclass(slots=True)
+class SymbolicIO:
+    """Process I/O visible to library models."""
+
+    stdin: tuple[Expr, ...] = ()
+    stdin_position: int = 0
+    stdin_reads: list[tuple[int, int, bool]] = field(default_factory=list[tuple[int, int, bool]])
+    """(start, end, line-based) windows of stdin handed to the program, in order."""
+    stdout: list[Expr] = field(default_factory=list[Expr])
+    """Bytes written to standard output, in order."""
+    heap_next: int = 0
+    approximations: list[str] = field(default_factory=list[str])
+    """Places where a library model over-approximated a result."""
+
+    def copy(self) -> SymbolicIO:
+        return SymbolicIO(
+            stdin=self.stdin,
+            stdin_position=self.stdin_position,
+            stdin_reads=list(self.stdin_reads),
+            stdout=list(self.stdout),
+            heap_next=self.heap_next,
+            approximations=list(self.approximations),
+        )
+
+
+@dataclass(slots=True)
 class Frame:
     function: Function
     block: int
@@ -63,8 +88,11 @@ class State:
     constraints: list[Constraint] = field(default_factory=list[Constraint])
     steps: int = 0
     branch_counts: dict[tuple[int, int], int] = field(default_factory=dict[tuple[int, int], int])
+    decisions: int = 0
+    """Symbolic branches on this path where more than one direction was feasible."""
     outputs: dict[str, Expr] = field(default_factory=dict[str, Expr])
     """Register values returned by the outermost frame, once it has returned."""
+    io: SymbolicIO = field(default_factory=lambda: SymbolicIO())
 
     def fork(self, identifier: int) -> State:
         return State(
@@ -74,7 +102,9 @@ class State:
             constraints=list(self.constraints),
             steps=self.steps,
             branch_counts=dict(self.branch_counts),
+            decisions=self.decisions,
             outputs=dict(self.outputs),
+            io=self.io.copy(),
         )
 
     @property

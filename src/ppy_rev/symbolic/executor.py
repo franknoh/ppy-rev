@@ -8,6 +8,7 @@ path that "does not reach the goal".
 
 from __future__ import annotations
 
+import heapq
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol
 
+from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.diagnostics import DiagnosticCode
 from ppy_rev.execution.memory import MemoryFaultError
 from ppy_rev.ir.model import (
@@ -100,6 +102,17 @@ class Goal:
     avoid: frozenset[int] = frozenset()
     on_return: Callable[[dict[str, Expr]], Expr] | None = None
     """For solving a single function: the condition its outputs must satisfy."""
+    calls: tuple[CallCondition, ...] = ()
+    """Reached when one of these calls runs with its register holding the value."""
+    avoid_calls: tuple[CallCondition, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CallCondition:
+    address: int
+    """The call instruction."""
+    register: str
+    value: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +133,10 @@ class Statistics:
     solver_calls: int = 0
     stops: Counter[StopReason] = field(default_factory=Counter[StopReason])
     seconds: float = 0.0
+    blocks: set[tuple[int, int]] = field(default_factory=set[tuple[int, int]])
+    """(function entry, block id) pairs executed by some state."""
+    pruned: int = 0
+    """States discarded because they could no longer reach the goal."""
 
 
 @dataclass(slots=True)
@@ -194,9 +211,11 @@ class Executor:
         goal: Goal,
         externals: ExternalModels | None = None,
         budget: Budget | None = None,
+        reachability: GoalReachability | None = None,
     ) -> None:
         self.module = module
         self.goal = goal
+        self.reachability = reachability
         self.externals = externals or NoExternals()
         self.budget = budget or Budget()
         self.session = backend.session()
@@ -210,6 +229,10 @@ class Executor:
         self._stack_pointer = module.target.stack_pointer
         self._pointer_width = module.target.pointer_width
         self._next_state = 0
+        self._auxiliary = 0
+        self._pending: list[tuple[int, int, State]] = []
+        self._started = time.monotonic()
+        self._exploration = Exploration([], [], self.statistics)
 
     # -- public ----------------------------------------------------------------------------
 
@@ -226,41 +249,75 @@ class Executor:
         return result.status
 
     def solve(self, state: State, symbols: list[Expr]) -> dict[str, int] | None:
+        return self.solve_with(state, symbols, [])
+
+    def solve_with(
+        self, state: State, symbols: list[Expr], extra: list[Expr]
+    ) -> dict[str, int] | None:
+        """A model of the path condition plus `extra`, reporting `symbols`."""
         self.statistics.solver_calls += 1
         result = self.session.check(
-            state.conditions(), symbols, timeout_ms=self.budget.solver_timeout_ms
+            [*state.conditions(), *extra], symbols, timeout_ms=self.budget.solver_timeout_ms
         )
         return dict(result.model) if result.status is Status.SAT else None
 
+    def unique_value(self, state: State, value: Expr) -> int | None:
+        """The only value `value` can take on this path, or None if it can take several."""
+        if value.is_const:
+            return value.value
+        self._auxiliary += 1
+        probe = sx.symbol(f"__probe_{self._auxiliary}", value.width)
+        self.statistics.solver_calls += 1
+        first = self.session.check(
+            [*state.conditions(), sx.equal(probe, value)],
+            [probe],
+            timeout_ms=self.budget.solver_timeout_ms,
+        )
+        if first.status is not Status.SAT:
+            return None
+        candidate = first.model[probe.name]
+        other = sx.bool_not(sx.equal(value, sx.const(candidate, value.width)))
+        return candidate if self.feasible(state, [other]) is Status.UNSAT else None
+
     def explore(self, initial: State, max_reached: int = 1) -> Exploration:
-        started = time.monotonic()
-        reached: list[Stopped] = []
-        incomplete: list[Stopped] = []
-        pending: list[State] = [initial]
-        exhausted: str | None = None
-        while pending:
+        # Fewest symbolic decisions first: short paths, and short inputs, are found early.
+        self._pending = [(initial.decisions, initial.id, initial)]
+        self._started = time.monotonic()
+        self._exploration = Exploration([], [], self.statistics)
+        return self.resume(max_reached)
+
+    def resume(self, max_reached: int) -> Exploration:
+        """Continue exploring until `max_reached` goal states are known in total."""
+        exploration = self._exploration
+        pending = self._pending
+        resumed = time.monotonic()
+        while pending and len(exploration.reached) < max_reached:
             if self.statistics.states > self.budget.max_states:
-                exhausted = f"more than {self.budget.max_states} states"
+                exploration.budget_exhausted = f"more than {self.budget.max_states} states"
                 break
             if self.statistics.steps > self.budget.max_steps:
-                exhausted = f"more than {self.budget.max_steps} operations"
+                exploration.budget_exhausted = f"more than {self.budget.max_steps} operations"
                 break
-            if time.monotonic() - started > self.budget.max_seconds:
-                exhausted = f"more than {self.budget.max_seconds:g}s"
+            if time.monotonic() - self._started > self.budget.max_seconds:
+                exploration.budget_exhausted = f"more than {self.budget.max_seconds:g}s"
                 break
-            state = pending.pop()
+            _, _, state = heapq.heappop(pending)
             successors, stopped = self._run(state)
-            pending.extend(reversed(successors))
+            for successor in successors:
+                heapq.heappush(pending, (successor.decisions, successor.id, successor))
             for stop in stopped:
                 self.statistics.stops[stop.reason] += 1
                 if stop.reason is StopReason.GOAL:
-                    reached.append(stop)
+                    exploration.reached.append(stop)
                 elif stop.reason in INCOMPLETE_REASONS:
-                    incomplete.append(stop)
-            if len(reached) >= max_reached:
-                break
-        self.statistics.seconds += time.monotonic() - started
-        return Exploration(reached, incomplete, self.statistics, exhausted)
+                    exploration.incomplete.append(stop)
+        self.statistics.seconds += time.monotonic() - resumed
+        return exploration
+
+    @property
+    def exhausted(self) -> bool:
+        """No states remain to explore."""
+        return not self._pending
 
     # -- running a state -------------------------------------------------------------------
 
@@ -280,6 +337,8 @@ class Executor:
         frame = state.frame
         function = frame.function
         block = function.blocks[frame.block]
+        if frame.position == 0:
+            self.statistics.blocks.add((function.entry, block.id))
         if frame.position <= len(block.operations):
             for start in block.instructions:
                 if start.position == frame.position:
@@ -486,6 +545,64 @@ class Executor:
             register: self.value(frame, operand)
             for register, operand in zip(call.argument_registers, call.arguments, strict=True)
         }
+        reached = self._call_conditions(state, call, arguments)
+        try:
+            outcome = self._dispatch(state, frame, call, arguments, tail)
+        except _Stop as stop:
+            if not reached:
+                raise
+            # The goal states split off above stand on their own.
+            stopped = replace(self._stopped(state, stop.reason, stop.detail), code=stop.code)
+            return [], [*reached, stopped]
+        if not reached:
+            return outcome
+        if outcome is None:
+            return [state], reached
+        return outcome[0], outcome[1] + reached
+
+    def _call_conditions(
+        self, state: State, call: Call, arguments: dict[str, Expr]
+    ) -> list[Stopped]:
+        """Split off goal states for goal calls; exclude avoided arguments from this state."""
+        reached: list[Stopped] = []
+        address = call.origin.address
+        for condition in self.goal.avoid_calls:
+            holds = self._argument_is(arguments, condition, address)
+            if holds is None or holds is sx.FALSE:
+                continue
+            if holds is sx.TRUE:
+                raise _Stop(StopReason.AVOIDED, f"call at {address:#x} prints an avoided message")
+            self.add_constraint(state, sx.bool_not(holds), ConstraintKind.GOAL, call.origin)
+            if self.feasible(state) is Status.UNSAT:
+                raise _Stop(StopReason.AVOIDED, f"call at {address:#x} prints an avoided message")
+        for condition in self.goal.calls:
+            holds = self._argument_is(arguments, condition, address)
+            if holds is None or holds is sx.FALSE:
+                continue
+            detail = f"call at {address:#x} with {condition.register} = {condition.value:#x}"
+            if holds is sx.TRUE:
+                raise _Stop(StopReason.GOAL, detail)
+            goal_state = state.fork(self.new_state_id())
+            self.add_constraint(goal_state, holds, ConstraintKind.GOAL, call.origin)
+            if self.feasible(goal_state) is Status.SAT:
+                reached.append(self._stopped(goal_state, StopReason.GOAL, detail, address))
+            self.add_constraint(state, sx.bool_not(holds), ConstraintKind.GOAL, call.origin)
+        return reached
+
+    @staticmethod
+    def _argument_is(
+        arguments: dict[str, Expr], condition: CallCondition, address: int
+    ) -> Expr | None:
+        if condition.address != address:
+            return None
+        value = arguments.get(condition.register)
+        if value is None:
+            return None
+        return sx.equal(value, sx.const(condition.value, value.width))
+
+    def _dispatch(
+        self, state: State, frame: Frame, call: Call, arguments: dict[str, Expr], tail: bool
+    ) -> tuple[list[State], list[Stopped]] | None:
         address: int
         match call.target:
             case DirectTarget() | ExternalTarget():
@@ -537,7 +654,7 @@ class Executor:
         for outcome in outcomes:
             match outcome:
                 case Returned(state=successor, outputs=outputs):
-                    pointer = outputs.get(self._stack_pointer)
+                    pointer = outputs.get(self._stack_pointer, arguments.get(self._stack_pointer))
                     if pointer is not None:
                         outputs[self._stack_pointer] = sx.add(
                             pointer, sx.const(self._pointer_width // 8, pointer.width)
@@ -577,7 +694,10 @@ class Executor:
         for register, result in zip(call.result_registers, call.results, strict=True):
             produced = outputs.get(register, arguments.get(register))
             if produced is None:
-                raise _Stop(StopReason.UNSUPPORTED, f"call result {register} is undefined")
+                # A register an import clobbers without a modeled value: unknown, not zero.
+                self._auxiliary += 1
+                name = f"__clobbered_{register}_{call.origin.address:x}_{self._auxiliary}"
+                produced = sx.symbol(name, result.width)
             frame.values[result.id] = _resize(produced, result.width)
 
     def _return(
@@ -731,9 +851,16 @@ class Executor:
                 stopped.append(self._stopped(child, StopReason.SOLVER_UNKNOWN, str(status)))
                 continue
             self._transfer(child.frame, source, target)
+            if self.reachability is not None and not self.reachability.can_reach(
+                [(frame.function.entry, frame.block) for frame in child.frames]
+            ):
+                self.statistics.pruned += 1
+                continue
             successors.append(child)
         if len(successors) > 1:
             self.statistics.forks += len(successors) - 1
+            for successor in successors:
+                successor.decisions += 1
         return successors, stopped
 
 
