@@ -31,6 +31,7 @@ ppy-rev info ./chall                # architecture, entry point, sections, funct
 ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function (--no-simplify: raw)
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ppy-rev lift ./chall --emit-ppy -o out --check-ppy
+ppy-rev solve ./chall               # find an input that reaches the success output
 ```
 
 `--emit-ppy` writes `out/module.ppy` (every lifted function plus the program image),
@@ -44,6 +45,58 @@ Ghidra analysis runs headlessly in a throwaway project. Validated exports are
 cached under `$PPY_REV_CACHE_DIR` (default `~/.cache/ppy-rev`), keyed by the
 binary's SHA-256, the Ghidra version, the export bridge sources, and the
 analysis options; `--no-cache` forces a fresh analysis.
+
+### Solving
+
+```text
+$ ppy-rev solve ./chall
+Target: x86-64 Linux ELF
+
+Input:
+  argv[1]
+  inferred length: 11
+
+Goal:
+  reaches 0x1010b7
+  calls puts("Correct!")
+  ...
+Solver:
+  backend: z3
+  result: sat
+
+Solution:
+  rev_is_easy
+
+Verification:
+  RevIR execution: passed (reaches the goal)
+```
+
+`solve` finds `main`, discovers which inputs the program reads (`argv[k]` by following
+where the argv pointer flows; stdin through `read`, `fgets`, `getchar`), and ranks
+printed strings as likely success or failure outcomes. The goal is the call that prints
+the success string *with that string as its argument*, so branchless selection of the
+message (`cmov`) is handled. Symbolic execution then searches paths with the fewest
+symbolic decisions first, pruning states that can no longer reach the goal and merging
+the paths of loop-free branch regions where they join. Library calls use models of the
+C functions crackmes typically use (`strlen`, `strcmp`, `memcmp`, `read`, `fgets`,
+`puts`, `printf`, `exit`, ...); where a model over-approximates, such as the return
+value of a formatted `printf`, the result notes it. Every solution is re-run on the
+concrete RevIR interpreter before it is reported.
+
+Discovery can be overridden: `--argv INDEX` or `--stdin LENGTH`, `--goal-address` or
+`--goal-string`, `--avoid-address`/`--avoid-string`. Constraints are never assumed
+unless given: `--length`, `--max-length` (default 64 for argv; stdin defaults to 256
+bytes), `--prefix`, `--charset {printable,ascii,alnum,alpha,digits,hex}`. Printable
+solutions are preferred but not required. `--solutions N` asks for distinct inputs,
+`--output FILE` writes the first one's raw bytes, `--emit-smt2 FILE` the solver input,
+and `-v`/`-vv` show evidence, statistics, and path constraints. Limits: `--timeout`
+seconds and `--max-states`.
+
+The result is `sat`, `unsat` (every path was explored within the input bounds),
+`unknown`, `timeout`, `budget exhausted`, `analysis incomplete`, or `unsupported
+semantics`; only `sat` exits with status 0. Unknown solver results and unmodeled
+semantics on a relevant path are reported as such, never as `unsat`. The target binary
+is never executed.
 
 ## Architecture
 
@@ -68,9 +121,14 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
   the same compiled code, before and after simplification.
 - `ppy_rev.symbolic` and `ppy_rev.solver`: symbolic execution of RevIR over
   hash-consed bit-vector expressions, with a narrow solver interface and a Z3
-  backend. Pointers that are symbolic over a small, provably bounded range are
-  modeled exactly; wider ones stop exploration with a diagnostic. Division by a
-  symbolic divisor constrains it to be non-zero, since RevIR division faults.
+  backend. Pointers that are symbolic over a small range (bounded syntactically or by
+  the path condition) are modeled exactly; wider ones stop exploration with a
+  diagnostic. Division by a symbolic divisor constrains it to be non-zero, since RevIR
+  division faults.
+- `ppy_rev.summaries`: C library models, concrete (for the interpreter) and symbolic,
+  tested against each other.
+- `ppy_rev.analysis`: whole-program facts for solving: `main`, input discovery, goal
+  ranking from strings, and goal reachability.
 - `ppy_rev.ppy`: PPy emission and validation with `ppy check`.
 
 RevIR values have explicit bit widths; signedness belongs to operations.

@@ -1,0 +1,538 @@
+"""Automatic solving: find the input that drives a program to its success outcome."""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+
+from ppy_rev.abi import calling_convention
+from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
+from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
+from ppy_rev.analysis.program import find_main, reachable_functions, string_references
+from ppy_rev.analysis.reachability import GoalReachability
+from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.execution.program import enter_main, program_memory
+from ppy_rev.execution.run import Watch, run_program
+from ppy_rev.ir.model import Function, Module
+from ppy_rev.solver.backend import SolverBackend
+from ppy_rev.solver.z3_backend import Z3Backend
+from ppy_rev.summaries.symbolic import SymbolicLibc
+from ppy_rev.symbolic import expr as sx
+from ppy_rev.symbolic.executor import (
+    INCOMPLETE_REASONS,
+    Budget,
+    CallCondition,
+    Executor,
+    Exploration,
+    Goal,
+    Stopped,
+    StopReason,
+)
+from ppy_rev.symbolic.expr import Expr
+from ppy_rev.symbolic.inputs import (
+    Charset,
+    argv_constraints,
+    argv_solution,
+    argv_symbols,
+    in_charset,
+    stdin_constraints,
+    stdin_solution,
+    stdin_symbols,
+)
+from ppy_rev.symbolic.memory import SymbolicMemory
+from ppy_rev.symbolic.state import ConstraintKind, Frame, State, SymbolicIO
+
+DEFAULT_STDIN_LENGTH = 256
+PREFERENCE_PATHS = 8
+"""Goal paths examined for a printable solution before accepting any bytes."""
+
+
+@dataclass(frozen=True, slots=True)
+class SolveRequest:
+    binary: Path
+    argv: int | None = None
+    """Treat argv[index] as the input (default: discover)."""
+    stdin: int | None = None
+    """Treat this many bytes of standard input as the input (default: discover)."""
+    goal_address: int | None = None
+    goal_string: str | None = None
+    avoid_addresses: tuple[int, ...] = ()
+    avoid_strings: tuple[str, ...] = ()
+    length: int | None = None
+    """Exact length of the argv string, or of the first stdin line."""
+    max_length: int = 64
+    """Longest argv string considered when no exact length is given."""
+    prefix: bytes = b""
+    charset: Charset | None = None
+    solutions: int = 1
+    budget: Budget = field(default_factory=Budget)
+    emit_smt2: Path | None = None
+
+
+class SolveStatus(StrEnum):
+    SAT = "sat"
+    UNSAT = "unsat"
+    UNKNOWN = "unknown"
+    TIMEOUT = "timeout"
+    INCOMPLETE = "analysis incomplete"
+    UNSUPPORTED = "unsupported semantics"
+    BUDGET_EXHAUSTED = "budget exhausted"
+
+
+@dataclass(frozen=True, slots=True)
+class InputDescription:
+    kind: InputKind
+    index: int | None
+    capacity: int
+    """Symbolic bytes available to the solver."""
+    discovered: bool
+    evidence: tuple[str, ...]
+
+    def label(self) -> str:
+        return f"argv[{self.index}]" if self.kind is InputKind.ARGV else "stdin"
+
+    @property
+    def max_bytes(self) -> int:
+        """Longest input considered (an argv string also needs its terminating NUL)."""
+        return self.capacity - 1 if self.kind is InputKind.ARGV else self.capacity
+
+
+@dataclass(frozen=True, slots=True)
+class Solution:
+    argv: bytes | None
+    stdin: bytes | None
+    verified: bool
+    """Concrete RevIR execution with these inputs reaches the goal before any avoid address."""
+    verification: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintRecord:
+    kind: ConstraintKind
+    text: str
+    function: str | None
+    address: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SolveStatistics:
+    functions_lifted: int
+    relevant_blocks: int
+    symbolic_operations: int
+    symbolic_branches: int
+    states: int
+    solver_calls: int
+    seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class SolveResult:
+    target: str
+    entry: str
+    inputs: tuple[InputDescription, ...]
+    goal: GoalCandidate
+    avoid: tuple[GoalCandidate, ...]
+    status: SolveStatus
+    backend: str
+    solutions: tuple[Solution, ...]
+    constraints: tuple[ConstraintRecord, ...]
+    statistics: SolveStatistics
+    notes: tuple[str, ...]
+
+
+def solve_module(
+    module: Module, request: SolveRequest, backend: SolverBackend | None = None
+) -> SolveResult:
+    started = time.monotonic()
+    backend = backend or Z3Backend()
+    main = find_main(module)
+    reachable = reachable_functions(module, main)
+    goal, avoid = _select_goals(module, reachable, request)
+    inputs = _select_inputs(module, main, request)
+    executor = Executor(
+        module,
+        backend,
+        _executor_goal(goal, avoid),
+        SymbolicLibc(calling_convention(module.target)),
+        request.budget,
+        GoalReachability(module, frozenset({goal.address})),
+    )
+    state, symbols = _initial_state(executor, module, main, inputs, request)
+    exploration = executor.explore(state, max_reached=max(1, request.solutions))
+    solutions, notes = _solutions(
+        executor, module, main, request, inputs, symbols, exploration, goal, avoid
+    )
+    reached = exploration.reached[0].state if exploration.reached else None
+    if request.emit_smt2 is not None and reached is not None:
+        request.emit_smt2.write_text(executor.session.smt2(reached.conditions()), encoding="utf-8")
+    statistics = exploration.statistics
+    status = _status(exploration, solutions)
+    return SolveResult(
+        target=f"{module.target.architecture} Linux ELF",
+        entry=main.name,
+        inputs=tuple(inputs),
+        goal=goal,
+        avoid=tuple(avoid),
+        status=status,
+        backend=backend.name,
+        solutions=tuple(solutions),
+        constraints=_constraints(reached),
+        statistics=SolveStatistics(
+            functions_lifted=len(module.functions),
+            relevant_blocks=len(statistics.blocks),
+            symbolic_operations=statistics.steps,
+            symbolic_branches=statistics.forks,
+            states=statistics.states,
+            solver_calls=statistics.solver_calls,
+            seconds=time.monotonic() - started,
+        ),
+        notes=tuple(notes + _incomplete_notes(exploration) + _unsat_notes(status, inputs)),
+    )
+
+
+# -- goals ---------------------------------------------------------------------------------
+
+
+def _select_goals(
+    module: Module, reachable: list[Function], request: SolveRequest
+) -> tuple[GoalCandidate, list[GoalCandidate]]:
+    ranked = rank_goals(string_references(module, reachable))
+    goal: GoalCandidate
+    if request.goal_address is not None:
+        goal = GoalCandidate(request.goal_address, Outcome.SUCCESS, "", "", 1.0, ("given",))
+    elif request.goal_string is not None:
+        goal = _by_string(module, reachable, request.goal_string, Outcome.SUCCESS)
+    else:
+        successes = [candidate for candidate in ranked if candidate.outcome is Outcome.SUCCESS]
+        if not successes:
+            raise PpyRevError(
+                "no likely success output found; pass --goal-address or --goal-string"
+            )
+        goal = successes[0]
+    avoid = [
+        GoalCandidate(address, Outcome.FAILURE, "", "", 1.0, ("given",))
+        for address in request.avoid_addresses
+    ]
+    avoid.extend(
+        _by_string(module, reachable, text, Outcome.FAILURE) for text in request.avoid_strings
+    )
+    if request.goal_address is None and request.goal_string is None and not avoid:
+        avoid = [candidate for candidate in ranked if candidate.outcome is Outcome.FAILURE]
+    return goal, [candidate for candidate in avoid if candidate.address != goal.address]
+
+
+def _by_string(
+    module: Module, reachable: list[Function], text: str, outcome: Outcome
+) -> GoalCandidate:
+    needle = text.encode("latin-1")
+    references = string_references(module, reachable)
+    exact = [reference for reference in references if reference.text.rstrip(b"\n") == needle]
+    matches = exact or [reference for reference in references if needle in reference.text]
+    if not matches:
+        raise PpyRevError(f"no code references a string containing {text!r}")
+    reference = matches[0]
+    return GoalCandidate(
+        reference.instruction,
+        outcome,
+        reference.text.decode("latin-1"),
+        reference.function,
+        1.0,
+        (f"string {text!r} requested",),
+    )
+
+
+# -- inputs --------------------------------------------------------------------------------
+
+
+def _select_inputs(module: Module, main: Function, request: SolveRequest) -> list[InputDescription]:
+    if request.argv is not None or request.stdin is not None:
+        chosen: list[InputDescription] = []
+        if request.argv is not None:
+            chosen.append(
+                InputDescription(InputKind.ARGV, request.argv, _argv_capacity(request), False, ())
+            )
+        if request.stdin is not None:
+            chosen.append(InputDescription(InputKind.STDIN, None, request.stdin, False, ()))
+        return chosen
+    discovered = discover_inputs(module, main)
+    if not discovered:
+        raise PpyRevError("no input source found; pass --argv INDEX or --stdin LENGTH")
+    return [_describe(candidate, request) for candidate in discovered]
+
+
+def _argv_capacity(request: SolveRequest) -> int:
+    """Symbolic bytes for an argv string: the longest input considered, plus its NUL."""
+    return max(request.max_length, request.length or 0, len(request.prefix)) + 1
+
+
+def _describe(candidate: InputCandidate, request: SolveRequest) -> InputDescription:
+    if candidate.kind is InputKind.ARGV:
+        return InputDescription(
+            InputKind.ARGV, candidate.index, _argv_capacity(request), True, candidate.evidence
+        )
+    return InputDescription(InputKind.STDIN, None, DEFAULT_STDIN_LENGTH, True, candidate.evidence)
+
+
+@dataclass(frozen=True, slots=True)
+class _Symbols:
+    argv: dict[int, tuple[Expr, ...]]
+    stdin: tuple[Expr, ...]
+
+    def all(self) -> list[Expr]:
+        return [symbol for symbols in self.argv.values() for symbol in symbols] + list(self.stdin)
+
+
+def _initial_state(
+    executor: Executor,
+    module: Module,
+    main: Function,
+    inputs: list[InputDescription],
+    request: SolveRequest,
+) -> tuple[State, _Symbols]:
+    argv_inputs = {
+        item.index: item for item in inputs if item.kind is InputKind.ARGV and item.index
+    }
+    count = max([0, *argv_inputs]) + 1
+    arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
+    image = program_memory(module)
+    entry = enter_main(
+        module,
+        image,
+        arguments,
+        {index: item.capacity for index, item in argv_inputs.items()},
+    )
+    memory = SymbolicMemory(image)
+    symbols = _Symbols({}, ())
+    stdin_length = next((item.capacity for item in inputs if item.kind is InputKind.STDIN), 0)
+    state = State(
+        id=executor.new_state_id(),
+        frames=[],
+        memory=memory,
+        io=SymbolicIO(stdin=stdin_symbols(stdin_length)),
+    )
+    for index, item in sorted(argv_inputs.items()):
+        content = argv_symbols(index, item.capacity)
+        symbols.argv[index] = content
+        for offset, symbol in enumerate(content):
+            memory.write_byte(entry.argv_strings[index] + offset, symbol)
+        for condition in argv_constraints(content, request.length, request.prefix, request.charset):
+            executor.add_constraint(state, condition, ConstraintKind.INPUT, None, f"argv[{index}]")
+    if stdin_length:
+        symbols = _Symbols(symbols.argv, state.io.stdin)
+        line_length = None if argv_inputs else request.length
+        prefix = b"" if argv_inputs else request.prefix
+        for condition in stdin_constraints(state.io.stdin, line_length, prefix, request.charset):
+            executor.add_constraint(state, condition, ConstraintKind.INPUT, None, "stdin")
+    values = {
+        item.value.id: sx.const(entry.registers.get(item.register, 0), item.value.width)
+        for item in main.inputs
+    }
+    state.frames.append(
+        Frame(
+            function=main,
+            block=0,
+            position=0,
+            values=values,
+            expected_return=sx.const(entry.return_address, module.target.pointer_width),
+            resume=None,
+        )
+    )
+    return state, symbols
+
+
+# -- solutions -----------------------------------------------------------------------------
+
+
+def _solutions(
+    executor: Executor,
+    module: Module,
+    main: Function,
+    request: SolveRequest,
+    inputs: list[InputDescription],
+    symbols: _Symbols,
+    exploration: Exploration,
+    goal: GoalCandidate,
+    avoid: list[GoalCandidate],
+) -> tuple[list[Solution], list[str]]:
+    solutions: list[Solution] = []
+    notes: list[str] = []
+    seen: set[tuple[bytes | None, bytes | None]] = set()
+    watches = (_watch("goal", goal), *(_watch("avoid", candidate) for candidate in avoid))
+    all_symbols = symbols.all()
+    has_stdin = any(item.kind is InputKind.STDIN for item in inputs)
+
+    def extract(state: State, extra: list[Expr]) -> bool:
+        """Add solutions from `state` under `extra`; report whether any model existed."""
+        blocking: list[Expr] = []
+        found = False
+        while len(solutions) < request.solutions:
+            model = executor.solve_with(state, all_symbols, [*blocking, *extra])
+            if model is None:
+                break
+            found = True
+            argv = next(
+                (argv_solution(content, model) for _, content in sorted(symbols.argv.items())), None
+            )
+            stdin = (
+                stdin_solution(symbols.stdin, model, state.io.stdin_reads) if has_stdin else None
+            )
+            blocking.append(_block(symbols, argv, stdin))
+            if (argv, stdin) not in seen:
+                seen.add((argv, stdin))
+                solutions.append(_verify(module, main, symbols, argv, stdin, watches))
+        return found
+
+    # Prefer printable input, looking at a few more goal paths for it, but never require it.
+    preference = _printable_preference(symbols) if request.charset is None else []
+    unpreferred: list[State] = []
+    index = 0
+    while len(solutions) < request.solutions:
+        if index >= len(exploration.reached):
+            if not preference or index >= PREFERENCE_PATHS or executor.exhausted:
+                break
+            exploration = executor.resume(index + 1)
+            if index >= len(exploration.reached):
+                break
+        state = exploration.reached[index].state
+        index += 1
+        notes.extend(note for note in state.io.approximations if note not in notes)
+        if not extract(state, preference) and preference:
+            unpreferred.append(state)
+    for state in unpreferred:
+        if len(solutions) >= request.solutions:
+            break
+        extract(state, [])
+    return solutions, notes
+
+
+def _executor_goal(goal: GoalCandidate, avoid: list[GoalCandidate]) -> Goal:
+    def condition(candidate: GoalCandidate) -> CallCondition | None:
+        if candidate.register is None or candidate.string_address is None:
+            return None
+        return CallCondition(candidate.address, candidate.register, candidate.string_address)
+
+    goal_call = condition(goal)
+    avoid_calls = tuple(call for call in map(condition, avoid) if call is not None)
+    avoid_addresses = frozenset(
+        candidate.address for candidate in avoid if condition(candidate) is None
+    )
+    if goal_call is None:
+        return Goal(
+            addresses=frozenset({goal.address}),
+            avoid=avoid_addresses - {goal.address},
+            avoid_calls=avoid_calls,
+        )
+    return Goal(calls=(goal_call,), avoid=avoid_addresses, avoid_calls=avoid_calls)
+
+
+def _watch(name: str, candidate: GoalCandidate) -> Watch:
+    if candidate.register is not None and candidate.string_address is not None:
+        return Watch(name, candidate.address, candidate.register, candidate.string_address)
+    return Watch(name, candidate.address)
+
+
+def _printable_preference(symbols: _Symbols) -> list[Expr]:
+    preferred: list[Expr] = []
+    for content in symbols.argv.values():
+        preferred.extend(
+            sx.bool_or(sx.equal(byte, sx.const(0, 8)), in_charset(byte, Charset.PRINTABLE))
+            for byte in content
+        )
+    preferred.extend(
+        sx.bool_or(sx.equal(byte, sx.const(0x0A, 8)), in_charset(byte, Charset.PRINTABLE))
+        for byte in symbols.stdin
+    )
+    return preferred
+
+
+def _block(symbols: _Symbols, argv: bytes | None, stdin: bytes | None) -> Expr:
+    """A clause excluding exactly this solution."""
+    differences: list[Expr] = []
+    if argv is not None:
+        content = next(iter(symbols.argv.values()))
+        for position, symbol in enumerate(content):
+            value = argv[position] if position < len(argv) else 0
+            differences.append(sx.bool_not(sx.equal(symbol, sx.const(value, 8))))
+            if position >= len(argv):
+                break
+    if stdin is not None:
+        for position, value in enumerate(stdin):
+            differences.append(sx.bool_not(sx.equal(symbols.stdin[position], sx.const(value, 8))))
+    return sx.bool_or(*differences) if differences else sx.FALSE
+
+
+def _verify(
+    module: Module,
+    main: Function,
+    symbols: _Symbols,
+    argv: bytes | None,
+    stdin: bytes | None,
+    watches: tuple[Watch, ...],
+) -> Solution:
+    count = max([0, *symbols.argv]) + 1
+    arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
+    for index in symbols.argv:
+        arguments[index] = argv or b""
+    run = run_program(module, main, arguments, stdin or b"", watches)
+    verified = run.first_watch is not None and run.first_watch.name == "goal"
+    return Solution(argv, stdin, verified, "reaches the goal" if verified else run.outcome)
+
+
+def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:
+    if solutions:
+        return SolveStatus.SAT
+    if exploration.reached:
+        # Goal states are checked satisfiable when reached; failing to extract a model
+        # afterwards means the solver gave up, which says nothing about satisfiability.
+        return SolveStatus.UNKNOWN
+    if exploration.timed_out:
+        return SolveStatus.TIMEOUT
+    if exploration.budget_exhausted is not None:
+        return SolveStatus.BUDGET_EXHAUSTED
+    reasons = {stop.reason for stop in exploration.incomplete}
+    if StopReason.SOLVER_UNKNOWN in reasons:
+        return SolveStatus.UNKNOWN
+    if StopReason.UNSUPPORTED in reasons:
+        return SolveStatus.UNSUPPORTED
+    if reasons & INCOMPLETE_REASONS:
+        return SolveStatus.INCOMPLETE
+    return SolveStatus.UNSAT
+
+
+def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
+    if state is None:
+        return ()
+    return tuple(
+        ConstraintRecord(
+            constraint.kind,
+            sx.render(constraint.condition, 240),
+            constraint.function,
+            None if constraint.origin is None else constraint.origin.address,
+        )
+        for constraint in state.constraints
+        if constraint.kind is not ConstraintKind.INPUT
+    )
+
+
+def _incomplete_notes(exploration: Exploration) -> list[str]:
+    notes: list[str] = []
+    if exploration.budget_exhausted is not None:
+        notes.append(f"exploration stopped after {exploration.budget_exhausted}")
+    for stop in exploration.incomplete[:10]:
+        notes.append(_describe_stop(stop))
+    return notes
+
+
+def _unsat_notes(status: SolveStatus, inputs: list[InputDescription]) -> list[str]:
+    if status is not SolveStatus.UNSAT:
+        return []
+    bounds = ", ".join(f"{item.label()} up to {item.max_bytes} bytes" for item in inputs)
+    return [f"every path was explored and none reaches the goal with {bounds}"]
+
+
+def _describe_stop(stop: Stopped) -> str:
+    where = f" in {stop.function}" if stop.function else ""
+    address = f" at {stop.address:#x}" if stop.address is not None else ""
+    return f"{stop.reason}{where}{address}: {stop.detail}"

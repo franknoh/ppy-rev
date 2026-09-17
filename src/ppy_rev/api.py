@@ -14,6 +14,7 @@ from ppy_rev.info import ProgramInfo, program_info
 from ppy_rev.ir.model import Module
 from ppy_rev.lift.lifter import LiftResult, lift_export
 from ppy_rev.simplify.pipeline import simplify_module
+from ppy_rev.solve import SolveRequest, SolveResult, solve_module
 from ppy_rev.summaries.libc import modeled_reads
 
 
@@ -40,3 +41,7 @@ class Analyzer:
 
     def simplified(self, binary: Path) -> Module:
         return self.simplify(self.lift(binary)).module
+
+    def solve(self, request: SolveRequest) -> SolveResult:
+        """Find inputs that drive the program to its success outcome."""
+        return solve_module(self.simplified(request.binary), request)

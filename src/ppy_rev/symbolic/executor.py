@@ -150,6 +150,7 @@ class Exploration:
     incomplete: list[Stopped]
     statistics: Statistics
     budget_exhausted: str | None = None
+    timed_out: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +307,7 @@ class Executor:
                 break
             if time.monotonic() - self._started > self.budget.max_seconds:
                 exploration.budget_exhausted = f"more than {self.budget.max_seconds:g}s"
+                exploration.timed_out = True
                 break
             _, _, state = heapq.heappop(pending)
             successors, stopped = self._run(state)

@@ -6,24 +6,24 @@ import argparse
 import sys
 import traceback
 from collections.abc import Callable, Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
 from ppy_rev._version import __version__
-from ppy_rev.api import Analyzer
-from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
-from ppy_rev.diagnostics import PpyRevError, Severity
-from ppy_rev.info import ProgramInfo
-from ppy_rev.ir.text import format_module
-from ppy_rev.ppy.check import check_ppy
-from ppy_rev.ppy.emit import emit_module
-from ppy_rev.simplify.pipeline import simplify_module
+from ppy_rev.cli import commands
+from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.symbolic.inputs import Charset
 
-EXIT_ERROR = 1
 EXIT_INTERNAL = 70
 
 type Handler = Callable[[argparse.Namespace, TextIO], int]
+
+
+def _address(text: str) -> int:
+    try:
+        return int(text, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid address {text!r}") from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         "info", parents=[common], help="show architecture, entry point, sections, and functions"
     )
     info.add_argument("binary", type=Path)
-    info.set_defaults(handler=_info)
+    info.set_defaults(handler=commands.info)
 
     lift = subcommands.add_parser("lift", parents=[common], help="lift a binary into RevIR")
     lift.add_argument("binary", type=Path)
@@ -59,14 +59,42 @@ def build_parser() -> argparse.ArgumentParser:
     lift.add_argument(
         "--no-simplify", action="store_true", help="show RevIR exactly as lifted from p-code"
     )
-    lift.set_defaults(handler=_lift)
+    lift.set_defaults(handler=commands.lift)
+
+    solve = subcommands.add_parser(
+        "solve", parents=[common], help="find an input that reaches the success outcome"
+    )
+    solve.add_argument("binary", type=Path)
+    inputs = solve.add_argument_group("inputs (default: discovered)")
+    inputs.add_argument("--argv", type=int, metavar="INDEX", help="solve for argv[INDEX]")
+    inputs.add_argument("--stdin", type=int, metavar="LENGTH", help="solve for LENGTH stdin bytes")
+    goals = solve.add_argument_group("goals (default: discovered from output strings)")
+    goals.add_argument("--goal-address", type=_address, metavar="ADDRESS")
+    goals.add_argument("--goal-string", metavar="TEXT")
+    goals.add_argument("--avoid-address", type=_address, action="append", metavar="ADDRESS")
+    goals.add_argument("--avoid-string", action="append", metavar="TEXT")
+    constraints = solve.add_argument_group("constraints (never assumed unless given)")
+    constraints.add_argument("--length", type=int, help="exact input length (first line for stdin)")
+    constraints.add_argument(
+        "--max-length", type=int, default=64, help="longest argv input considered (default 64)"
+    )
+    constraints.add_argument("--prefix", metavar="TEXT")
+    constraints.add_argument("--charset", choices=[charset.value for charset in Charset])
+    outputs = solve.add_argument_group("output")
+    outputs.add_argument("--solutions", type=int, default=1, metavar="COUNT")
+    outputs.add_argument("--output", type=Path, help="write the first solution's bytes here")
+    outputs.add_argument("--emit-smt2", type=Path, metavar="PATH", help="write the solver input")
+    limits = solve.add_argument_group("limits")
+    limits.add_argument("--timeout", type=float, default=600.0, metavar="SECONDS")
+    limits.add_argument("--max-states", type=int, default=20_000)
+    solve.set_defaults(handler=commands.solve)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
-    handler = _handler(arguments)
+    handler: Handler | None = getattr(arguments, "handler", None)
     if handler is None:
         parser.print_help(sys.stdout)
         return 0
@@ -74,111 +102,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handler(arguments, sys.stdout)
     except PpyRevError as error:
         sys.stderr.write(f"error: {error}\n")
-        return EXIT_ERROR
+        return commands.EXIT_ERROR
     except Exception as error:  # noqa: BLE001 - last-resort report for unexpected failures
-        if _verbosity(arguments) > 0:
+        if commands.verbosity(arguments) > 0:
             traceback.print_exc()
         else:
             sys.stderr.write(f"internal error: {error!r} (rerun with -v for a traceback)\n")
         return EXIT_INTERNAL
-
-
-def _handler(arguments: argparse.Namespace) -> Handler | None:
-    handler: Handler | None = getattr(arguments, "handler", None)
-    return handler
-
-
-def _verbosity(arguments: argparse.Namespace) -> int:
-    verbose: int = getattr(arguments, "verbose", 0)
-    return verbose
-
-
-def _analyzer(arguments: argparse.Namespace) -> Analyzer:
-    ghidra_home: Path | None = arguments.ghidra_home
-    cache_dir: Path | None = arguments.cache_dir
-    no_cache: bool = arguments.no_cache
-    return Analyzer(
-        AnalyzerConfig(
-            ghidra=GhidraOptions(home=ghidra_home),
-            cache=CacheOptions(enabled=not no_cache, directory=cache_dir),
-        )
-    )
-
-
-def _info(arguments: argparse.Namespace, out: TextIO) -> int:
-    binary: Path = arguments.binary
-    render_info(_analyzer(arguments).info(binary), out)
-    return 0
-
-
-def _lift(arguments: argparse.Namespace, out: TextIO) -> int:
-    binary: Path = arguments.binary
-    output: Path | None = arguments.output
-    selected: list[str] | None = arguments.function
-    no_simplify: bool = arguments.no_simplify
-    result = _analyzer(arguments).lift(binary)
-    module = result.module if no_simplify else simplify_module(result.module)
-    if selected:
-        missing = sorted(set(selected) - {function.name for function in module.functions})
-        if missing:
-            raise PpyRevError(f"no lifted function named {', '.join(missing)}")
-        module = replace(
-            module,
-            functions=tuple(f for f in module.functions if f.name in set(selected)),
-        )
-    for diagnostic in result.diagnostics:
-        if _verbosity(arguments) > 0 or diagnostic.severity == Severity.ERROR:
-            sys.stderr.write(diagnostic.render() + "\n")
-    emit_ppy: bool = arguments.emit_ppy
-    emit_ir: bool = arguments.emit_ir
-    if emit_ppy:
-        directory = output or Path("out")
-        emitted = emit_module(module)
-        emitted.write(directory)
-        out.write(f"wrote PPy for {len(emitted.functions)} functions to {directory}\n")
-        check: bool = arguments.check_ppy
-        if check:
-            result = check_ppy(directory)
-            for line in (*result.errors, *result.checked_conversions):
-                out.write(f"  {line}\n")
-            out.write("ppy check: " + ("passed\n" if result.ok else "failed\n"))
-            return 0 if result.ok else EXIT_ERROR
-        return 0
-    if emit_ir:
-        text = format_module(module)
-        if output is None:
-            out.write(text)
-        else:
-            output.write_text(text, encoding="utf-8")
-        return 0
-    operations = sum(len(block.operations) for f in module.functions for block in f.blocks)
-    blocks = sum(len(function.blocks) for function in module.functions)
-    out.write(
-        f"lifted {len(module.functions)} functions: {blocks} blocks, {operations} operations, "
-        f"{len(result.diagnostics)} diagnostics\n"
-    )
-    return 0
-
-
-def render_info(info: ProgramInfo, out: TextIO) -> None:
-    kind = f"{info.format} {info.elf_type}"
-    out.write(f"Target: {info.architecture} {info.endianness}-endian {kind}\n")
-    if info.sha256:
-        out.write(f"SHA-256: {info.sha256}\n")
-    entry_name = f" ({info.entry_symbol})" if info.entry_symbol else ""
-    out.write(f"Entry: {info.entry:#x}{entry_name}\n")
-    out.write(f"Ghidra language: {info.ghidra_language} ({info.compiler})\n")
-    out.write(f"Image base: {info.image_base:#x}\n")
-    out.write("\nSections:\n")
-    width = max((len(section.name) for section in info.sections), default=0)
-    for section in info.sections:
-        out.write(
-            f"  {section.name:<{width}}  {section.start:#010x}  "
-            f"{section.size:>8}  {section.permissions}\n"
-        )
-    out.write(f"\nFunctions ({len(info.functions)}):\n")
-    for function in info.functions:
-        thunk = f"  -> {function.thunk_of}" if function.thunk_of else ""
-        out.write(f"  {function.entry:#010x}  {function.name}{thunk}\n")
-    if info.imports:
-        out.write(f"\nImports: {', '.join(info.imports)}\n")
