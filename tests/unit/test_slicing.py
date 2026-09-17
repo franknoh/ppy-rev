@@ -5,7 +5,12 @@ from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.ir.model import Call, Module
 from ppy_rev.lift.lifter import lift_export
 from ppy_rev.simplify.pipeline import simplify_module
+from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.summaries.libc import modeled_reads
+from ppy_rev.summaries.symbolic import SymbolicLibc
+from ppy_rev.symbolic import expr as sx
+from ppy_rev.symbolic.executor import Executor, Goal
+from ppy_rev.symbolic.harness import call_state
 from support.exports import ProgramBuilder, call, const, op, ram, reg, ret
 
 PUTS = 0x3000
@@ -73,3 +78,45 @@ def test_protected_helpers_are_not_output_only() -> None:
     program_slice = backward_slice(module, frozenset({GOAL_CALL, banner_call}), 0x1000)
     assert program_slice.output_functions == frozenset()
     assert _calls(module, "main")[0x1000] not in program_slice.skipped
+
+
+def test_a_skipped_call_does_not_evaluate_its_sliced_arguments() -> None:
+    """printf(format, x + 1) prints a value nothing else needs: `x + 1` is never computed."""
+    program = ProgramBuilder()
+    program.import_("printf", PUTS)
+    program.code(
+        0x1000,
+        [
+            op("INT_ADD", [reg("RDI"), const(1, 8)], reg("RSI")),
+            op("COPY", [const(0x5000, 8)], reg("RDI")),
+        ],
+    )
+    program.code(0x1004, call(PUTS, 0x1008))
+    program.code(
+        0x1008,
+        [
+            op("INT_EQUAL", [reg("RBP"), const(7, 8)], reg("ZF")),
+            op("CBRANCH", [ram(0x1010), reg("ZF")]),
+        ],
+    )
+    program.code(0x100C, ret(), length=1)
+    program.code(0x1010, [op("COPY", [const(1, 8)], reg("RAX"))])
+    program.code(0x1014, ret(), length=1)
+    program.function("main", 0x1000)
+    module = simplify_module(lift_export(program.build()).module, modeled_reads(SYSV_X86_64))
+    main = module.function_named("main")
+    assert main is not None
+    executor = Executor(
+        module,
+        Z3Backend(),
+        Goal(addresses=frozenset({0x1010})),
+        SymbolicLibc(SYSV_X86_64),
+        program_slice=backward_slice(module, frozenset({0x1010}), outermost=0x1000),
+    )
+    state = call_state(
+        executor, module, main, {"RDI": sx.symbol("x", 64), "RBP": sx.symbol("b", 64)}
+    )
+    exploration = executor.explore(state)
+    assert exploration.reached
+    assert not exploration.incomplete
+    assert executor.statistics.sliced >= 2

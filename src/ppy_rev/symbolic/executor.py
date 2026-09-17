@@ -665,26 +665,29 @@ class Executor:
     def _call(
         self, state: State, frame: Frame, call: Call, tail: bool = False
     ) -> tuple[list[State], list[Stopped]] | None:
-        arguments = {
-            register: self.value(frame, operand)
-            for register, operand in zip(call.argument_registers, call.arguments, strict=True)
-        }
-        reached = self._call_conditions(state, call, arguments)
         if (
             not tail
             and self.slice is not None
             and self.slice.skips(frame.function.entry, frame.block, frame.position - 1)
         ):
             # Only output: the call returns, popping its return address, and nothing else.
+            # Its other arguments may have been sliced away too, so they are not evaluated,
+            # and the slice guarantees no result but the stack pointer is used.
             self.statistics.sliced += 1
             outputs: dict[str, Expr] = {}
-            pointer = arguments.get(self._stack_pointer)
-            if pointer is not None:
-                outputs[self._stack_pointer] = sx.add(
-                    pointer, sx.const(self._pointer_width // 8, pointer.width)
-                )
-            self._bind_results(frame, call, arguments, outputs)
-            return ([state], reached) if reached else None
+            for register, operand in zip(call.argument_registers, call.arguments, strict=True):
+                if register == self._stack_pointer:
+                    pointer = self.value(frame, operand)
+                    outputs[register] = sx.add(
+                        pointer, sx.const(self._pointer_width // 8, pointer.width)
+                    )
+            self._bind_results(frame, call, {}, outputs)
+            return None
+        arguments = {
+            register: self.value(frame, operand)
+            for register, operand in zip(call.argument_registers, call.arguments, strict=True)
+        }
+        reached = self._call_conditions(state, call, arguments)
         try:
             outcome = self._dispatch(state, frame, call, arguments, tail)
         except _Stop as stop:
