@@ -47,3 +47,19 @@ def test_short_verdict_words() -> None:
         ("Granted", Outcome.SUCCESS),
         ("Rejected", Outcome.FAILURE),
     ]
+
+
+def test_activation_and_cheers() -> None:
+    ranked = rank_goals(
+        [
+            _reference(b"Thank you - product activated!", 0x10),
+            _reference(b"Product activation failure %d\n", 0x20, call="printf"),
+            _reference(b"YAYY : %s", 0x30, call="printf"),
+        ]
+    )
+    outcomes = {candidate.text: candidate.outcome for candidate in ranked}
+    assert outcomes == {
+        "Thank you - product activated!": Outcome.SUCCESS,
+        "Product activation failure %d\n": Outcome.FAILURE,
+        "YAYY : %s": Outcome.SUCCESS,
+    }

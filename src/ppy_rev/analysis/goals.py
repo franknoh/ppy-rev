@@ -25,7 +25,8 @@ _SUCCESS = (
     (re.compile(r"\baccepted\b"), 0.85),
     (re.compile(r"\bgranted\b"), 0.85),
     (re.compile(r"\bflag\b"), 0.7),
-    (re.compile(r"\b(unlocked|solved|passed)\b"), 0.75),
+    (re.compile(r"\b(unlocked|solved|passed|activated)\b"), 0.75),
+    (re.compile(r"\byay+\b"), 0.8),
     (re.compile(r"\b(nice|great|yes|right)\b"), 0.6),
 )
 _FAILURE = (
