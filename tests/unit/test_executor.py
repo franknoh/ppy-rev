@@ -177,3 +177,36 @@ def test_calls_into_lifted_helpers() -> None:
     module = _module(program)
     solution = _solve(module, _rax_is(7))
     assert solution.model == {"x": 0x53}
+
+
+def test_symbolic_pointer_is_bounded_by_the_path_condition() -> None:
+    # if (x < 8) rax = table[x]; a jump table's shape: the index is only bounded by a branch.
+    program = ProgramBuilder()
+    program.data(
+        ".rodata", 0x3000, b"".join((index * 0x11).to_bytes(4, "little") for index in range(8))
+    )
+    lookup = program.code(
+        0x1000,
+        [
+            op("COPY", [const(0, 8)], reg("RAX")),
+            op("INT_LESS", [reg("RDI"), const(8, 8)], reg("CF")),
+            op("BOOL_NEGATE", [reg("CF")], reg("ZF")),
+            op("CBRANCH", [ram(0x100C), reg("ZF")]),
+        ],
+    )
+    done = program.code(
+        lookup,
+        [
+            op("INT_MULT", [reg("RDI"), const(4, 8)], reg("RCX")),
+            op("INT_ADD", [reg("RCX"), const(0x3000, 8)], reg("RCX")),
+            op("LOAD", [reg("RCX")], reg("EAX")),
+            op("INT_ZEXT", [reg("EAX")], reg("RAX")),
+        ],
+    )
+    program.code(done, [op("BRANCH", [ram(0x100C)])])
+    program.code(0x100C, ret(), length=1)
+    program.function("f", 0x1000)
+    module = _module(program)
+    solution = _solve(module, _rax_is(0x55))
+    assert solution.model == {"x": 5}
+    assert solution.exploration.incomplete == []

@@ -456,6 +456,8 @@ class Executor:
     ) -> list[int]:
         low, high = unsigned_bounds(address)
         if high - low + 1 > limit:
+            low, high = self._feasible_bounds(state, address, low, high)
+        if high - low + 1 > limit:
             raise _Stop(
                 StopReason.UNSUPPORTED,
                 f"symbolic pointer {sx.render(address, 120)} ranges over {high - low + 1:#x} "
@@ -467,6 +469,32 @@ class Executor:
             for candidate in range(low, high + 1)
             if state.memory.accessible(candidate, size, write)
         ]
+
+    def _feasible_bounds(self, state: State, address: Expr, low: int, high: int) -> tuple[int, int]:
+        """Tighten `address`'s range to what the path condition allows, by binary search.
+
+        A check the solver cannot decide counts as feasible, which only widens the range.
+        """
+        width = address.width
+
+        def possible(condition: Expr) -> bool:
+            return self.feasible(state, [condition]) is not Status.UNSAT
+
+        top = high
+        while low < top:
+            middle = (low + top) // 2
+            if possible(sx.unsigned_less_equal(address, sx.const(middle, width))):
+                top = middle
+            else:
+                low = middle + 1
+        bottom = low
+        while bottom < high:
+            middle = (bottom + high + 1) // 2
+            if possible(sx.unsigned_less_equal(sx.const(middle, width), address)):
+                bottom = middle
+            else:
+                high = middle - 1
+        return low, high
 
     def _restrict_pointer(
         self, state: State, address: Expr, candidates: list[int], origin: Origin
