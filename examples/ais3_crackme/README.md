@@ -54,6 +54,20 @@ Verification:
   RevIR execution: passed (reaches the goal)
 ```
 
+## Run it as PPy
+
+`lift --emit-ppy` writes the program out as PPy, and the emitted front end runs it again
+with the answer:
+
+```bash
+uv run ppy-rev lift examples/ais3_crackme/ais3_crackme --emit-ppy -o out --check-ppy
+echo | uv run ppy out/program.ppy -- 'ais3{I_tak3_g00d_n0t3s}'
+```
+
+```text
+Correct! that is the secret key!
+```
+
 ## How ppy-rev gets there
 
 - **Input:** `argv[1]` flows into `strlen` and into `verify`, so it is the input.

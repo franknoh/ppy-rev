@@ -35,6 +35,9 @@ uv run ppy-rev solve examples/ais3_crackme/ais3_crackme
 | [lactf_patricks_paraflag](lactf_patricks_paraflag/README.md) | LA CTF 2025 | stdin | none | `lactf{the_flag_got_lost_in_infinity}` | 9 s |
 | [csaw_beleaf](csaw_beleaf/README.md) | CSAW CTF Quals 2019 | stdin | `--length 33` | `flag{we_beleaf_in_your_re_future}` | 150 s |
 
+Any of them can also be lifted to PPy and run again from there, as
+[ais3_crackme](ais3_crackme/README.md) shows.
+
 Times are with the Ghidra analysis already cached; the first run of a binary adds about
 five seconds for it. Answers that are not flags are passwords the program then turns into
 one, or the number it wants.
