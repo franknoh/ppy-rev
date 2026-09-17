@@ -30,7 +30,7 @@ with `.venv` activated.
 ## Usage
 
 Try it on real CTF challenges first: [`examples/`](examples/README.md) has nineteen of
-them, from picoCTF to DEF CON qualifiers, each with its own walkthrough. Most need no
+them, from picoCTF to Google CTF, each with its own walkthrough. Most need no
 options at all.
 
 ```bash

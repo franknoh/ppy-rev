@@ -35,6 +35,7 @@ from ppy_rev.symbolic.executor import (
 )
 from ppy_rev.symbolic.expr import Expr
 from ppy_rev.symbolic.inputs import (
+    NEWLINE,
     Charset,
     argv_constraints,
     argv_solution,
@@ -326,6 +327,27 @@ def _seed(
     return executor.solve(state, symbols.all()) or {}
 
 
+def _shortest_line(
+    executor: Executor, state: State, stdin: tuple[Expr, ...], extra: list[Expr]
+) -> Expr | None:
+    """A bound ending stdin's first line as early as this path allows, if it can end at all."""
+    newline = sx.const(NEWLINE, 8)
+
+    def ends_by(position: int) -> Expr:
+        return sx.bool_or(*(sx.equal(symbol, newline) for symbol in stdin[: position + 1]))
+
+    if not stdin or executor.solve_with(state, [], [*extra, ends_by(len(stdin) - 1)]) is None:
+        return None
+    low, high = 0, len(stdin) - 1
+    while low < high:
+        middle = (low + high) // 2
+        if executor.solve_with(state, [], [*extra, ends_by(middle)]) is None:
+            low = middle + 1
+        else:
+            high = middle
+    return ends_by(low)
+
+
 def reach(module: Module, request: SolveRequest, address: int) -> State | None:
     """Explore from main, with the request's inputs, until a path reaches `address`.
 
@@ -524,7 +546,7 @@ def _solutions(
     has_stdin = any(item.kind is InputKind.STDIN for item in inputs)
 
     def shortest(state: State, extra: list[Expr]) -> list[Expr]:
-        """A bound making each argv string as short as this path allows."""
+        """Bounds making each argv string, and the first line of stdin, as short as possible."""
         bounds: list[Expr] = []
         for _, content in sorted(symbols.argv.items()):
             low, high = 0, len(content) - 1
@@ -536,7 +558,8 @@ def _solutions(
                 else:
                     high = middle
             bounds.append(sx.equal(content[low], sx.const(0, 8)))
-        return bounds
+        line = _shortest_line(executor, state, symbols.stdin, [*extra, *bounds])
+        return bounds if line is None else [*bounds, line]
 
     def extract(state: State, extra: list[Expr]) -> bool:
         """Add solutions from `state` under `extra`; report whether any model existed."""

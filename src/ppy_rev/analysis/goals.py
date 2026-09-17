@@ -39,6 +39,7 @@ _FAILURE = (
     (re.compile(r"\brejected\b"), 0.85),
     (re.compile(r"\btry again\b"), 0.9),
     (re.compile(r"\b(not quite|mismatch)"), 0.9),
+    (re.compile(r"\btoo (short|long|big|small)\b|\b(wrong|different) length\b"), 0.85),
     (re.compile(r"\b(access )?denied\b"), 0.9),
     (re.compile(r"\b(bad|sorry|lose|loser)\b"), 0.7),
     (re.compile(r"\busage\b"), 0.6),

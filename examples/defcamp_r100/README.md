@@ -5,7 +5,7 @@
 | Origin | DefCamp CTF Qualification 2015, Reverse 100 "Entry Language" ([binary via angr examples](https://github.com/angr/angr-doc/tree/master/examples/defcamp_r100)) |
 | Binary | `r100`, x86-64 ELF, stripped |
 | Input | stdin (`fgets`) |
-| Hints needed | none (`--length 12` for the bare password) |
+| Hints needed | none |
 | Answer | `Code_Talkers` |
 
 ## The challenge
@@ -48,11 +48,11 @@ Solver:
   result: sat
 
 Solution:
-  Code_Talkers?_
+  Code_Talkers
 ```
 
-Only 12 characters are checked, so anything may follow them: the
-answer above is valid as it is. Add `--length 12` to get exactly `Code_Talkers`.
+Only the first 12 characters are checked, so longer inputs pass too; `solve` prefers the
+shortest line that works.
 
 ## How ppy-rev gets there
 
