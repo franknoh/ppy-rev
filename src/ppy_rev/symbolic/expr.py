@@ -469,13 +469,50 @@ def equal(left: Expr, right: Expr) -> Expr:
         flag = _flag_of(left)
         if flag is not None:
             return flag if right.value == 1 else FALSE if right.value != 0 else bool_not(flag)
-        if left.op is Op.ZERO_EXTEND and right.value >> left.args[0].width:
-            return FALSE
-        if left.op is Op.XOR and left.args[1].is_const:
-            return equal(left.args[0], const(left.args[1].value ^ right.value, left.width))
-        if left.op is Op.ADD and left.args[1].is_const:
-            return equal(left.args[0], const(right.value - left.args[1].value, left.width))
+        inverted = _invert_equality(left, right.value)
+        if inverted is not None:
+            return inverted
     return _make(Op.EQ, BOOL, (left, right))
+
+
+def _invert_equality(left: Expr, value: int) -> Expr | None:
+    """`left == value` for an invertible `left`, as an equality on its operand.
+
+    Each rewrite is exact under bit-vector semantics; the solver then sees the input byte
+    compared with a constant instead of a computation over it.
+    """
+    width = left.width
+    match left.op:
+        case Op.XOR if left.args[1].is_const:
+            return equal(left.args[0], const(left.args[1].value ^ value, width))
+        case Op.ADD if left.args[1].is_const:
+            return equal(left.args[0], const(value - left.args[1].value, width))
+        case Op.MUL if left.args[1].is_const and left.args[1].value & 1:
+            inverse = pow(left.args[1].value, -1, 1 << width)
+            return equal(left.args[0], const(value * inverse, width))
+        case Op.NOT:
+            return equal(left.args[0], const(~value, width))
+        case Op.NEG:
+            return equal(left.args[0], const(-value, width))
+        case Op.ZERO_EXTEND:
+            inner = left.args[0]
+            if value >> inner.width:
+                return FALSE
+            return equal(inner, const(value, inner.width))
+        case Op.SIGN_EXTEND:
+            inner = left.args[0]
+            low = value & mask(inner.width)
+            if const(semantics.to_signed(low, inner.width), width).value != value:
+                return FALSE
+            return equal(inner, const(low, inner.width))
+        case Op.CONCAT:
+            high, low = left.args
+            return bool_and(
+                equal(high, const(value >> low.width, high.width)),
+                equal(low, const(value, low.width)),
+            )
+        case _:
+            return None
 
 
 def _flag_of(operand: Expr) -> Expr | None:
