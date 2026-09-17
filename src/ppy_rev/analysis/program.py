@@ -99,6 +99,8 @@ class StringReference:
     """Name of the function the string is passed to, if it is passed to a call."""
     register: str | None
     """The argument register carrying the string's address into that call."""
+    external: bool = False
+    """The call goes to an imported library function."""
 
 
 def read_c_string(module: Module, address: int, limit: int = 512) -> bytes | None:
@@ -156,20 +158,28 @@ class _FunctionStrings:
             reached |= self.constants(value, seen | {operand.id})
         return reached
 
-    def add(self, value: int, instruction: int, call: str | None, register: str | None) -> None:
+    def add(
+        self,
+        value: int,
+        instruction: int,
+        call: str | None,
+        register: str | None,
+        external: bool = False,
+    ) -> None:
         text = read_c_string(self.module, value)
         key = (instruction, value, register or "")
         if text is not None and key not in self.found:
             self.found[key] = StringReference(
-                text, value, self.function.name, instruction, call, register
+                text, value, self.function.name, instruction, call, register, external
             )
 
     def collect(self) -> None:
         for call, _ in calls(self.function):
-            receiver = external_name(self.module, call) or _callee_name(self.module, call)
+            library = external_name(self.module, call)
+            receiver = library or _callee_name(self.module, call)
             for register, argument in zip(call.argument_registers, call.arguments, strict=True):
                 for value in self.constants(argument):
-                    self.add(value, call.origin.address, receiver, register)
+                    self.add(value, call.origin.address, receiver, register, library is not None)
         for block in self.function.blocks:
             for operation in block.operations:
                 if isinstance(operation, Call):

@@ -6,7 +6,9 @@ from ppy_rev.analysis.program import StringReference
 
 def _reference(text: bytes, address: int, call: str | None = "puts") -> StringReference:
     register = None if call is None else "RDI"
-    return StringReference(text, address, "main", address + 0x1000, call, register)
+    return StringReference(
+        text, address, "main", address + 0x1000, call, register, external=call is not None
+    )
 
 
 def test_success_and_failure_strings_are_ranked_with_evidence() -> None:
@@ -62,4 +64,26 @@ def test_activation_and_cheers() -> None:
         "Thank you - product activated!": Outcome.SUCCESS,
         "Product activation failure %d\n": Outcome.FAILURE,
         "YAYY : %s": Outcome.SUCCESS,
+    }
+
+
+def test_prompts_and_negations_are_not_success() -> None:
+    ranked = rank_goals(
+        [
+            _reference(b"Enter your flag: ", 0x10, call="printf"),
+            _reference(b"What was the flag again?", 0x20),
+            _reference(b"Guess my flag!!\n", 0x30),
+            _reference(b"That's not a valid solution you silly goose!", 0x40),
+            _reference(b"Hash mismatch :(", 0x50),
+            _reference(b"Hash matched!", 0x60),
+            _reference(b"Congratulations! Here is your flag:\n", 0x70),
+            _reference(b"flag.txt", 0x80, call="fopen"),
+        ]
+    )
+    outcomes = {candidate.text: candidate.outcome for candidate in ranked}
+    assert outcomes == {
+        "That's not a valid solution you silly goose!": Outcome.FAILURE,
+        "Hash mismatch :(": Outcome.FAILURE,
+        "Hash matched!": Outcome.SUCCESS,
+        "Congratulations! Here is your flag:\n": Outcome.SUCCESS,
     }

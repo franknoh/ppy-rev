@@ -25,7 +25,8 @@ _SUCCESS = (
     (re.compile(r"\baccepted\b"), 0.85),
     (re.compile(r"\bgranted\b"), 0.85),
     (re.compile(r"\bflag\b"), 0.7),
-    (re.compile(r"\b(unlocked|solved|passed|activated)\b"), 0.75),
+    (re.compile(r"\b(unlocked|solved|passed|activated|registered)\b"), 0.75),
+    (re.compile(r"\b(matched|how did (you|u))\b"), 0.75),
     (re.compile(r"\byay+\b"), 0.8),
     (re.compile(r"\b(nice|great|yes|right)\b"), 0.6),
 )
@@ -37,12 +38,24 @@ _FAILURE = (
     (re.compile(r"\bnope\b"), 0.9),
     (re.compile(r"\brejected\b"), 0.85),
     (re.compile(r"\btry again\b"), 0.9),
+    (re.compile(r"\b(not quite|mismatch)"), 0.9),
     (re.compile(r"\b(access )?denied\b"), 0.9),
     (re.compile(r"\b(bad|sorry|lose|loser)\b"), 0.7),
     (re.compile(r"\busage\b"), 0.6),
     (re.compile(r"\berror\b"), 0.6),
 )
-_OUTPUT_FUNCTIONS = frozenset({"puts", "printf", "__printf_chk", "fputs", "write", "fprintf"})
+_OUTPUT_FUNCTIONS = frozenset(
+    {"puts", "printf", "__printf_chk", "fputs", "fwrite", "write", "fprintf", "__fprintf_chk"}
+)
+_PROMPT = re.compile(
+    r"^\W*(enter|input|give me|gimme|guess|type|provide|tell me|what|please (enter|input|type|"
+    r"provide|give))\b|\?\W*$"
+)
+"""Asks for input: printed before the answer exists, so never a verdict on it."""
+_NEGATED = re.compile(
+    r"\b(not|isn't|isnt|aren't|wasn't|never)\s+(a |an |the |quite |really |very )?"
+    r"(valid|correct|right|good|accepted|it|there|the flag)\b"
+)
 
 
 class Outcome(StrEnum):
@@ -79,10 +92,17 @@ def rank_goals(references: list[StringReference]) -> list[GoalCandidate]:
     counts = Counter(reference.address for reference in references)
     candidates: list[GoalCandidate] = []
     for reference in references:
+        if reference.external and reference.call not in _OUTPUT_FUNCTIONS:
+            continue  # a file name, a format to scan, a password to compare: not a message
         text = reference.text.decode("latin-1")
         lowered = text.lower()
         success, success_word = _score(lowered, _SUCCESS)
         failure, failure_word = _score(lowered, _FAILURE)
+        negated = _NEGATED.search(lowered)
+        if negated is not None and failure < 0.9:
+            failure, failure_word = 0.9, negated.group(0)
+        if _PROMPT.search(lowered.strip()):
+            success = 0.0
         if max(success, failure) == 0:
             continue
         outcome = Outcome.SUCCESS if success > failure else Outcome.FAILURE
