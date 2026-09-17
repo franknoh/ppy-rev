@@ -32,6 +32,7 @@ ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered funct
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ppy-rev lift ./chall --emit-ppy -o out --check-ppy
 ppy-rev solve ./chall               # find an input that reaches the success output
+ppy-rev vm detect ./chall           # find bytecode interpreter dispatchers, with evidence
 ```
 
 `--emit-ppy` writes `out/module.ppy` (every lifted function plus the program image),
@@ -106,6 +107,16 @@ semantics`; only `sat` exits with status 0. Unknown solver results and unmodeled
 semantics on a relevant path are reported as such, never as `unsat`. Without
 `--verify`, the target binary is never executed.
 
+### VM dispatchers
+
+`vm detect` looks for bytecode interpreters: a group of branches (a jump table, or a
+chain or tree of comparisons) deciding on one value fetched from memory, inside a loop its
+handlers return to. Each candidate lists the opcode fetch, the VM program counter (a
+memory field or a loop variable), the bytecode base when it is a constant, the handlers
+with the opcode values proven to select them, and its evidence, each item marked
+`proven` (follows from RevIR), `inferred`, or `heuristic`. Candidates below 0.6
+confidence, typically ordinary `switch` statements, are shown with `--all`.
+
 ## Architecture
 
 ```text
@@ -137,6 +148,8 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
   tested against each other.
 - `ppy_rev.analysis`: whole-program facts for solving: `main`, input discovery, goal
   ranking from strings, and goal reachability.
+- `ppy_rev.vm`: bytecode interpreter analysis (dispatcher detection).
+- `ppy_rev.verify`: sandboxed native execution for `solve --verify`.
 - `ppy_rev.ppy`: PPy emission and validation with `ppy check`.
 
 RevIR values have explicit bit widths; signedness belongs to operations.

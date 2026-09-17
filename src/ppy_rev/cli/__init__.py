@@ -102,6 +102,17 @@ def build_parser() -> argparse.ArgumentParser:
     limits.add_argument("--timeout", type=float, default=600.0, metavar="SECONDS")
     limits.add_argument("--max-states", type=int, default=20_000)
     solve.set_defaults(handler=commands.solve)
+
+    vm = subcommands.add_parser("vm", help="analyze bytecode interpreters")
+    vm_commands = vm.add_subparsers(dest="vm_command", metavar="command")
+    detect = vm_commands.add_parser(
+        "detect", parents=[common], help="find VM dispatchers, with the evidence for each"
+    )
+    detect.add_argument("binary", type=Path)
+    detect.add_argument(
+        "--all", action="store_true", help="also show unlikely candidates (plain switches)"
+    )
+    detect.set_defaults(handler=commands.vm_detect)
     return parser
 
 

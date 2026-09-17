@@ -35,6 +35,7 @@ SUCCESS = {
     "recursive_check": b"Correct!",
     "dispatch_check": b"Access granted",
     "vm_check": b"Granted",
+    "simple_vm": b"Accepted",
 }
 STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
 SHORTEST = {
@@ -42,6 +43,7 @@ SHORTEST = {
     "atoi_check": b"12345",
     "recursive_check": b"recursive",
     "vm_check": b"Vm_0k!",
+    "simple_vm": b"vM_l1ft!",
 }
 """Solutions that are unique once the shortest input is preferred."""
 VARIANTS = [(compiler, level) for compiler in ("gcc", "clang") for level in ("O0", "O2")]
@@ -147,3 +149,19 @@ def test_native_verification_is_reported(
     code, text = _solve(binary, "--verify", "--sandbox-runtime", str(runtime), capsys=capsys)
     assert code == 0, text
     assert 'native (sandboxed): passed (exit status 0, prints "Access granted")' in text
+
+
+def test_vm_detect_reports_evidence(
+    analyzer: Analyzer, compile_fixture: type[FixtureCompiler], capsys: pytest.CaptureFixture[str]
+) -> None:
+    del analyzer
+    arguments = ["--cache-dir", str(BUILD_ROOT / "cache")]
+    binary = compile_fixture.build("simple_vm", "clang", "O2")
+    assert main(["vm", "detect", str(binary), *arguments]) == 0
+    text = capsys.readouterr().out
+    assert "Candidate dispatcher:" in text
+    assert "[proven] indirect branch at" in text
+    assert "VM program counter:" in text
+    plain = compile_fixture.build("xor_check", "gcc", "O2")
+    assert main(["vm", "detect", str(plain), *arguments]) == 2
+    assert "No VM dispatcher found." in capsys.readouterr().out

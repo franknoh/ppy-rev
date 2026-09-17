@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ppy_rev.api import Analyzer
-from ppy_rev.cli.render import render_info, render_solve, solution_bytes
+from ppy_rev.cli.render import render_dispatchers, render_info, render_solve, solution_bytes
 from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
 from ppy_rev.diagnostics import PpyRevError, Severity
 from ppy_rev.ir.text import format_module
@@ -19,6 +19,7 @@ from ppy_rev.solve import SolveRequest, SolveStatus
 from ppy_rev.symbolic.executor import Budget
 from ppy_rev.symbolic.inputs import Charset
 from ppy_rev.verify.sandbox import SandboxOptions
+from ppy_rev.vm.detect import LIKELY_DISPATCHER, detect_dispatchers
 
 EXIT_ERROR = 1
 EXIT_UNSOLVED = 2
@@ -135,3 +136,19 @@ def solve(arguments: argparse.Namespace, out: TextIO) -> int:
     if output is not None and result.solutions:
         output.write_bytes(solution_bytes(result.solutions[0]))
     return 0 if result.status is SolveStatus.SAT else EXIT_UNSOLVED
+
+
+def vm_detect(arguments: argparse.Namespace, out: TextIO) -> int:
+    binary: Path = arguments.binary
+    show_all: bool = arguments.all
+    tool = analyzer(arguments)
+    module = tool.simplified(binary)
+    candidates = detect_dispatchers(module)
+    likely = [item for item in candidates if item.confidence >= LIKELY_DISPATCHER]
+    render_dispatchers(
+        f"{module.target.architecture} Linux ELF",
+        candidates if show_all else likely,
+        len(candidates) - len(likely),
+        out,
+    )
+    return 0 if likely else EXIT_UNSOLVED

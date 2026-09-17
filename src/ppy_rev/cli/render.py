@@ -7,6 +7,7 @@ from typing import TextIO
 
 from ppy_rev.info import ProgramInfo
 from ppy_rev.solve import Solution, SolveResult, SolveStatus
+from ppy_rev.vm.detect import Dispatcher
 
 _PRINTABLE = frozenset(range(0x20, 0x7F))
 
@@ -114,3 +115,50 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
             where = f"{constraint.function or '?'}"
             address = f" {constraint.address:#x}" if constraint.address is not None else ""
             out.write(f"  [{constraint.kind}] {constraint.text}\n    from {where}{address}\n")
+
+
+_OPCODES_SHOWN = 6
+
+
+def _opcodes(values: tuple[int, ...]) -> str:
+    if not values:
+        return "opcodes not evaluated"
+    shown = " ".join(f"{value:#04x}" for value in values[:_OPCODES_SHOWN])
+    label = "opcode" if len(values) == 1 else "opcodes"
+    more = len(values) - _OPCODES_SHOWN
+    return f"{label} {shown}" + (f" and {more} more" if more > 0 else "")
+
+
+def render_dispatchers(
+    target: str, dispatchers: list[Dispatcher], hidden: int, out: TextIO
+) -> None:
+    out.write(f"Target: {target}\n")
+    if not dispatchers:
+        out.write("\nNo VM dispatcher found.\n")
+    for dispatcher in dispatchers:
+        out.write(
+            f"\nCandidate dispatcher: {dispatcher.address:#x} in {dispatcher.function}\n"
+            f"  confidence: {dispatcher.confidence:.2f}\n"
+        )
+        if dispatcher.loop_header is not None:
+            out.write(f"  dispatch loop: {dispatcher.loop_header:#x}\n")
+        fetch = dispatcher.fetch
+        if fetch is not None:
+            sites = ", ".join(f"{address:#x}" for address in fetch.instructions)
+            out.write(f"  opcode fetch: {fetch.width}-bit load of {fetch.address} at {sites}\n")
+            if fetch.program_counter is not None:
+                out.write(f"  VM program counter: {fetch.program_counter}\n")
+            if fetch.bytecode_base is not None:
+                region = f" ({fetch.bytecode_region})" if fetch.bytecode_region else ""
+                out.write(f"  bytecode: {fetch.bytecode_base:#x}{region}\n")
+        out.write("\n  evidence:\n")
+        for item in dispatcher.evidence:
+            out.write(f"    [{item.certainty}] {item.text}\n")
+        out.write(f"\n  handlers ({len(dispatcher.handlers)}):\n")
+        for handler in sorted(
+            dispatcher.handlers, key=lambda item: (item.opcodes[:1], item.address)
+        ):
+            loop = "" if handler.returns_to_dispatcher else "  (leaves the loop)"
+            out.write(f"    {handler.address:#x}  {_opcodes(handler.opcodes)}{loop}\n")
+    if hidden:
+        out.write(f"\n{hidden} unlikely candidates hidden (--all shows them)\n")
