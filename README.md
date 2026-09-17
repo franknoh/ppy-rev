@@ -268,6 +268,8 @@ as metadata.
 scripts/check.sh                    # ruff, pyright, Java bridge build, pytest
 scripts/build_fixtures.sh           # compile C fixtures with gcc/clang at -O0..-O3
 uv run python scripts/benchmark.py  # time Ghidra, lifting, simplification, slicing, search, SMT
+examples/check.sh                   # solve the CTF examples and compare with their answers
+VERIFY=1 examples/check.sh          # and run each answer on the real binary, in a container
 docker compose build && docker compose run --rm dev scripts/check.sh
 ```
 
