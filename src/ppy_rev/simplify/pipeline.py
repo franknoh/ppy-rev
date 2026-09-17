@@ -10,15 +10,15 @@ from ppy_rev.simplify.cfg import simplify_cfg
 from ppy_rev.simplify.cse import eliminate_common_subexpressions
 from ppy_rev.simplify.dce import eliminate_dead_code
 from ppy_rev.simplify.fold import fold_function
-from ppy_rev.simplify.interfaces import trim_interfaces
+from ppy_rev.simplify.interfaces import ExternalReads, trim_interfaces
 from ppy_rev.simplify.memory import forward_memory
 
 _ROUNDS = 20
 
 
-def simplify_module(module: Module) -> Module:
+def simplify_module(module: Module, external_reads: ExternalReads | None = None) -> Module:
     """Narrow register interfaces, then simplify each function to a fixpoint."""
-    trimmed = trim_interfaces(module)
+    trimmed = trim_interfaces(module, external_reads)
     return replace(
         trimmed,
         functions=tuple(simplify_function(trimmed, function) for function in trimmed.functions),

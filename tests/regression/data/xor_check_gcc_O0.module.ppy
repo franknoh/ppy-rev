@@ -27,42 +27,35 @@ def check(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64
     v11: u64 = 0
     v12: u64 = 0
     v13: u64 = 0
-    v14: u64 = 0
-    v15: u8 = 0
-    v16: u8 = 0
-    v17: u8 = 0
-    v18: u8 = 0
+    v14: u8 = 0
+    v15: u64 = 0
+    v16: u64 = 0
+    v17: u64 = 0
+    v18: u64 = 0
     v19: u8 = 0
-    v20: u64 = 0
-    v21: u8 = 0
+    v20: u32 = 0
+    v21: u32 = 0
     v22: u64 = 0
     v23: u64 = 0
-    v24: u64 = 0
-    v25: u64 = 0
+    v24: u8 = 0
+    v25: u8 = 0
     v26: u8 = 0
-    v27: u32 = 0
-    v28: u32 = 0
+    v27: u8 = 0
+    v28: u64 = 0
     v29: u64 = 0
     v30: u64 = 0
-    v31: u8 = 0
-    v32: u8 = 0
+    v31: u64 = 0
+    v32: u64 = 0
     v33: u8 = 0
-    v34: u8 = 0
-    v35: u64 = 0
-    v36: u64 = 0
+    v34: u64 = 0
+    v35: u8 = 0
+    v36: u8 = 0
     v37: u64 = 0
     v38: u64 = 0
     v39: u64 = 0
-    v40: u8 = 0
+    v40: u64 = 0
     v41: u64 = 0
-    v42: u8 = 0
-    v43: u8 = 0
-    v44: u64 = 0
-    v45: u64 = 0
-    v46: u64 = 0
-    v47: u64 = 0
-    v48: u64 = 0
-    v49: u64 = 0
+    v42: u64 = 0
     block: int = 0
     while True:
         if block == 0:  # 0x10116d
@@ -76,72 +69,65 @@ def check(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64
             v9 = results1["RAX"] & 0xffffffffffffffff
             v10 = results1["RCX"] & 0xffffffffffffffff
             v11 = results1["RDX"] & 0xffffffffffffffff
-            v12 = results1["RSP"] & 0xffffffffffffffff
-            v13 = results1["RSI"] & 0xffffffffffffffff
-            v14 = results1["RDI"] & 0xffffffffffffffff
-            v15 = results1["CF"] & 0xff
-            v16 = results1["PF"] & 0xff
-            v17 = results1["ZF"] & 0xff
-            v18 = results1["SF"] & 0xff
-            v19 = results1["OF"] & 0xff
-            v20 = (v9 - 0xb) & 0xffffffffffffffff
-            v21 = 1 if v20 == 0 else 0
-            if v21 != 0:
+            v12 = results1["RSI"] & 0xffffffffffffffff
+            v13 = (v9 - 0xb) & 0xffffffffffffffff
+            v14 = 1 if v13 == 0 else 0
+            if v14 != 0:
                 block = 2
             else:
                 block = 1
         elif block == 1:  # 0x10118b
-            v44, v45, v46 = 0, v10, v11
+            v37, v38, v39 = 0, v10, v11
             block = 8
         elif block == 2:  # 0x101192
-            v22 = (rsp - 0x10) & 0xffffffffffffffff
-            m.memory.store(v22, 8, 0)
-            v37, v38 = v10, v11
+            v15 = (rsp - 0x10) & 0xffffffffffffffff
+            m.memory.store(v15, 8, 0)
+            v30, v31 = v10, v11
             block = 6
         elif block == 3:  # 0x10119c
-            v23 = m.memory.load_u64(v7)
-            v24 = m.memory.load_u64(v22)
-            v25 = (v24 + v23) & 0xffffffffffffffff
-            v26 = m.memory.load_u8(v25)
-            v27 = v26
-            v28 = v27 ^ 0x42
-            v29 = v28
-            v30 = (v24 + 0x102008) & 0xffffffffffffffff
-            v31 = m.memory.load_u8(v30)
-            v32 = v26 ^ 0x42
-            v33 = (v32 - v31) & 0xff
-            v34 = 1 if v33 == 0 else 0
-            if v34 != 0:
+            v16 = m.memory.load_u64(v7)
+            v17 = m.memory.load_u64(v15)
+            v18 = (v17 + v16) & 0xffffffffffffffff
+            v19 = m.memory.load_u8(v18)
+            v20 = v19
+            v21 = v20 ^ 0x42
+            v22 = v21
+            v23 = (v17 + 0x102008) & 0xffffffffffffffff
+            v24 = m.memory.load_u8(v23)
+            v25 = v19 ^ 0x42
+            v26 = (v25 - v24) & 0xff
+            v27 = 1 if v26 == 0 else 0
+            if v27 != 0:
                 block = 5
             else:
                 block = 4
         elif block == 4:  # 0x1011c4
-            v44, v45, v46 = 0, 0x102008, v29
+            v37, v38, v39 = 0, 0x102008, v22
             block = 8
         elif block == 5:  # 0x1011cb
-            v35 = m.memory.load_u64(v22)
-            v36 = (v35 + 1) & 0xffffffffffffffff
-            m.memory.store(v22, 8, v36)
-            v37, v38 = 0x102008, v29
+            v28 = m.memory.load_u64(v15)
+            v29 = (v28 + 1) & 0xffffffffffffffff
+            m.memory.store(v15, 8, v29)
+            v30, v31 = 0x102008, v22
             block = 6
         elif block == 6:  # 0x1011d0
-            v39 = m.memory.load_u64(v22)
-            v40 = 1 if v39 < 0xa else 0
-            v41 = (v39 - 0xa) & 0xffffffffffffffff
-            v42 = 1 if v41 == 0 else 0
-            v43 = v40 | v42
-            if v43 != 0:
+            v32 = m.memory.load_u64(v15)
+            v33 = 1 if v32 < 0xa else 0
+            v34 = (v32 - 0xa) & 0xffffffffffffffff
+            v35 = 1 if v34 == 0 else 0
+            v36 = v33 | v35
+            if v36 != 0:
                 block = 3
             else:
                 block = 7
         elif block == 7:  # 0x1011d7
-            v44, v45, v46 = 1, v37, v38
+            v37, v38, v39 = 1, v30, v31
             block = 8
         elif block == 8:  # 0x1011dc
-            v47 = m.memory.load_u64(v6)
-            v48 = m.memory.load_u64(rsp)
-            v49 = (rsp + 8) & 0xffffffffffffffff
-            return (v44, v45, v46, v49, v47, v13)
+            v40 = m.memory.load_u64(v6)
+            v41 = m.memory.load_u64(rsp)
+            v42 = (rsp + 8) & 0xffffffffffffffff
+            return (v37, v38, v39, v42, v40, v12)
         else:
             raise AssertionError("unknown block")
 
@@ -161,13 +147,13 @@ def main(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64)
     v16: u64 = 0
     v17: u64 = 0
     v18: u64 = 0
-    v19: u8 = 0
-    v20: u8 = 0
-    v21: u8 = 0
-    v22: u8 = 0
-    v23: u8 = 0
-    v24: u64 = 0
-    v25: u64 = 0
+    v19: u64 = 0
+    v20: u64 = 0
+    v21: u64 = 0
+    v22: u64 = 0
+    v23: u64 = 0
+    v24: u32 = 0
+    v25: u8 = 0
     v26: u64 = 0
     v27: u64 = 0
     v28: u64 = 0
@@ -176,39 +162,9 @@ def main(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64)
     v31: u64 = 0
     v32: u64 = 0
     v33: u64 = 0
-    v34: u32 = 0
-    v35: u8 = 0
+    v34: u64 = 0
+    v35: u64 = 0
     v36: u64 = 0
-    v37: u64 = 0
-    v38: u64 = 0
-    v39: u64 = 0
-    v40: u64 = 0
-    v41: u64 = 0
-    v42: u64 = 0
-    v43: u8 = 0
-    v44: u8 = 0
-    v45: u8 = 0
-    v46: u8 = 0
-    v47: u8 = 0
-    v48: u64 = 0
-    v49: u64 = 0
-    v50: u64 = 0
-    v51: u64 = 0
-    v52: u64 = 0
-    v53: u64 = 0
-    v54: u64 = 0
-    v55: u8 = 0
-    v56: u8 = 0
-    v57: u8 = 0
-    v58: u8 = 0
-    v59: u8 = 0
-    v60: u64 = 0
-    v61: u64 = 0
-    v62: u64 = 0
-    v63: u64 = 0
-    v64: u64 = 0
-    v65: u64 = 0
-    v66: u64 = 0
     block: int = 0
     while True:
         if block == 0:  # 0x1011e2
@@ -229,72 +185,42 @@ def main(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64)
             v12 = (rsp - 0x20) & 0xffffffffffffffff
             m.memory.store(v12, 8, 0x101206)
             results1 = m.external('puts', {"RAX": 0x102013, "RCX": rcx, "RDX": rdx, "RSP": v12, "RSI": rsi, "RDI": 0x102013})  # 0x101201
-            v13 = results1["RAX"] & 0xffffffffffffffff
-            v14 = results1["RCX"] & 0xffffffffffffffff
-            v15 = results1["RDX"] & 0xffffffffffffffff
-            v16 = results1["RSP"] & 0xffffffffffffffff
-            v17 = results1["RSI"] & 0xffffffffffffffff
-            v18 = results1["RDI"] & 0xffffffffffffffff
-            v19 = results1["CF"] & 0xff
-            v20 = results1["PF"] & 0xff
-            v21 = results1["ZF"] & 0xff
-            v22 = results1["SF"] & 0xff
-            v23 = results1["OF"] & 0xff
-            v60, v61, v62 = 2, v15, v6
+            v13 = results1["RDX"] & 0xffffffffffffffff
+            v30, v31, v32 = 2, v13, v6
             block = 5
         elif block == 2:  # 0x10120d
-            v24 = m.memory.load_u64(v7)
-            v25 = (v24 + 8) & 0xffffffffffffffff
-            v26 = m.memory.load_u64(v25)
-            v27 = (rsp - 0x20) & 0xffffffffffffffff
-            m.memory.store(v27, 8, 0x101220)
-            (v28, v29, v30, v31, v32, v33) = check(m, rcx, rdx, v27, v6, rsi, v26)  # 0x10121b
-            v34 = v28 & 0xffffffff
-            v35 = 1 if v34 == 0 else 0
-            if v35 != 0:
+            v14 = m.memory.load_u64(v7)
+            v15 = (v14 + 8) & 0xffffffffffffffff
+            v16 = m.memory.load_u64(v15)
+            v17 = (rsp - 0x20) & 0xffffffffffffffff
+            m.memory.store(v17, 8, 0x101220)
+            (v18, v19, v20, v21, v22, v23) = check(m, rcx, rdx, v17, v6, rsi, v16)  # 0x10121b
+            v24 = v18 & 0xffffffff
+            v25 = 1 if v24 == 0 else 0
+            if v25 != 0:
                 block = 4
             else:
                 block = 3
         elif block == 3:  # 0x101224
-            v36 = (v31 - 8) & 0xffffffffffffffff
-            m.memory.store(v36, 8, 0x101233)
-            results2 = m.external('puts', {"RAX": 0x10202c, "RCX": v29, "RDX": v30, "RSP": v36, "RSI": v33, "RDI": 0x10202c})  # 0x10122e
-            v37 = results2["RAX"] & 0xffffffffffffffff
-            v38 = results2["RCX"] & 0xffffffffffffffff
-            v39 = results2["RDX"] & 0xffffffffffffffff
-            v40 = results2["RSP"] & 0xffffffffffffffff
-            v41 = results2["RSI"] & 0xffffffffffffffff
-            v42 = results2["RDI"] & 0xffffffffffffffff
-            v43 = results2["CF"] & 0xff
-            v44 = results2["PF"] & 0xff
-            v45 = results2["ZF"] & 0xff
-            v46 = results2["SF"] & 0xff
-            v47 = results2["OF"] & 0xff
-            v60, v61, v62 = 0, v39, v32
+            v26 = (v21 - 8) & 0xffffffffffffffff
+            m.memory.store(v26, 8, 0x101233)
+            results2 = m.external('puts', {"RAX": 0x10202c, "RCX": v19, "RDX": v20, "RSP": v26, "RSI": v23, "RDI": 0x10202c})  # 0x10122e
+            v27 = results2["RDX"] & 0xffffffffffffffff
+            v30, v31, v32 = 0, v27, v22
             block = 5
         elif block == 4:  # 0x10123a
-            v48 = (v31 - 8) & 0xffffffffffffffff
-            m.memory.store(v48, 8, 0x101249)
-            results3 = m.external('puts', {"RAX": 0x102035, "RCX": v29, "RDX": v30, "RSP": v48, "RSI": v33, "RDI": 0x102035})  # 0x101244
-            v49 = results3["RAX"] & 0xffffffffffffffff
-            v50 = results3["RCX"] & 0xffffffffffffffff
-            v51 = results3["RDX"] & 0xffffffffffffffff
-            v52 = results3["RSP"] & 0xffffffffffffffff
-            v53 = results3["RSI"] & 0xffffffffffffffff
-            v54 = results3["RDI"] & 0xffffffffffffffff
-            v55 = results3["CF"] & 0xff
-            v56 = results3["PF"] & 0xff
-            v57 = results3["ZF"] & 0xff
-            v58 = results3["SF"] & 0xff
-            v59 = results3["OF"] & 0xff
-            v60, v61, v62 = 1, v51, v32
+            v28 = (v21 - 8) & 0xffffffffffffffff
+            m.memory.store(v28, 8, 0x101249)
+            results3 = m.external('puts', {"RAX": 0x102035, "RCX": v19, "RDX": v20, "RSP": v28, "RSI": v23, "RDI": 0x102035})  # 0x101244
+            v29 = results3["RDX"] & 0xffffffffffffffff
+            v30, v31, v32 = 1, v29, v22
             block = 5
         elif block == 5:  # 0x10124e
-            v63 = m.memory.load_u64(v62)
-            v64 = (v62 + 8) & 0xffffffffffffffff
-            v65 = m.memory.load_u64(v64)
-            v66 = (v62 + 0x10) & 0xffffffffffffffff
-            return (v60, v61, v66, v63)
+            v33 = m.memory.load_u64(v32)
+            v34 = (v32 + 8) & 0xffffffffffffffff
+            v35 = m.memory.load_u64(v34)
+            v36 = (v32 + 0x10) & 0xffffffffffffffff
+            return (v30, v31, v36, v33)
         else:
             raise AssertionError("unknown block")
 

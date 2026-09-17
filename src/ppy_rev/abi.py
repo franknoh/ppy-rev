@@ -19,6 +19,7 @@ _ARITHMETIC_FLAGS = ("CF", "PF", "AF", "ZF", "SF", "OF")
 @dataclass(frozen=True, slots=True)
 class CallingConvention:
     name: str
+    stack_pointer: str
     integer_parameters: tuple[str, ...]
     integer_returns: tuple[str, ...]
     reads: frozenset[str]
@@ -31,6 +32,7 @@ class CallingConvention:
 
 SYSV_X86_64 = CallingConvention(
     name="System V AMD64",
+    stack_pointer="RSP",
     integer_parameters=("RDI", "RSI", "RDX", "RCX", "R8", "R9"),
     integer_returns=("RAX", "RDX"),
     reads=frozenset(

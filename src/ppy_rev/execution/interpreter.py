@@ -87,6 +87,8 @@ class Limits:
 
 
 type InstructionObserver = Callable[[int], None]
+type CallObserver = Callable[[int, dict[str, int]], None]
+"""Called with the call instruction's address and the registers passed, before dispatch."""
 
 
 def no_externals(name: str, registers: dict[str, int], memory: ConcreteMemory) -> dict[str, int]:
@@ -102,12 +104,14 @@ class Interpreter:
         externals: ExternalHandler = no_externals,
         limits: Limits | None = None,
         observer: InstructionObserver | None = None,
+        call_observer: CallObserver | None = None,
     ) -> None:
         self.module = module
         self.memory = memory
         self.externals = externals
         self.limits = limits or Limits()
         self.observer = observer
+        self.call_observer = call_observer
         self.steps = 0
         self._stack_pointer = module.target.stack_pointer
         self._pointer_width = module.target.pointer_width
@@ -332,6 +336,8 @@ class Interpreter:
                 address = target.address
             case IndirectTarget():
                 address = self._value(values, target.address)
+        if self.call_observer is not None:
+            self.call_observer(call.origin.address, dict(arguments))
         callee = self._functions.get(address)
         external = self._externals.get(address)
         if callee is not None:
@@ -380,12 +386,13 @@ class Interpreter:
             raise self._error(
                 FaultKind.MEMORY_FAULT, f"{name}: {fault}", function, block, call.origin
             ) from fault
-        if self._stack_pointer in outputs:
+        stack = outputs.get(self._stack_pointer, arguments.get(self._stack_pointer))
+        if stack is not None:
             # The import returns like any function, popping the return address on top of
             # the stack: the one this call pushed, or the caller's for a tail jump.
-            outputs[self._stack_pointer] = (
-                outputs[self._stack_pointer] + self._pointer_width // 8
-            ) & mask(self._pointer_width)
+            outputs[self._stack_pointer] = (stack + self._pointer_width // 8) & mask(
+                self._pointer_width
+            )
         return outputs
 
     @staticmethod

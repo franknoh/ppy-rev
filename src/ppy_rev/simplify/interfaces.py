@@ -68,8 +68,12 @@ type _Mark = Callable[[Operand], None]
 type _MarkCall = Callable[[Call], None]
 
 
-def trim_interfaces(module: Module) -> Module:
-    analysis = _InterfaceAnalysis(module)
+type ExternalReads = Callable[[str], frozenset[str] | None]
+"""Registers an imported function reads, when known more precisely than the ABI's set."""
+
+
+def trim_interfaces(module: Module, external_reads: ExternalReads | None = None) -> Module:
+    analysis = _InterfaceAnalysis(module, external_reads)
     analysis.solve()
     return replace(
         module, functions=tuple(analysis.rewrite(function) for function in module.functions)
@@ -85,7 +89,8 @@ class _Liveness:
 
 
 class _InterfaceAnalysis:
-    def __init__(self, module: Module) -> None:
+    def __init__(self, module: Module, external_reads: ExternalReads | None) -> None:
+        self.external_reads = external_reads
         self.convention = calling_convention(module.target)
         self.order = {register.name: index for index, register in enumerate(module.registers)}
         self.every = frozenset(self.order)
@@ -113,7 +118,8 @@ class _InterfaceAnalysis:
 
     def callee_reads(self, target: CallTarget) -> frozenset[str]:
         if isinstance(target, ExternalTarget):
-            return self.convention.reads & self.every
+            known = None if self.external_reads is None else self.external_reads(target.name)
+            return (self.convention.reads if known is None else known) & self.every
         known = self._known(target)
         return self.every if known is None else self.reads[known]
 
@@ -330,7 +336,7 @@ class _InterfaceAnalysis:
         use = liveness.use
         match operation:
             case Call():
-                return self._rewrite_call(operation, use)
+                return self._rewrite_call(operation, use, liveness.live)
             case BinaryOp() if _may_fault(operation):
                 return map_operation(operation, use)
             case BinaryOp() | UnaryOp() | Subpiece() | Piece():
@@ -340,7 +346,7 @@ class _InterfaceAnalysis:
             case Load() | Store() | UserOp() | Unsupported():
                 return map_operation(operation, use)
 
-    def _rewrite_call(self, call: Call, use: Use) -> Call:
+    def _rewrite_call(self, call: Call, use: Use, live: set[int] | None = None) -> Call:
         reads = self.callee_reads(call.target)
         outputs = self.callee_outputs(call.target)
         arguments = dict(zip(call.argument_registers, call.arguments, strict=True))
@@ -348,6 +354,10 @@ class _InterfaceAnalysis:
         if missing:
             raise ValueError(f"call at {call.origin.address:#x} does not pass {sorted(missing)}")
         results = dict(zip(call.result_registers, call.results, strict=True))
+        if live is not None and isinstance(call.target, ExternalTarget):
+            # An import has no interface of its own to keep consistent: results nobody
+            # uses (registers it merely clobbers) are dropped at this call site.
+            results = {register: var for register, var in results.items() if var.id in live}
         argument_registers = self.ordered(reads)
         result_registers = self.ordered(outputs & results.keys())
         target = call.target
