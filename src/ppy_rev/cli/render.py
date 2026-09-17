@@ -103,7 +103,9 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
         heading = "Solution" if len(result.solutions) == 1 else f"Solution {index + 1}"
         data = solution_bytes(solution)
         out.write(f"\n{heading}:\n")
-        if all(byte in _PRINTABLE for byte in data.rstrip(b"\n")):
+        if not data.rstrip(b"\n"):
+            out.write("  (empty)\n" if not data else "  (empty line)\n")
+        elif all(byte in _PRINTABLE for byte in data.rstrip(b"\n")):
             out.write(f"  {data.rstrip(b'\n').decode('ascii')}\n")
         else:
             out.write(f"  ASCII: {_escaped(data)}\n  Hex:   {data.hex(' ')}\n")
