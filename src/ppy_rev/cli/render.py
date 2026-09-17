@@ -104,6 +104,10 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
             out.write(f"  ASCII: {_escaped(data)}\n  Hex:   {data.hex(' ')}\n")
         verdict = "passed" if solution.verified else "failed"
         out.write(f"\nVerification:\n  RevIR execution: {verdict} ({solution.verification})\n")
+        if solution.native is not None:
+            passed = solution.native.passed
+            native = "inconclusive" if passed is None else "passed" if passed else "failed"
+            out.write(f"  native (sandboxed): {native} ({solution.native.detail})\n")
     if verbose > 1 and result.constraints:
         out.write("\nConstraints:\n")
         for constraint in result.constraints:

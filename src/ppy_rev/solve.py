@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -43,6 +44,7 @@ from ppy_rev.symbolic.inputs import (
 )
 from ppy_rev.symbolic.memory import SymbolicMemory
 from ppy_rev.symbolic.state import ConstraintKind, Frame, State, SymbolicIO
+from ppy_rev.verify.sandbox import SandboxOptions, run_sandboxed
 
 DEFAULT_STDIN_LENGTH = 256
 PREFERENCE_PATHS = 8
@@ -69,6 +71,8 @@ class SolveRequest:
     solutions: int = 1
     budget: Budget = field(default_factory=Budget)
     emit_smt2: Path | None = None
+    native: SandboxOptions | None = None
+    """Also run each solution natively in this sandbox (never done unless requested)."""
 
 
 class SolveStatus(StrEnum):
@@ -100,12 +104,21 @@ class InputDescription:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeVerification:
+    passed: bool | None
+    """None when the goal prints nothing recognisable to look for."""
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class Solution:
     argv: bytes | None
     stdin: bytes | None
     verified: bool
     """Concrete RevIR execution with these inputs reaches the goal before any avoid address."""
     verification: str
+    native: NativeVerification | None = None
+    """The sandboxed native run, when one was requested."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,7 +415,9 @@ def _solutions(
             blocking.append(_block(symbols, argv, stdin))
             if (argv, stdin) not in seen:
                 seen.add((argv, stdin))
-                solutions.append(_verify(module, main, symbols, argv, stdin, watches))
+                solutions.append(
+                    _verify(module, main, request, goal, symbols, argv, stdin, watches)
+                )
         return found
 
     # Prefer printable input, looking at a few more goal paths for it, but never require it.
@@ -487,6 +502,8 @@ def _block(symbols: _Symbols, argv: bytes | None, stdin: bytes | None) -> Expr:
 def _verify(
     module: Module,
     main: Function,
+    request: SolveRequest,
+    goal: GoalCandidate,
     symbols: _Symbols,
     argv: bytes | None,
     stdin: bytes | None,
@@ -498,7 +515,26 @@ def _verify(
         arguments[index] = argv or b""
     run = run_program(module, main, arguments, stdin or b"", watches)
     verified = run.first_watch is not None and run.first_watch.name == "goal"
-    return Solution(argv, stdin, verified, "reaches the goal" if verified else run.outcome)
+    native = None if request.native is None else _run_native(request, arguments, stdin, goal)
+    return Solution(argv, stdin, verified, "reaches the goal" if verified else run.outcome, native)
+
+
+def _run_native(
+    request: SolveRequest, arguments: list[bytes], stdin: bytes | None, goal: GoalCandidate
+) -> NativeVerification:
+    if request.native is None:
+        raise AssertionError("native verification was not requested")
+    run = run_sandboxed(request.binary, arguments[1:], stdin or b"", request.native)
+    if run.exit_status is None:
+        limit = request.native.timeout_seconds
+        return NativeVerification(False, f"stopped after {limit:g}s without finishing")
+    status = f"exit status {run.exit_status}"
+    if not goal.text:
+        return NativeVerification(None, f"{status}; no goal output to look for")
+    printed = goal.text.encode("latin-1").rstrip(b"\n")
+    if printed in run.stdout:
+        return NativeVerification(True, f"{status}, prints {json.dumps(goal.text)}")
+    return NativeVerification(False, f"{status}, does not print {json.dumps(goal.text)}")
 
 
 def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:

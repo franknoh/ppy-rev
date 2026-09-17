@@ -94,11 +94,17 @@ solutions are preferred but not required. `--solutions N` asks for distinct inpu
 and `-v`/`-vv` show evidence, statistics, and path constraints. Limits: `--timeout`
 seconds and `--max-states`.
 
+`--verify` additionally runs each solution natively, and only then: a copy of the
+binary runs under Docker or Podman with no network, a read-only root file system, no
+capabilities, an unprivileged user, and memory, process, CPU, time, and output limits.
+The image (`--sandbox-image`, default `ubuntu:24.04`) must already exist locally; it is
+never pulled.
+
 The result is `sat`, `unsat` (every path was explored within the input bounds),
 `unknown`, `timeout`, `budget exhausted`, `analysis incomplete`, or `unsupported
 semantics`; only `sat` exits with status 0. Unknown solver results and unmodeled
-semantics on a relevant path are reported as such, never as `unsat`. The target binary
-is never executed.
+semantics on a relevant path are reported as such, never as `unsat`. Without
+`--verify`, the target binary is never executed.
 
 ## Architecture
 
@@ -149,4 +155,4 @@ docker compose build && docker compose run --rm dev scripts/check.sh
 Tests that need Ghidra or a compiler are skipped when the tool is missing,
 unless `PPY_REV_REQUIRE_TOOLS=1` (set in the Docker image) turns that into a
 failure. `PPY_REV_UPDATE_GOLDEN=1` rewrites golden RevIR after an intentional
-change.
+change. Container isolation tests run when `PPY_REV_SANDBOX_IMAGE` names a local image.

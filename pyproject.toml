@@ -103,4 +103,5 @@ filterwarnings = [
 markers = [
     "ghidra: requires a Ghidra installation (PPY_REV_GHIDRA_HOME)",
     "native: compiles and runs test fixtures on the host",
+    "sandbox: runs fixtures in a container (docker or podman, PPY_REV_SANDBOX_IMAGE)",
 ]

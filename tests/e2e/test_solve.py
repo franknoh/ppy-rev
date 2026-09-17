@@ -15,6 +15,7 @@ from conftest import FixtureCompiler
 from fixtures.compile import BUILD_ROOT
 from ppy_rev import Analyzer
 from ppy_rev.cli import main
+from support.sandbox import write_fake_runtime
 
 pytestmark = [pytest.mark.ghidra, pytest.mark.native]
 
@@ -124,3 +125,19 @@ def test_several_distinct_solutions_and_smt2(
     assert code == 0, text
     assert text.count("RevIR execution: passed") == 3
     assert "(assert" in smt2.read_text(encoding="utf-8")
+
+
+def test_native_verification_is_reported(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del analyzer
+    monkeypatch.setenv("FAKE_RUNTIME_LOG", str(tmp_path / "runtime.log"))
+    runtime = write_fake_runtime(tmp_path / "runtime")
+    binary = compile_fixture.build("fgets_check", "clang", "O2")
+    code, text = _solve(binary, "--verify", "--sandbox-runtime", str(runtime), capsys=capsys)
+    assert code == 0, text
+    assert 'native (sandboxed): passed (exit status 0, prints "Access granted")' in text

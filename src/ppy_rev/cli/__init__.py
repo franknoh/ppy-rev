@@ -13,6 +13,7 @@ from ppy_rev._version import __version__
 from ppy_rev.cli import commands
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.symbolic.inputs import Charset
+from ppy_rev.verify.sandbox import DEFAULT_IMAGE
 
 EXIT_INTERNAL = 70
 
@@ -84,6 +85,19 @@ def build_parser() -> argparse.ArgumentParser:
     outputs.add_argument("--solutions", type=int, default=1, metavar="COUNT")
     outputs.add_argument("--output", type=Path, help="write the first solution's bytes here")
     outputs.add_argument("--emit-smt2", type=Path, metavar="PATH", help="write the solver input")
+    native = solve.add_argument_group("native verification (runs the target; off by default)")
+    native.add_argument(
+        "--verify",
+        action="store_true",
+        help="also run each solution in a locked-down container (no network, read-only)",
+    )
+    native.add_argument("--sandbox-runtime", type=Path, metavar="PATH", help="docker or podman")
+    native.add_argument(
+        "--sandbox-image",
+        default=DEFAULT_IMAGE,
+        metavar="IMAGE",
+        help=f"local image providing the C library (default {DEFAULT_IMAGE}; never pulled)",
+    )
     limits = solve.add_argument_group("limits")
     limits.add_argument("--timeout", type=float, default=600.0, metavar="SECONDS")
     limits.add_argument("--max-states", type=int, default=20_000)

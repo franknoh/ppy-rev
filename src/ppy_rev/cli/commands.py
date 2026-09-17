@@ -18,6 +18,7 @@ from ppy_rev.ppy.emit import emit_module
 from ppy_rev.solve import SolveRequest, SolveStatus
 from ppy_rev.symbolic.executor import Budget
 from ppy_rev.symbolic.inputs import Charset
+from ppy_rev.verify.sandbox import SandboxOptions
 
 EXIT_ERROR = 1
 EXIT_UNSOLVED = 2
@@ -105,6 +106,9 @@ def solve(arguments: argparse.Namespace, out: TextIO) -> int:
     output: Path | None = arguments.output
     timeout: float = arguments.timeout
     max_states: int = arguments.max_states
+    verify: bool = arguments.verify
+    sandbox_runtime: Path | None = arguments.sandbox_runtime
+    sandbox_image: str = arguments.sandbox_image
     request = SolveRequest(
         binary=binary,
         argv=arguments.argv,
@@ -124,6 +128,7 @@ def solve(arguments: argparse.Namespace, out: TextIO) -> int:
             max_states=max_states,
         ),
         emit_smt2=arguments.emit_smt2,
+        native=SandboxOptions(runtime=sandbox_runtime, image=sandbox_image) if verify else None,
     )
     result = analyzer(arguments).solve(request)
     render_solve(result, out, verbosity(arguments))
