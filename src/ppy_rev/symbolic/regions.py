@@ -11,27 +11,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ppy_rev.analysis.locations import Location, Locations
 from ppy_rev.ir.cfg import immediate_post_dominators
 from ppy_rev.ir.model import (
-    BinaryOp,
-    BinaryOpcode,
     Branch,
     Call,
-    Const,
     Function,
     IndirectJump,
     IndirectTarget,
     Jump,
     Load,
     Operand,
-    Operation,
     Phi,
     Store,
     TailCall,
     Var,
-    mask,
     operation_inputs,
-    operation_output,
     successors,
 )
 
@@ -118,30 +113,20 @@ def _acyclic(function: Function, blocks: set[int]) -> bool:
     return all(visit(block_id) for block_id in sorted(blocks))
 
 
-type _Base = tuple[str, int] | tuple[str, "_Location", int]
-type _Location = tuple[_Base, int]
-"""An address as a base and a constant offset; loaded bases are keyed by where they load."""
-
-
 class _Addressing:
     """Values that flow into memory addresses or jump targets, including through memory.
 
-    A value stored where some address is later loaded from carries into that address, so
-    stores and loads are matched by location: a constant offset from a base that is a
-    constant, a function value, or the value loaded from another such location (a pointer
-    kept in a stack slot at -O0).
+    A value stored where some address is later loaded from carries into that address;
+    stores and loads are matched by location (see `ppy_rev.analysis.locations`).
     """
 
     def __init__(self, function: Function) -> None:
-        self.definitions: dict[int, Phi | Operation] = {}
+        self.locations = Locations(function)
+        self.definitions = self.locations.definitions
         self.stores: list[Store] = []
         self.roots: list[Operand] = []
         for block in function.blocks:
-            for phi in block.phis:
-                self.definitions[phi.output.id] = phi
             for operation in block.operations:
-                for output in operation_output(operation):
-                    self.definitions[output.id] = operation
                 match operation:
                     case Load(address=address):
                         self.roots.append(address)
@@ -159,33 +144,10 @@ class _Addressing:
                     self.roots.append(address)
                 case _:
                     pass
-        self._locations: dict[int, _Location] = {}
-
-    def location(self, operand: Operand, depth: int = 0) -> _Location:
-        if isinstance(operand, Const):
-            return (("const", 0), operand.value)
-        known = self._locations.get(operand.id)
-        if known is not None:
-            return known
-        definition = self.definitions.get(operand.id)
-        result: _Location
-        match definition:
-            case BinaryOp(
-                opcode=BinaryOpcode.ADD | BinaryOpcode.SUB, left=left, right=Const(value=delta)
-            ):
-                base, offset = self.location(left, depth + 1)
-                sign = 1 if definition.opcode is BinaryOpcode.ADD else -1
-                result = (base, (offset + sign * delta) & mask(definition.output.width))
-            case Load(address=address) if depth < _LOCATION_DEPTH:
-                result = (("load", self.location(address, depth + 1), definition.output.width), 0)
-            case _:
-                result = (("value", operand.id), 0)
-        self._locations[operand.id] = result
-        return result
 
     def solve(self) -> frozenset[int]:
         marked: set[int] = set()
-        slots: set[_Location] = set()
+        slots: set[Location] = set()
         work = [root for root in self.roots if isinstance(root, Var)]
         changed = True
         while changed:
@@ -198,7 +160,7 @@ class _Addressing:
                     case Phi(incoming=incoming):
                         work.extend(value for _, value in incoming if isinstance(value, Var))
                     case Load(address=address):
-                        slots.add(self.location(address))
+                        slots.add(self.locations.of(address))
                     case Call() | None:
                         pass
                     case operation:
@@ -211,14 +173,11 @@ class _Addressing:
                 if (
                     isinstance(value, Var)
                     and value.id not in marked
-                    and self.location(store.address) in slots
+                    and self.locations.of(store.address) in slots
                 ):
                     work.append(value)
                     changed = True
         return frozenset(marked)
-
-
-_LOCATION_DEPTH = 8
 
 
 def _addressing(function: Function) -> frozenset[int]:
