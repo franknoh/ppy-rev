@@ -310,12 +310,24 @@ type Terminator = Jump | Branch | IndirectJump | Return | TailCall | Halt | Stop
 
 
 @dataclass(frozen=True, slots=True)
+class InstructionStart:
+    """Machine instruction `address` begins before operation `position` of its block.
+
+    Position `len(operations)` means the instruction only contributes the terminator.
+    """
+
+    address: int
+    position: int
+
+
+@dataclass(frozen=True, slots=True)
 class Block:
     id: int
     address: int
     phis: tuple[Phi, ...]
     operations: tuple[Operation, ...]
     terminator: Terminator
+    instructions: tuple[InstructionStart, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

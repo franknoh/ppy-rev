@@ -31,6 +31,7 @@ from ppy_rev.ir.model import (
     Halt,
     IndirectJump,
     IndirectTarget,
+    InstructionStart,
     Jump,
     Load,
     Operand,
@@ -126,6 +127,7 @@ class _Block:
     source: PcodeBlock
     operations: list[Operation] = field(default_factory=list[Operation])
     terminator: Terminator | None = None
+    instructions: list[InstructionStart] = field(default_factory=list[InstructionStart])
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,9 +537,25 @@ class FunctionBuilder:
             isinstance(source.exit, TailCallExit) and source.start.index >= 0
         )
         body = source.ops[:-1] if control_last and source.ops else source.ops
+        scaffold = self.blocks[block_id]
+        for point, _ in source.ops:
+            if not scaffold.instructions or scaffold.instructions[-1].address != point.address:
+                # Positions are refined below as operations are emitted.
+                scaffold.instructions.append(InstructionStart(point.address, -1))
+        starts = iter(range(len(scaffold.instructions)))
+        current = -1
         for point, op in body:
+            if current < 0 or scaffold.instructions[current].address != point.address:
+                current = next(starts)
+                scaffold.instructions[current] = InstructionStart(
+                    point.address, len(scaffold.operations)
+                )
             self.lift_op(block_id, point, op)
-        self.blocks[block_id].terminator = self._terminate(block_id)
+        for index in starts:
+            scaffold.instructions[index] = InstructionStart(
+                scaffold.instructions[index].address, len(scaffold.operations)
+            )
+        scaffold.terminator = self._terminate(block_id)
 
     def build(self) -> Function:
         order = _reverse_postorder(self.cfg)
@@ -623,6 +641,7 @@ class FunctionBuilder:
                     phis=phis,
                     operations=tuple(_rewrite(op, use, renumber) for op in scaffold.operations),
                     terminator=_rewrite_terminator(terminator, use, renumber),
+                    instructions=tuple(scaffold.instructions),
                 )
             )
         return Function(
