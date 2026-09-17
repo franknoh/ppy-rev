@@ -66,10 +66,10 @@ def check(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64
             v8 = (rsp - 0x30) & 0xffffffffffffffff
             m.memory.store(v8, 8, 0x101185)
             results1 = m.external('strlen', {"RAX": rdi, "RCX": rcx, "RDX": rdx, "RSP": v8, "RSI": rsi, "RDI": rdi})  # 0x101180
-            v9 = results1["RAX"] & 0xffffffffffffffff
-            v10 = results1["RCX"] & 0xffffffffffffffff
-            v11 = results1["RDX"] & 0xffffffffffffffff
-            v12 = results1["RSI"] & 0xffffffffffffffff
+            v9 = results1.get("RAX", 0) & 0xffffffffffffffff
+            v10 = results1.get("RCX", 0) & 0xffffffffffffffff
+            v11 = results1.get("RDX", 0) & 0xffffffffffffffff
+            v12 = results1.get("RSI", 0) & 0xffffffffffffffff
             v13 = (v9 - 0xb) & 0xffffffffffffffff
             v14 = 1 if v13 == 0 else 0
             if v14 != 0:
@@ -185,7 +185,7 @@ def main(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64)
             v12 = (rsp - 0x20) & 0xffffffffffffffff
             m.memory.store(v12, 8, 0x101206)
             results1 = m.external('puts', {"RAX": 0x102013, "RCX": rcx, "RDX": rdx, "RSP": v12, "RSI": rsi, "RDI": 0x102013})  # 0x101201
-            v13 = results1["RDX"] & 0xffffffffffffffff
+            v13 = results1.get("RDX", 0) & 0xffffffffffffffff
             v30, v31, v32 = 2, v13, v6
             block = 5
         elif block == 2:  # 0x10120d
@@ -205,14 +205,14 @@ def main(m: Machine, rcx: u64, rdx: u64, rsp: u64, rbp: u64, rsi: u64, rdi: u64)
             v26 = (v21 - 8) & 0xffffffffffffffff
             m.memory.store(v26, 8, 0x101233)
             results2 = m.external('puts', {"RAX": 0x10202c, "RCX": v19, "RDX": v20, "RSP": v26, "RSI": v23, "RDI": 0x10202c})  # 0x10122e
-            v27 = results2["RDX"] & 0xffffffffffffffff
+            v27 = results2.get("RDX", 0) & 0xffffffffffffffff
             v30, v31, v32 = 0, v27, v22
             block = 5
         elif block == 4:  # 0x10123a
             v28 = (v21 - 8) & 0xffffffffffffffff
             m.memory.store(v28, 8, 0x101249)
             results3 = m.external('puts', {"RAX": 0x102035, "RCX": v19, "RDX": v20, "RSP": v28, "RSI": v23, "RDI": 0x102035})  # 0x101244
-            v29 = results3["RDX"] & 0xffffffffffffffff
+            v29 = results3.get("RDX", 0) & 0xffffffffffffffff
             v30, v31, v32 = 1, v29, v22
             block = 5
         elif block == 5:  # 0x10124e

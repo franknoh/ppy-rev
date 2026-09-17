@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 import random
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ import pytest
 
 from conftest import FixtureCompiler
 from ppy_rev import Analyzer
+from ppy_rev.analysis.program import find_main
 from ppy_rev.execution.interpreter import Interpreter
 from ppy_rev.execution.process import (
     INITIAL_STACK_POINTER,
@@ -31,6 +33,7 @@ from ppy_rev.execution.process import (
     enter_call,
     standard_memory,
 )
+from ppy_rev.execution.run import run_program
 from ppy_rev.ir.model import Module
 from ppy_rev.lift.lifter import lift_export
 from ppy_rev.ppy.check import check_ppy
@@ -104,3 +107,42 @@ def test_emitted_ppy_checks_and_matches_interpreter(
                 a, b = generator.getrandbits(64), generator.getrandbits(generator.choice((6, 64)))
                 expected = _interpret(module, name, a, b)
                 assert _run_emitted(loaded, functions[name], a, b) == expected, (name, a, b)
+
+
+PROGRAMS = {
+    "xor_check": ([b"./xor_check", b"rev_is_easy"], b"", b"Correct!\n"),
+    "strcmp_argv": ([b"./strcmp_argv", b"nope"], b"", b"Wrong!\n"),
+    "fgets_check": ([b"./fgets_check"], b"gg/dq2_o2sr\n", b"Password:\nAccess granted\n"),
+    "scanf_check": ([b"./scanf_check"], b"nope\n", b"Key: Wrong\n"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(PROGRAMS))
+def test_emitted_program_runs_like_the_interpreter(
+    analyzer: Analyzer, compile_fixture: type[FixtureCompiler], tmp_path: Path, name: str
+) -> None:
+    """The emitted PPy is a working program: the same output as the RevIR interpreter."""
+    arguments, stdin, expected = PROGRAMS[name]
+    module = analyzer.simplified(compile_fixture.build(name, "gcc", "O2"))
+    emit_module(module).write(tmp_path)
+    interpreted = run_program(module, find_main(module), arguments, stdin)
+    assert interpreted.stdout == expected, interpreted
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ppy_compiler",
+            "--color",
+            "never",
+            str(tmp_path / "program.ppy"),
+            "--",
+            *(item.decode() for item in arguments[1:]),
+        ],
+        input=stdin,
+        capture_output=True,
+        cwd=tmp_path,
+        timeout=600,
+    )
+    assert completed.stderr == b"", completed.stderr.decode()
+    assert completed.stdout == expected
+    assert f"main returned {completed.returncode}" == interpreted.outcome

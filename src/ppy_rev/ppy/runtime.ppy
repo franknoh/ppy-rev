@@ -68,14 +68,266 @@ class Memory:
         return self.load(address, 8) & 0xFFFFFFFFFFFFFFFF
 
 
-class Machine:
-    """Memory plus the models of functions imported from outside the program."""
+class Exited(Exception):
+    """The program called exit; `code` is its status."""
 
-    def __init__(self, regions: list[Region]) -> None:
+    def __init__(self, code: int) -> None:
+        super().__init__(f"exited with status {code}")
+        self.code: int = code
+
+
+ARGUMENTS = 0x7FFFFFFF1000
+STREAMS = 0x7FFFF7E00100
+HEAP = 0x5555A0000000
+POINTER_BYTES = 8
+
+
+class Machine:
+    """Memory, standard input and output, and models of the C functions a program imports.
+
+    The models compute what glibc computes for the cases ppy-rev's own summaries cover;
+    anything else raises rather than inventing a result.
+    """
+
+    def __init__(self, regions: list[Region], stdin: bytes = b"") -> None:
         self.memory: Memory = Memory(regions)
+        self.stdin: bytes = stdin
+        self.position: int = 0
+        self.output: list[int] = []
+        self.heap: int = HEAP
+
+    # -- helpers -------------------------------------------------------------------------
+
+    def string_at(self, address: int) -> list[int]:
+        text: list[int] = []
+        while True:
+            byte: int = self.memory.load(address + len(text), 1)
+            if byte == 0:
+                return text
+            text.append(byte)
+
+    def write_at(self, address: int, data: list[int]) -> None:
+        for index in range(len(data)):
+            self.memory.store(address + index, 1, data[index])
+
+    def write_out(self, data: list[int]) -> None:
+        for byte in data:
+            self.output.append(byte)
+
+    def take_line(self, limit: int) -> list[int]:
+        """Up to `limit` bytes of standard input, stopping after a newline."""
+        taken: list[int] = []
+        while len(taken) < limit and self.position < len(self.stdin):
+            byte: int = self.stdin[self.position]
+            self.position += 1
+            taken.append(byte)
+            if byte == 0x0A:
+                return taken
+        return taken
+
+    def take_token(self) -> list[int]:
+        """Standard input's next whitespace-free run, as scanf's %s reads it."""
+        while self.position < len(self.stdin) and self.stdin[self.position] in b" \t\n\r\v\f":
+            self.position += 1
+        token: list[int] = []
+        while self.position < len(self.stdin) and self.stdin[self.position] not in b" \t\n\r\v\f":
+            token.append(self.stdin[self.position])
+            self.position += 1
+        return token
+
+    def format_into(self, template: list[int], values: list[int]) -> list[int]:
+        """printf for the conversions ppy-rev models: %s, %c, %d, %u, %x, %ld, %%."""
+        text: list[int] = []
+        index: int = 0
+        used: int = 0
+        while index < len(template):
+            byte: int = template[index]
+            index += 1
+            if byte != 0x25:
+                text.append(byte)
+                continue
+            while index < len(template) and template[index] in b"0123456789.-+ #lhz":
+                index += 1
+            if index >= len(template):
+                raise NotImplementedError("format ends with %")
+            conversion: int = template[index]
+            index += 1
+            if conversion == 0x25:
+                text.append(0x25)
+                continue
+            value: int = values[used] if used < len(values) else 0
+            used += 1
+            if conversion == 0x73:
+                for item in self.string_at(value):
+                    text.append(item)
+            elif conversion == 0x63:
+                text.append(value & 0xFF)
+            elif conversion == 0x64 or conversion == 0x69:
+                for item in str(signed(value & 0xFFFFFFFFFFFFFFFF, 64)).encode():
+                    text.append(item)
+            elif conversion == 0x75:
+                for item in str(value).encode():
+                    text.append(item)
+            elif conversion == 0x78:
+                for item in format(value, "x").encode():
+                    text.append(item)
+            else:
+                raise NotImplementedError(f"format conversion {chr(conversion)}")
+        return text
+
+    # -- imported functions --------------------------------------------------------------
 
     def external(self, name: str, registers: dict[str, int]) -> dict[str, int]:
-        raise NotImplementedError(f"no model for imported function {name}")
+        first: int = registers.get("RDI", 0)
+        second: int = registers.get("RSI", 0)
+        third: int = registers.get("RDX", 0)
+        result: int = 0
+        if name == "puts":
+            self.write_out(self.string_at(first))
+            self.output.append(0x0A)
+            result = 1
+        elif name == "putchar":
+            self.output.append(first & 0xFF)
+            result = first & 0xFF
+        elif name == "fputs":
+            self.write_out(self.string_at(first))
+            result = 1
+        elif name == "printf" or name == "__printf_chk":
+            template: int = second if name == "__printf_chk" else first
+            rest: list[int] = [second, third, registers.get("RCX", 0)]
+            if name == "__printf_chk":
+                rest = [third, registers.get("RCX", 0), registers.get("R8", 0)]
+            text: list[int] = self.format_into(self.string_at(template), rest)
+            self.write_out(text)
+            result = len(text)
+        elif name == "strlen":
+            result = len(self.string_at(first))
+        elif name == "strcmp" or name == "strncmp" or name == "memcmp":
+            result = self.compare(name, first, second, third)
+        elif name == "strcpy" or name == "strncpy":
+            source: list[int] = self.string_at(second)
+            if name == "strncpy":
+                source = source[:third]
+                while len(source) < third:
+                    source.append(0)
+            else:
+                source.append(0)
+            self.write_at(first, source)
+            result = first
+        elif name == "memcpy" or name == "memmove" or name == "__memcpy_chk":
+            copied: list[int] = [self.memory.load(second + index, 1) for index in range(third)]
+            self.write_at(first, copied)
+            result = first
+        elif name == "memset":
+            self.write_at(first, [second & 0xFF for _ in range(third)])
+            result = first
+        elif name == "strcspn":
+            result = self.span(first, second)
+        elif name == "fgets":
+            taken: list[int] = self.take_line(second - 1 if second > 0 else 0)
+            if not taken:
+                result = 0
+            else:
+                taken.append(0)
+                self.write_at(first, taken)
+                result = first
+        elif name == "gets":
+            line: list[int] = self.take_line(len(self.stdin))
+            if line and line[len(line) - 1] == 0x0A:
+                line = line[: len(line) - 1]
+            line.append(0)
+            self.write_at(first, line)
+            result = first
+        elif name == "getchar":
+            if self.position >= len(self.stdin):
+                result = 0xFFFFFFFF
+            else:
+                result = self.stdin[self.position]
+                self.position += 1
+        elif name == "read":
+            data: list[int] = []
+            while len(data) < third and self.position < len(self.stdin):
+                data.append(self.stdin[self.position])
+                self.position += 1
+            self.write_at(second, data)
+            result = len(data)
+        elif name == "scanf" or name == "__isoc99_scanf":
+            result = self.scan(self.string_at(first), [second, third, registers.get("RCX", 0)])
+        elif name == "malloc" or name == "calloc":
+            size: int = first if name == "malloc" else first * second
+            result = self.heap
+            self.heap = (self.heap + size + 31) & ~15
+            if name == "calloc":
+                self.write_at(result, [0 for _ in range(size)])
+        elif name == "free" or name == "fflush" or name == "setbuf" or name == "setvbuf":
+            result = 0
+        elif name == "exit" or name == "_exit":
+            raise Exited(first & 0xFF)
+        elif name == "abort" or name == "__stack_chk_fail":
+            raise Exited(134)
+        else:
+            raise NotImplementedError(f"no model for imported function {name}")
+        outputs: dict[str, int] = dict(registers)
+        outputs["RAX"] = result & 0xFFFFFFFFFFFFFFFF
+        stack: int = registers.get("RSP", 0)
+        outputs["RSP"] = (stack + POINTER_BYTES) & 0xFFFFFFFFFFFFFFFF
+        return outputs
+
+    def compare(self, name: str, first: int, second: int, third: int) -> int:
+        left: list[int] = self.string_at(first)
+        right: list[int] = self.string_at(second)
+        if name == "memcmp":
+            left = [self.memory.load(first + index, 1) for index in range(third)]
+            right = [self.memory.load(second + index, 1) for index in range(third)]
+        else:
+            left.append(0)
+            right.append(0)
+            if name == "strncmp":
+                left = left[:third]
+                right = right[:third]
+        for index in range(min(len(left), len(right))):
+            if left[index] != right[index]:
+                return (left[index] - right[index]) & 0xFFFFFFFF
+        return 0
+
+    def span(self, text: int, reject: int) -> int:
+        rejected: list[int] = self.string_at(reject)
+        content: list[int] = self.string_at(text)
+        for index in range(len(content)):
+            if content[index] in rejected:
+                return index
+        return len(content)
+
+    def scan(self, template: list[int], destinations: list[int]) -> int:
+        """scanf for %s and %d, one directive after another."""
+        assigned: int = 0
+        index: int = 0
+        while index < len(template):
+            byte: int = template[index]
+            index += 1
+            if byte != 0x25:
+                continue
+            while index < len(template) and template[index] in b"0123456789*lh":
+                index += 1
+            if index >= len(template):
+                raise NotImplementedError("format ends with %")
+            conversion: int = template[index]
+            index += 1
+            token: list[int] = self.take_token()
+            if not token:
+                return assigned
+            where: int = destinations[assigned] if assigned < len(destinations) else 0
+            if conversion == 0x73:
+                token.append(0)
+                self.write_at(where, token)
+            elif conversion == 0x64:
+                digits: str = bytes(token).decode()
+                number: int = int(digits) if digits.lstrip("+-").isdigit() else 0
+                self.memory.store(where, 4, number & 0xFFFFFFFF)
+            else:
+                raise NotImplementedError(f"scan conversion {chr(conversion)}")
+            assigned += 1
+        return assigned
 
 
 def signed(value: int, bits: int) -> int:

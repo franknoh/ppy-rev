@@ -80,8 +80,15 @@ ppy-rev vm solve ./chall            # solve with the interpreter replaced by lif
 ```
 
 `--emit-ppy` writes `out/module.ppy` (every lifted function plus the program image),
-`out/runtime.ppy` (memory model and exact fixed-width helpers), and
-`out/metadata.json` (function interfaces). Values are masked machine integers with
+`out/runtime.ppy` (the memory model, exact fixed-width helpers, and models of the C
+functions the program imports), `out/program.ppy` (a front end that lays out `argv` and
+standard input and calls the lifted `main`), and `out/metadata.json` (function interfaces).
+`ppy out/program.ppy -- ARGUMENTS` runs the lifted program again, this time as PPy:
+
+```text
+$ echo | ppy out/program.ppy -- 'ais3{I_tak3_g00d_n0t3s}'
+Correct! that is the secret key!
+``` Values are masked machine integers with
 PPy fixed-width annotations; `--check-ppy` runs `ppy check` and fails if PPy reports
 an error or has to insert a runtime width check. Functions with more than one block use
 explicit block dispatch, so arbitrary control flow is preserved exactly.

@@ -16,6 +16,26 @@ from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
+from ppy_rev.abi import calling_convention
+from ppy_rev.analysis.program import find_main
+from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.execution.process import (
+    INITIAL_STACK_POINTER,
+    RETURN_SENTINEL,
+    STACK_CANARY,
+    STACK_SIZE,
+    STACK_START,
+    THREAD_BLOCK,
+    THREAD_BLOCK_SIZE,
+)
+from ppy_rev.execution.program import (
+    ARGUMENTS_SIZE,
+    ARGUMENTS_START,
+    HEAP_SIZE,
+    HEAP_START,
+    LIBC_DATA_SIZE,
+    LIBC_DATA_START,
+)
 from ppy_rev.ir.model import (
     BinaryOp,
     BinaryOpcode,
@@ -53,6 +73,7 @@ from ppy_rev.ir.model import (
 RUNTIME_NAME = "runtime.ppy"
 MODULE_NAME = "module.ppy"
 METADATA_NAME = "metadata.json"
+PROGRAM_NAME = "program.ppy"
 _FIXED_WIDTHS = {8: "u8", 16: "u16", 32: "u32", 64: "u64"}
 _RUNTIME_IMPORTS = (
     "Machine",
@@ -149,14 +170,118 @@ def emit_module(module: Module) -> EmittedModule:
             for external in module.externals
         ],
     }
-    return EmittedModule(
-        sources={
-            RUNTIME_NAME: runtime_source(),
-            MODULE_NAME: "\n".join(lines) + "\n",
-            METADATA_NAME: json.dumps(metadata, indent=2) + "\n",
-        },
-        functions=emitted,
-    )
+    sources = {
+        RUNTIME_NAME: runtime_source(),
+        MODULE_NAME: "\n".join(lines) + "\n",
+        METADATA_NAME: json.dumps(metadata, indent=2) + "\n",
+    }
+    entry = _entry_function(module, by_entry)
+    if entry is not None:
+        sources[PROGRAM_NAME] = "\n".join(_program(module, entry)) + "\n"
+    return EmittedModule(sources=sources, functions=emitted)
+
+
+def _entry_function(module: Module, emitted: dict[int, EmittedFunction]) -> EmittedFunction | None:
+    """The lifted `main`, when the program has one to start from."""
+    try:
+        return emitted.get(find_main(module).entry)
+    except PpyRevError:
+        return None
+
+
+def _program(module: Module, entry: EmittedFunction) -> list[str]:
+    """A runnable front end: arguments and standard input in, output and status out."""
+    convention = calling_convention(module.target)
+    width = module.target.pointer_width
+    values = {
+        convention.integer_parameters[0]: "count",
+        convention.integer_parameters[1]: "table",
+        convention.stack_pointer: "stack",
+        "FS_OFFSET": f"{THREAD_BLOCK:#x}",
+    }
+    passed = ", ".join(values.get(register, "0") for register, _ in entry.parameters)
+    returns = entry.outputs.index(convention.integer_returns[0])
+    return [
+        '"""Run the lifted program: `ppy program.ppy -- ARGUMENTS`, standard input included."""',
+        "",
+        "import sys",
+        "",
+        "import ppy",
+        "",
+        f"from module import {entry.python_name}, regions",
+        "from runtime import Exited, Machine, Region",
+        "",
+        f"STACK = {STACK_START:#x}",
+        f"STACK_SIZE = {STACK_SIZE:#x}",
+        f"STACK_POINTER = {INITIAL_STACK_POINTER:#x}",
+        f"THREAD_BLOCK = {THREAD_BLOCK:#x}",
+        f"THREAD_BLOCK_SIZE = {THREAD_BLOCK_SIZE:#x}",
+        f"CANARY = {STACK_CANARY:#x}",
+        f"RETURN_SENTINEL = {RETURN_SENTINEL:#x}",
+        f"ARGUMENTS = {ARGUMENTS_START:#x}",
+        f"ARGUMENTS_SIZE = {ARGUMENTS_SIZE:#x}",
+        f"LIBC = {LIBC_DATA_START:#x}",
+        f"LIBC_SIZE = {LIBC_DATA_SIZE:#x}",
+        f"HEAP = {HEAP_START:#x}",
+        f"HEAP_SIZE = {HEAP_SIZE:#x}",
+        f"POINTER_BYTES = {width // 8}",
+        "",
+        "",
+        "def run(arguments: list[bytes], stdin: bytes) -> tuple[int, bytes]:",
+        '    """The program image plus a process around it: argv, a stack, a heap."""',
+        "    around: list[Region] = [",
+        '        Region("[stack]", STACK, STACK_SIZE, True, b""),',
+        '        Region("[tls]", THREAD_BLOCK, THREAD_BLOCK_SIZE, True, b""),',
+        '        Region("[args]", ARGUMENTS, ARGUMENTS_SIZE, True, b""),',
+        '        Region("[libc]", LIBC, LIBC_SIZE, True, b""),',
+        '        Region("[heap]", HEAP, HEAP_SIZE, True, b""),',
+        "    ]",
+        "    m: Machine = Machine(regions() + around, stdin)",
+        "    m.memory.store(THREAD_BLOCK, POINTER_BYTES, THREAD_BLOCK)",
+        "    m.memory.store(THREAD_BLOCK + 0x28, POINTER_BYTES, CANARY)",
+        "    cursor: int = ARGUMENTS",
+        "    pointers: list[int] = []",
+        "    for argument in arguments:",
+        "        pointers.append(cursor)",
+        "        m.write_at(cursor, [byte for byte in argument])",
+        "        m.memory.store(cursor + len(argument), 1, 0)",
+        "        cursor += len(argument) + 1",
+        f"    table: int = (cursor + 15) & {mask(width) - 15:#x}",
+        "    for index in range(len(pointers)):",
+        "        m.memory.store(table + POINTER_BYTES * index, POINTER_BYTES, pointers[index])",
+        "    m.memory.store(table + POINTER_BYTES * len(pointers), POINTER_BYTES, 0)",
+        "    stack: int = STACK_POINTER - POINTER_BYTES",
+        f"    count: int = len(arguments) & {mask(width):#x}",
+        "    m.memory.store(stack, POINTER_BYTES, RETURN_SENTINEL)",
+        "    try:",
+        f"        outputs = {entry.python_name}(m, {passed})",
+        "    except Exited as exit_status:",
+        "        return exit_status.code, bytes(m.output)",
+        f"    return outputs[{returns}] & 0xFF, bytes(m.output)",
+        "",
+        "",
+        "def standard_input() -> bytes:",
+        '    """Every line of standard input, each ending in a newline."""',
+        '    text: str = ""',
+        "    while True:",
+        "        try:",
+        "            line: str = ppy.input[str]()",
+        "        except EOFError:",
+        "            break",
+        '        text += line + "\\n"',
+        '    return text.encode("latin-1")',
+        "",
+        "",
+        "def start() -> int:",
+        "    arguments: list[bytes] = [item.encode() for item in sys.argv]",
+        "    status, output = run(arguments, standard_input())",
+        '    print(output.decode("latin-1"), end="")',
+        "    return status",
+        "",
+        "",
+        'if __name__ == "__main__":',
+        "    raise SystemExit(start())",
+    ]
 
 
 def _identifier(text: str) -> str:
@@ -491,7 +616,7 @@ class _FunctionEmitter:
         )
         lines = [f"{temporary} = m.external({name!r}, {{{passed}}})  # {origin}"]
         lines.extend(
-            f'{self.target(result)} = {temporary}["{register}"] & {_mask(result.width)}'
+            f'{self.target(result)} = {temporary}.get("{register}", 0) & {_mask(result.width)}'
             for register, result in results.items()
         )
         return lines
