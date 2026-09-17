@@ -1,6 +1,6 @@
 # Examples
 
-36 reversing challenges from past CTFs that `ppy-rev solve` answers, most of them
+38 reversing challenges from past CTFs that `ppy-rev solve` answers, most of them
 with no hints at all. Each directory has a walkthrough: what the binary checks, the
 command, the output, and how the answer is found.
 
@@ -22,6 +22,7 @@ examples/check.sh                     # all of them, about ten minutes
 | [imaginaryctf_keycode](imaginaryctf_keycode/README.md) | ImaginaryCTF 2021 | stdin | none | `ictf{wh@t_g00d_i5_@_10ck_!f_th3_l0ck_!s_th3_k3y?}` | 1 s |
 | [spaceheroes_acheron](spaceheroes_acheron/README.md) | Space Heroes 2023 | stdin | none | `NENWSSEWSNENSSWEENWSNNESS` | 1 s |
 | [wreckctf_flag_checker](wreckctf_flag_checker/README.md) | WRECK CTF 2022 | stdin | none | `flag{gdb_1s_y0ur_b35t_fr13nd_6d94620fa6}` | 1 s |
+| [angstrom_checkers](angstrom_checkers/README.md) | ångstromCTF 2023 | stdin | none | `actf{ive_be3n_checkm4ted_21d1b2cebabf983f}` | 2 s |
 | [b01lers_crackme](b01lers_crackme/README.md) | b01lers CTF 2022 | stdin | none | `bctf{133&_letmein_123}` | 2 s |
 | [bcactf_flag_checker](bcactf_flag_checker/README.md) | BCACTF 2022 | argv[1] | none | `bcactf{fl4G_Und3rL00keD_e7df9c}` | 2 s |
 | [byuctf_reveng](byuctf_reveng/README.md) | BYUCTF 2023 | stdin | none | `She turned me into a newt` | 2 s |
@@ -49,6 +50,7 @@ examples/check.sh                     # all of them, about ten minutes
 | [angstrom_guess_the_flag](angstrom_guess_the_flag/README.md) | ångstromCTF 2024 | stdin | none | `actf{committed_to_the_least_significant_bit}` | 8 s |
 | [google_unbreakable](google_unbreakable/README.md) | Google CTF 2016 | argv[1] | `--flag-format 'CTF{*}'` | `CTF{0The1Quick2Brown3Fox4Jumped5Over6The7Lazy8Fox9}` | 9 s |
 | [angstrom_autorev_assemble](angstrom_autorev_assemble/README.md) | ångstromCTF 2020 | stdin | none | `actf{wr0t3_4_pr0gr4m_t0_h3lp_y0u_w1th_th1s_df93171eb49e21a3a436e186bc68a5b2d8ed}` | 12 s |
+| [sunshinectf_baseic](sunshinectf_baseic/README.md) | SunshineCTF 2025 | stdin | none | `sun{c0v3r1ng_ur_B4535}` | 14 s |
 | [thjcc_pocketvm](thjcc_pocketvm/README.md) | THJCC 2026 | stdin | none | `THJCC{71ny_vm_5h311_p4ck}` | 14 s |
 | [lactf_patricks_paraflag](lactf_patricks_paraflag/README.md) | LA CTF 2025 | stdin | none | `lactf{the_flag_got_lost_in_infinity}` | 19 s |
 | [csaw_beleaf](csaw_beleaf/README.md) | CSAW CTF Qualification Round 2019 | stdin | `--length 33` | `flag{we_beleaf_in_your_re_future}` | 148 s |

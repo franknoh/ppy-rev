@@ -106,3 +106,7 @@ fetch wreckctf_flag_checker/chal "$ARCHIVE/WRECKCTF/2022/rev/flag-checker/chal" 
     4a53637b9e16eada5f1d6915ee06f262bd10e697a5c021adcb624c43495c4324
 fetch n00bzctf_welcome/chal "$ARCHIVE/n00bzCTF/2023/rev/Welcome/chal" \
     f8c29ae6069f002e98eecc1b313dd3cc26d5add6bc586e0d9f16427f7406f7a7
+fetch angstrom_checkers/checkers "$ARCHIVE/angstromCTF/2023/rev/checkers/checkers" \
+    f0dbcf2e7bd063c49de33b14e5360c79c6b7c669af69a88983c649b8da6a9245
+fetch sunshinectf_baseic/BASEic "$ARCHIVE/SunshineCTF/2025/rev/BASEic/BASEic" \
+    066d19861c781164a49ad6951752144a0d87972c6a42ce4d743da2f4ea36bab9
