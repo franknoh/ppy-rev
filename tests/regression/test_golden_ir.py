@@ -13,6 +13,8 @@ from ppy_rev.ir.model import Module
 from ppy_rev.ir.text import format_module
 from ppy_rev.ir.validate import validate_module
 from ppy_rev.lift.lifter import lift_export
+from ppy_rev.ppy.check import check_ppy
+from ppy_rev.ppy.emit import emit_module
 from ppy_rev.simplify.pipeline import simplify_module
 
 DATA = Path(__file__).parent / "data"
@@ -40,3 +42,16 @@ def test_xor_check_lifts_to_golden_ir(lifted: Module) -> None:
 
 def test_xor_check_simplifies_to_golden_ir(lifted: Module) -> None:
     _check_golden(simplify_module(lifted), "xor_check_gcc_O0.simplified.revir")
+
+
+def test_xor_check_emits_golden_checked_ppy(lifted: Module, tmp_path: Path) -> None:
+    emitted = emit_module(simplify_module(lifted))
+    golden = DATA / "xor_check_gcc_O0.module.ppy"
+    text = emitted.sources["module.ppy"]
+    if os.environ.get("PPY_REV_UPDATE_GOLDEN") == "1":
+        golden.write_text(text, encoding="utf-8")
+    assert text == golden.read_text(encoding="utf-8")
+    emitted.write(tmp_path)
+    result = check_ppy(tmp_path)
+    assert result.errors == ()
+    assert result.checked_conversions == ()

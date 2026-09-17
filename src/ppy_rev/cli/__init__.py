@@ -16,6 +16,8 @@ from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
 from ppy_rev.diagnostics import PpyRevError, Severity
 from ppy_rev.info import ProgramInfo
 from ppy_rev.ir.text import format_module
+from ppy_rev.ppy.check import check_ppy
+from ppy_rev.ppy.emit import emit_module
 from ppy_rev.simplify.pipeline import simplify_module
 
 EXIT_ERROR = 1
@@ -46,6 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
     lift = subcommands.add_parser("lift", parents=[common], help="lift a binary into RevIR")
     lift.add_argument("binary", type=Path)
     lift.add_argument("--emit-ir", action="store_true", help="print the RevIR text form")
+    lift.add_argument(
+        "--emit-ppy", action="store_true", help="write PPy source to the output directory"
+    )
+    lift.add_argument(
+        "--check-ppy", action="store_true", help="validate emitted PPy with `ppy check`"
+    )
     lift.add_argument("-o", "--output", type=Path, help="write output here instead of stdout")
     lift.add_argument("--function", action="append", help="limit output to these functions")
     lift.add_argument(
@@ -121,11 +129,34 @@ def _lift(arguments: argparse.Namespace, out: TextIO) -> int:
     for diagnostic in result.diagnostics:
         if _verbosity(arguments) > 0 or diagnostic.severity == Severity.ERROR:
             sys.stderr.write(diagnostic.render() + "\n")
-    text = format_module(module)
-    if output is None:
-        out.write(text)
-    else:
-        output.write_text(text, encoding="utf-8")
+    emit_ppy: bool = arguments.emit_ppy
+    emit_ir: bool = arguments.emit_ir
+    if emit_ppy:
+        directory = output or Path("out")
+        emitted = emit_module(module)
+        emitted.write(directory)
+        out.write(f"wrote PPy for {len(emitted.functions)} functions to {directory}\n")
+        check: bool = arguments.check_ppy
+        if check:
+            result = check_ppy(directory)
+            for line in (*result.errors, *result.checked_conversions):
+                out.write(f"  {line}\n")
+            out.write("ppy check: " + ("passed\n" if result.ok else "failed\n"))
+            return 0 if result.ok else EXIT_ERROR
+        return 0
+    if emit_ir:
+        text = format_module(module)
+        if output is None:
+            out.write(text)
+        else:
+            output.write_text(text, encoding="utf-8")
+        return 0
+    operations = sum(len(block.operations) for f in module.functions for block in f.blocks)
+    blocks = sum(len(function.blocks) for function in module.functions)
+    out.write(
+        f"lifted {len(module.functions)} functions: {blocks} blocks, {operations} operations, "
+        f"{len(result.diagnostics)} diagnostics\n"
+    )
     return 0
 
 

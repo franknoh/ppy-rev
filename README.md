@@ -30,7 +30,15 @@ contains a checksum-verified Ghidra and every tool the test suite needs.
 ppy-rev info ./chall                # architecture, entry point, sections, functions
 ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function (--no-simplify: raw)
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
+ppy-rev lift ./chall --emit-ppy -o out --check-ppy
 ```
+
+`--emit-ppy` writes `out/module.ppy` (every lifted function plus the program image),
+`out/runtime.ppy` (memory model and exact fixed-width helpers), and
+`out/metadata.json` (function interfaces). Values are masked machine integers with
+PPy fixed-width annotations; `--check-ppy` runs `ppy check` and fails if PPy reports
+an error or has to insert a runtime width check. Functions with more than one block use
+explicit block dispatch, so arbitrary control flow is preserved exactly.
 
 Ghidra analysis runs headlessly in a throwaway project. Validated exports are
 cached under `$PPY_REV_CACHE_DIR` (default `~/.cache/ppy-rev`), keyed by the

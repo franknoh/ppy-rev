@@ -94,6 +94,10 @@ testpaths = ["tests"]
 pythonpath = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 xfail_strict = true
+filterwarnings = [
+    # Raised inside the PPy checker itself, not by ppy-rev.
+    "ignore:ast.Ellipsis is deprecated:DeprecationWarning:ppy_compiler",
+]
 markers = [
     "ghidra: requires a Ghidra installation (PPY_REV_GHIDRA_HOME)",
     "native: compiles and runs test fixtures on the host",

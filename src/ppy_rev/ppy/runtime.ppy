@@ -1,0 +1,136 @@
+"""Runtime support for PPy emitted by ppy-rev.
+
+Values are machine integers kept in [0, 2**bits). Every helper computes exactly what
+the RevIR operation of the same name computes; see ppy_rev.ir.semantics.
+"""
+
+from ppy import u8, u16, u32, u64
+
+
+class MemoryFault(Exception):
+    pass
+
+
+class Region:
+    def __init__(self, name: str, start: u64, size: u64, writable: bool, data: bytes) -> None:
+        self.name: str = name
+        self.start: u64 = start
+        self.size: u64 = size
+        self.writable: bool = writable
+        self.data: bytes = data
+
+
+class Memory:
+    """Byte-addressed little-endian memory over explicit regions; other access faults."""
+
+    def __init__(self, regions: list[Region]) -> None:
+        self.regions: list[Region] = regions
+        self.cells: dict[int, int] = {}
+
+    def map(self, region: Region) -> None:
+        self.regions.append(region)
+
+    def _region(self, address: int, size: int, write: bool) -> Region:
+        for region in self.regions:
+            if region.start <= address and address + size <= region.start + region.size:
+                if write and not region.writable:
+                    raise MemoryFault(f"write of {size} bytes at {address:#x} is not permitted")
+                return region
+        raise MemoryFault(f"access of {size} bytes at {address:#x} is outside mapped memory")
+
+    def load(self, address: int, size: int) -> int:
+        region = self._region(address, size, False)
+        value: int = 0
+        for index in range(size - 1, -1, -1):
+            location: int = address + index
+            byte: int = self.cells.get(location, -1)
+            if byte < 0:
+                offset: int = location - region.start
+                byte = region.data[offset] if offset < len(region.data) else 0
+            value = (value << 8) | byte
+        return value
+
+    def store(self, address: int, size: int, value: int) -> None:
+        self._region(address, size, True)
+        for index in range(size):
+            self.cells[address + index] = (value >> (8 * index)) & 0xFF
+
+    def load_u8(self, address: u64) -> u8:
+        return self.load(address, 1) & 0xFF
+
+    def load_u16(self, address: u64) -> u16:
+        return self.load(address, 2) & 0xFFFF
+
+    def load_u32(self, address: u64) -> u32:
+        return self.load(address, 4) & 0xFFFFFFFF
+
+    def load_u64(self, address: u64) -> u64:
+        return self.load(address, 8) & 0xFFFFFFFFFFFFFFFF
+
+
+class Machine:
+    """Memory plus the models of functions imported from outside the program."""
+
+    def __init__(self, regions: list[Region]) -> None:
+        self.memory: Memory = Memory(regions)
+
+    def external(self, name: str, registers: dict[str, int]) -> dict[str, int]:
+        raise NotImplementedError(f"no model for imported function {name}")
+
+
+def signed(value: int, bits: int) -> int:
+    sign: int = 1 << (bits - 1)
+    return (value ^ sign) - sign
+
+
+def sign_extend(value: int, bits: int, to_bits: int) -> int:
+    return signed(value, bits) & ((1 << to_bits) - 1)
+
+
+def signed_div(left: int, right: int, bits: int) -> int:
+    dividend: int = signed(left, bits)
+    divisor: int = signed(right, bits)
+    quotient: int = abs(dividend) // abs(divisor)
+    if (dividend < 0) != (divisor < 0):
+        quotient = -quotient
+    return quotient & ((1 << bits) - 1)
+
+
+def signed_rem(left: int, right: int, bits: int) -> int:
+    dividend: int = signed(left, bits)
+    divisor: int = signed(right, bits)
+    quotient: int = abs(dividend) // abs(divisor)
+    if (dividend < 0) != (divisor < 0):
+        quotient = -quotient
+    return (dividend - divisor * quotient) & ((1 << bits) - 1)
+
+
+def arithmetic_shift_right(value: int, amount: int, bits: int) -> int:
+    shift: int = amount if amount < bits else bits
+    return (signed(value, bits) >> shift) & ((1 << bits) - 1)
+
+
+def signed_carry(left: int, right: int, bits: int) -> int:
+    total: int = signed(left, bits) + signed(right, bits)
+    return 0 if -(1 << (bits - 1)) <= total < (1 << (bits - 1)) else 1
+
+
+def signed_borrow(left: int, right: int, bits: int) -> int:
+    difference: int = signed(left, bits) - signed(right, bits)
+    return 0 if -(1 << (bits - 1)) <= difference < (1 << (bits - 1)) else 1
+
+
+def popcount(value: int) -> int:
+    count: int = 0
+    while value != 0:
+        count += value & 1
+        value >>= 1
+    return count
+
+
+def count_leading_zeros(value: int, bits: int) -> int:
+    count: int = bits
+    while value != 0:
+        count -= 1
+        value >>= 1
+    return count
