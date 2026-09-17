@@ -785,8 +785,10 @@ def _split[T](
             continue
         chosen.append((child, tag))
     if len(chosen) > 1:
-        for child, _ in chosen:
-            child.decisions += 1
+        # Options come in the order they should be explored, so later ones count as deeper
+        # decisions: a plain four-digit number is tried long before a 200-digit one.
+        for position, (child, _) in enumerate(chosen):
+            child.decisions += 1 + position
     return chosen
 
 
