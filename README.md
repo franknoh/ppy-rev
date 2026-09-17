@@ -66,6 +66,12 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
 - `ppy_rev.execution`: a strict concrete RevIR interpreter with an explicit memory
   model. It is the semantic oracle: tests compare it against native execution of
   the same compiled code, before and after simplification.
+- `ppy_rev.symbolic` and `ppy_rev.solver`: symbolic execution of RevIR over
+  hash-consed bit-vector expressions, with a narrow solver interface and a Z3
+  backend. Pointers that are symbolic over a small, provably bounded range are
+  modeled exactly; wider ones stop exploration with a diagnostic. Division by a
+  symbolic divisor constrains it to be non-zero, since RevIR division faults.
+- `ppy_rev.ppy`: PPy emission and validation with `ppy check`.
 
 RevIR values have explicit bit widths; signedness belongs to operations.
 Lifting is based on raw p-code (exact instruction semantics); Ghidra's
