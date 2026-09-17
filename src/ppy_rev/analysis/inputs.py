@@ -226,6 +226,15 @@ class _ArgvFlow:
                                 for kind, position in self.tags(operation.left)
                             }
                             changed |= self._flow(operation.output, shifted)
+                        case BinaryOp(opcode=BinaryOpcode.ADD, left=left, right=right):
+                            # A string pointer plus a variable index still points into the
+                            # string; an argv slot at an unknown index is not tracked.
+                            indexed = {
+                                tag
+                                for tag in self.tags(left) | self.tags(right)
+                                if tag[0] == "string"
+                            }
+                            changed |= self._flow(operation.output, indexed)
                         case Load(output=output, address=address):
                             address_tags = self.tags(address)
                             elements = {
