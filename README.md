@@ -33,6 +33,8 @@ ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ppy-rev lift ./chall --emit-ppy -o out --check-ppy
 ppy-rev solve ./chall               # find an input that reaches the success output
 ppy-rev vm detect ./chall           # find bytecode interpreter dispatchers, with evidence
+ppy-rev vm lift ./chall             # translate the bytecode to RevIR; --json writes the ISA
+ppy-rev vm solve ./chall            # solve with the interpreter replaced by lifted bytecode
 ```
 
 `--emit-ppy` writes `out/module.ppy` (every lifted function plus the program image),
@@ -117,6 +119,21 @@ with the opcode values proven to select them, and its evidence, each item marked
 `proven` (follows from RevIR), `inferred`, or `heuristic`. Candidates below 0.6
 confidence, typically ordinary `switch` statements, are shown with `--all`.
 
+`vm lift` finds a path from `main` into the interpreter, takes the state there, and
+specializes the interpreter to its bytecode by partial evaluation of RevIR: the program
+counter is always known, so each trip around the dispatch loop becomes the RevIR of one
+bytecode instruction, while everything depending on input stays as residual code. It
+prints the recovered instruction set (neutral names such as `op_0b`, lengths, handlers,
+branches, exits) and each instruction's bytes, successors, and effects over the
+interpreter's state; `--emit-ir` prints the lifted function and `--json` writes the
+description. Facts taken from the entry state (the state pointer, the bytecode pointer)
+are checked by guards at the start of the lifted function, which stops instead of
+misbehaving in any other state.
+
+`vm solve` runs `solve` with calls to the interpreter replaced by the lifted bytecode
+function, then re-verifies every solution on the original interpreter. It accepts the
+same options as `solve`.
+
 ## Architecture
 
 ```text
@@ -148,7 +165,8 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
   tested against each other.
 - `ppy_rev.analysis`: whole-program facts for solving: `main`, input discovery, goal
   ranking from strings, and goal reachability.
-- `ppy_rev.vm`: bytecode interpreter analysis (dispatcher detection).
+- `ppy_rev.vm`: bytecode interpreters: dispatcher detection, specialization of the
+  interpreter to its bytecode (VM lifting), and the instruction set description.
 - `ppy_rev.verify`: sandboxed native execution for `solve --verify`.
 - `ppy_rev.ppy`: PPy emission and validation with `ppy check`.
 

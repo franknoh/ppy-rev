@@ -8,6 +8,7 @@ from typing import TextIO
 from ppy_rev.info import ProgramInfo
 from ppy_rev.solve import Solution, SolveResult, SolveStatus
 from ppy_rev.vm.detect import Dispatcher
+from ppy_rev.vm.lift import LiftedVm
 
 _PRINTABLE = frozenset(range(0x20, 0x7F))
 
@@ -162,3 +163,41 @@ def render_dispatchers(
             out.write(f"    {handler.address:#x}  {_opcodes(handler.opcodes)}{loop}\n")
     if hidden:
         out.write(f"\n{hidden} unlikely candidates hidden (--all shows them)\n")
+
+
+def render_lifted_vm(target: str, lifted: LiftedVm, out: TextIO) -> None:
+    dispatcher = lifted.dispatcher
+    out.write(
+        f"Target: {target}\n\n"
+        f"Dispatcher: {dispatcher.address:#x} in {dispatcher.function} "
+        f"(confidence {dispatcher.confidence:.2f})\n"
+    )
+    if lifted.bytecode_base is not None:
+        out.write(f"Bytecode: {lifted.bytecode_base:#x}\n")
+    counters = {item.counter for item in lifted.instructions}
+    out.write(
+        f"Lifted: {len(counters)} instructions, {len(lifted.opcodes)} opcodes, "
+        f"{len(lifted.function.blocks)} RevIR blocks\n"
+    )
+    if lifted.guards:
+        out.write("Specialized for:\n")
+        for guard in lifted.guards:
+            out.write(f"  {guard.describe()}\n")
+    out.write("\nInstruction set (names are neutral; effects are observed, not guessed):\n")
+    for opcode in lifted.opcodes:
+        lengths = "/".join(str(length) for length in opcode.lengths)
+        flags = " branches" if opcode.branches else ""
+        exits = f" exits: {', '.join(opcode.exits)}" if opcode.exits else ""
+        handler = f" handler {opcode.handler:#x}" if opcode.handler is not None else ""
+        out.write(
+            f"  {opcode.name}  {opcode.instances} instance(s), {lengths} bytes{handler}"
+            f"{flags}{exits}\n"
+        )
+    out.write("\nBytecode:\n")
+    for item in lifted.instructions:
+        successors = ", ".join(f"{successor:#06x}" for successor in item.successors)
+        exits = "; ".join(item.exits)
+        flow = " ".join(part for part in (f"-> {successors}" if successors else "", exits) if part)
+        out.write(f"  {item.counter:#06x}  {item.name:<6} {item.bytes.hex(' '):<14} {flow}\n")
+        for effect in item.effects:
+            out.write(f"          {effect}\n")

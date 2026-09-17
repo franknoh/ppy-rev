@@ -6,6 +6,7 @@ check that a solution RevIR verified is also accepted by the program itself.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -165,3 +166,33 @@ def test_vm_detect_reports_evidence(
     plain = compile_fixture.build("xor_check", "gcc", "O2")
     assert main(["vm", "detect", str(plain), *arguments]) == 2
     assert "No VM dispatcher found." in capsys.readouterr().out
+
+
+def test_vm_lift_and_solve(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    del analyzer
+    arguments = ["--cache-dir", str(BUILD_ROOT / "cache")]
+    binary = compile_fixture.build("simple_vm", "clang", "O2")
+    isa = tmp_path / "isa.json"
+    assert main(["vm", "lift", str(binary), "--json", str(isa), *arguments]) == 0
+    text = capsys.readouterr().out
+    assert "Lifted: 18 instructions" in text
+    assert "0x0012  op_0b  0b 04 01 30" in text
+    description = json.loads(isa.read_text(encoding="utf-8"))
+    assert {item["name"] for item in description["opcodes"]} >= {"op_01", "op_07", "op_0b"}
+    assert main(["vm", "lift", str(binary), "--emit-ir", *arguments]) == 0
+    assert "function execute.bytecode" in capsys.readouterr().out
+    for name, answer in (("simple_vm", b"vM_l1ft!"), ("vm_check", b"Vm_0k!")):
+        for compiler, level in (("gcc", "O0"), ("clang", "O2")):
+            binary = compile_fixture.build(name, compiler, level)
+            output = tmp_path / f"{name}-{compiler}-{level}"
+            code = main(["vm", "solve", str(binary), "-v", "--output", str(output), *arguments])
+            text = capsys.readouterr().out
+            assert code == 0, text
+            assert "verified on the original interpreter" in text
+            assert output.read_bytes() == answer
+            assert SUCCESS[name] in _native_output(binary, name, answer)

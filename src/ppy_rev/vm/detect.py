@@ -95,6 +95,9 @@ class OpcodeFetch:
     program_counter: str | None
     """Where the VM program counter lives, when the fetch index loads it from memory."""
     program_counter_location: Location | None
+    """The memory location of a program counter kept in memory."""
+    program_counter_phi: int | None = None
+    """The loop phi holding a program counter kept in a register."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +155,9 @@ class _FunctionDispatchers:
 
     # -- selectors ---------------------------------------------------------------------------
 
-    def leaves(self, operand: Operand, through_tables: bool = False) -> set[_Key]:
+    def leaves(
+        self, operand: Operand, through_tables: bool = False, merge_phis: bool = True
+    ) -> set[_Key]:
         """The non-constant sources `operand` is a pure function of.
 
         With `through_tables`, a wide load from read-only memory at an address computed
@@ -180,7 +185,7 @@ class _FunctionDispatchers:
                     work.append(address)
                 case Load(address=address):
                     found.add(self._load_key(self.locations.of(address)))
-                case Phi():
+                case Phi() if merge_phis:
                     found.add(self._phi_key(current.id))
                 case _:
                     found.add(("value", current.id))
@@ -416,6 +421,7 @@ class _FunctionDispatchers:
             bytecode_region=region.name if has_base and region is not None else None,
             program_counter=None if counter is None else counter[0],
             program_counter_location=None if counter is None else counter[1],
+            program_counter_phi=None if counter is None else counter[2],
         )
 
     def _is_stack_slot(self, location: Location) -> bool:
@@ -425,7 +431,7 @@ class _FunctionDispatchers:
         """Leaves of `operand`, looking through stack slots to the values stored there."""
         sources: set[_Key] = set()
         seen: set[_Key] = set()
-        work = list(self.leaves(operand))
+        work = list(self.leaves(operand, merge_phis=False))
         while work:
             leaf = work.pop()
             if leaf in seen:
@@ -458,7 +464,7 @@ class _FunctionDispatchers:
                 pass
         return self.locations.describe(location)
 
-    def _program_counter(self, address: Operand) -> tuple[str, Location | None] | None:
+    def _program_counter(self, address: Operand) -> tuple[str, Location | None, int | None] | None:
         """The fetch index the loop updates: a written memory field or a loop variable.
 
         Values loaded from memory the function never writes (a bytecode pointer) are not
@@ -475,7 +481,7 @@ class _FunctionDispatchers:
             location = written[0]
             widths = {load.output.width for load in self._loads_at(location)}
             width = f":{min(widths)}" if widths else ""
-            return f"[{self.describe_location(location)}]{width}", location
+            return f"[{self.describe_location(location)}]{width}", location, None
         loop_values = [
             identifier
             for leaf in sources
@@ -483,7 +489,7 @@ class _FunctionDispatchers:
             if isinstance(self.definitions.get(identifier), Phi)
         ]
         if not written and len(loop_values) == 1:
-            return f"loop variable v{loop_values[0]}", None
+            return f"loop variable v{loop_values[0]}", None, loop_values[0]
         return None
 
     def render(self, operand: Operand, depth: int = 4) -> str:

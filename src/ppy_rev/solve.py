@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -203,6 +203,26 @@ def solve_module(
         ),
         notes=tuple(notes + _incomplete_notes(exploration) + _unsat_notes(status, inputs)),
     )
+
+
+def reach(module: Module, request: SolveRequest, address: int) -> State | None:
+    """Explore from main, with the request's inputs, until a path reaches `address`.
+
+    Returns that path's state at the instruction, or None if no path reaches it.
+    """
+    main = find_main(module)
+    inputs = _select_inputs(module, main, request)
+    executor = Executor(
+        module,
+        Z3Backend(),
+        Goal(addresses=frozenset({address})),
+        SymbolicLibc(calling_convention(module.target)),
+        request.budget,
+        GoalReachability(module, frozenset({address})),
+    )
+    state, _ = _initial_state(executor, module, main, inputs, request)
+    exploration = executor.explore(state)
+    return exploration.reached[0].state if exploration.reached else None
 
 
 # -- goals ---------------------------------------------------------------------------------
@@ -509,15 +529,55 @@ def _verify(
     stdin: bytes | None,
     watches: tuple[Watch, ...],
 ) -> Solution:
-    count = max([0, *symbols.argv]) + 1
-    arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
-    for index in symbols.argv:
-        arguments[index] = argv or b""
     reserve = {index: len(content) for index, content in symbols.argv.items()}
+    arguments = _arguments(module, reserve, argv)
+    verified, verification = _run_verification(module, main, arguments, stdin, watches, reserve)
+    native = None if request.native is None else _run_native(request, arguments, stdin, goal)
+    return Solution(argv, stdin, verified, verification, native)
+
+
+def _arguments(module: Module, reserve: dict[int, int], argv: bytes | None) -> list[bytes]:
+    count = max([0, *reserve]) + 1
+    arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
+    for index in reserve:
+        arguments[index] = argv or b""
+    return arguments
+
+
+def _run_verification(
+    module: Module,
+    main: Function,
+    arguments: list[bytes],
+    stdin: bytes | None,
+    watches: tuple[Watch, ...],
+    reserve: dict[int, int],
+) -> tuple[bool, str]:
     run = run_program(module, main, arguments, stdin or b"", watches, reserve=reserve)
     verified = run.first_watch is not None and run.first_watch.name == "goal"
-    native = None if request.native is None else _run_native(request, arguments, stdin, goal)
-    return Solution(argv, stdin, verified, "reaches the goal" if verified else run.outcome, native)
+    return verified, "reaches the goal" if verified else run.outcome
+
+
+def verify_on(module: Module, result: SolveResult) -> SolveResult:
+    """`result` with every solution re-checked by concrete RevIR execution of `module`.
+
+    For solutions found on a transformed program (bytecode lifted out of its interpreter),
+    this checks them against the program as lifted from the binary.
+    """
+    main = find_main(module)
+    watches = (_watch("goal", result.goal), *(_watch("avoid", item) for item in result.avoid))
+    reserve = {
+        item.index: item.capacity
+        for item in result.inputs
+        if item.kind is InputKind.ARGV and item.index is not None
+    }
+    solutions: list[Solution] = []
+    for solution in result.solutions:
+        arguments = _arguments(module, reserve, solution.argv)
+        verified, verification = _run_verification(
+            module, main, arguments, solution.stdin, watches, reserve
+        )
+        solutions.append(replace(solution, verified=verified, verification=verification))
+    return replace(result, solutions=tuple(solutions))
 
 
 def _run_native(

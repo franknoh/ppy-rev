@@ -65,6 +65,37 @@ def build_parser() -> argparse.ArgumentParser:
     solve = subcommands.add_parser(
         "solve", parents=[common], help="find an input that reaches the success outcome"
     )
+    _solve_options(solve)
+    solve.set_defaults(handler=commands.solve)
+
+    vm = subcommands.add_parser("vm", help="analyze bytecode interpreters")
+    vm_commands = vm.add_subparsers(dest="vm_command", metavar="command")
+    detect = vm_commands.add_parser(
+        "detect", parents=[common], help="find VM dispatchers, with the evidence for each"
+    )
+    detect.add_argument("binary", type=Path)
+    detect.add_argument(
+        "--all", action="store_true", help="also show unlikely candidates (plain switches)"
+    )
+    detect.set_defaults(handler=commands.vm_detect)
+    lift_vm = vm_commands.add_parser(
+        "lift", parents=[common], help="translate the bytecode into RevIR and describe its ISA"
+    )
+    lift_vm.add_argument("binary", type=Path)
+    lift_vm.add_argument("--emit-ir", action="store_true", help="print the bytecode as RevIR")
+    lift_vm.add_argument("--json", type=Path, metavar="PATH", help="write the ISA description")
+    lift_vm.set_defaults(handler=commands.vm_lift)
+    solve_vm = vm_commands.add_parser(
+        "solve",
+        parents=[common],
+        help="solve with the interpreter replaced by its lifted bytecode",
+    )
+    _solve_options(solve_vm)
+    solve_vm.set_defaults(handler=commands.vm_solve)
+    return parser
+
+
+def _solve_options(solve: argparse.ArgumentParser) -> None:
     solve.add_argument("binary", type=Path)
     inputs = solve.add_argument_group("inputs (default: discovered)")
     inputs.add_argument("--argv", type=int, metavar="INDEX", help="solve for argv[INDEX]")
@@ -101,19 +132,6 @@ def build_parser() -> argparse.ArgumentParser:
     limits = solve.add_argument_group("limits")
     limits.add_argument("--timeout", type=float, default=600.0, metavar="SECONDS")
     limits.add_argument("--max-states", type=int, default=20_000)
-    solve.set_defaults(handler=commands.solve)
-
-    vm = subcommands.add_parser("vm", help="analyze bytecode interpreters")
-    vm_commands = vm.add_subparsers(dest="vm_command", metavar="command")
-    detect = vm_commands.add_parser(
-        "detect", parents=[common], help="find VM dispatchers, with the evidence for each"
-    )
-    detect.add_argument("binary", type=Path)
-    detect.add_argument(
-        "--all", action="store_true", help="also show unlikely candidates (plain switches)"
-    )
-    detect.set_defaults(handler=commands.vm_detect)
-    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
