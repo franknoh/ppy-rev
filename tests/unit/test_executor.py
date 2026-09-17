@@ -217,6 +217,35 @@ def test_symbolic_pointer_is_bounded_by_the_path_condition() -> None:
     assert solution.exploration.incomplete == []
 
 
+def test_a_pointer_with_one_value_is_found_without_bounding_it() -> None:
+    """x == 0x3004 makes the load address certain: asking for its values settles it."""
+    program = ProgramBuilder()
+    program.data(
+        ".rodata", 0x3000, b"".join((index * 0x11).to_bytes(4, "little") for index in range(8))
+    )
+    body = program.code(
+        0x1000,
+        [
+            op("COPY", [const(0, 8)], reg("RAX")),
+            op("INT_NOTEQUAL", [reg("RDI"), const(0x3004, 8)], reg("ZF")),
+            op("CBRANCH", [ram(0x1008), reg("ZF")]),
+        ],
+    )
+    program.code(
+        body, [op("LOAD", [reg("RDI")], reg("EAX")), op("INT_ZEXT", [reg("EAX")], reg("RAX"))]
+    )
+    program.code(0x1008, ret(), length=1)
+    program.function("f", 0x1000)
+    module = _module(program)
+    executor = Executor(module, Z3Backend(), _rax_is(0x11))
+    function = module.function_named("f")
+    assert function is not None
+    state = call_state(executor, module, function, {"RDI": sx.symbol("x", 64)})
+    exploration = executor.explore(state)
+    assert exploration.reached
+    assert executor.statistics.solver_calls < 16
+
+
 def _bit_sum_loop() -> Module:
     """rax = sum of i for every set bit i < 16 of rdi, with one branch per bit."""
     program = ProgramBuilder()

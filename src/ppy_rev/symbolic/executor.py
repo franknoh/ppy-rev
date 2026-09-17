@@ -522,10 +522,23 @@ class Executor:
 
     # -- memory ----------------------------------------------------------------------------
 
+    _ENUMERATED = 8
+    """Addresses a pointer may take before enumerating them costs more than bounding them."""
+
     def _candidates(
         self, state: State, address: Expr, size: int, write: bool, limit: int
     ) -> list[int]:
         low, high = unsigned_bounds(address)
+        if high - low + 1 > limit:
+            # Most symbolic pointers turn out to have one value, or a handful: asking for
+            # them one at a time costs two solver calls, bounding a 64-bit range costs 128.
+            found = self._enumerate(state, address, min(limit, self._ENUMERATED))
+            if found is not None:
+                return [
+                    candidate
+                    for candidate in found
+                    if state.memory.accessible(candidate, size, write)
+                ]
         if high - low + 1 > limit and self.seed is not None:
             concrete = self._seed_value(address)
             if concrete is not None:
@@ -565,6 +578,25 @@ class Executor:
             state, "a wide symbolic pointer was fixed to its seed value", may_hide_paths=True
         )
         return [value] if state.memory.accessible(value, size, write) else []
+
+    def _enumerate(self, state: State, value: Expr, limit: int) -> list[int] | None:
+        """Every value `value` can take on this path, or None if there are more than `limit`."""
+        self._auxiliary += 1
+        probe = sx.symbol(f"__probe_{self._auxiliary}", value.width)
+        binding = sx.equal(probe, value)
+        found: list[int] = []
+        while len(found) <= limit:
+            excluded = [
+                sx.bool_not(sx.equal(probe, sx.const(candidate, value.width)))
+                for candidate in found
+            ]
+            result = self._check([*state.conditions(), binding, *excluded], [probe])
+            if result.status is Status.UNSAT:
+                return sorted(found)
+            if result.status is not Status.SAT:
+                return None  # undecided: fall back to bounding the range
+            found.append(result.model[probe.name])
+        return None
 
     def _feasible_bounds(self, state: State, address: Expr, low: int, high: int) -> tuple[int, int]:
         """Tighten `address`'s range to what the path condition allows, by binary search.
