@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from ppy_rev.ir.model import Endianness, Module
 
+PAGE_SIZE = 0x1000
+
 
 class MemoryFaultError(Exception):
     def __init__(self, address: int, size: int, access: str) -> None:
@@ -46,8 +48,15 @@ class ConcreteMemory:
 
     @classmethod
     def for_module(cls, module: Module) -> ConcreteMemory:
+        """The module's sections, and the rest of every page they occupy.
+
+        The loader maps whole pages, so bytes past the end of a section (a short `.bss`)
+        are accessible, with the section's permissions, and read as zero. Without them, a
+        write the real program makes safely would fault and hide a path.
+        """
         memory = cls(module.target.endianness)
-        for region in module.memory:
+        regions = sorted(module.memory, key=lambda region: region.start)
+        for region in regions:
             memory.map(
                 Mapping(
                     name=region.name,
@@ -58,7 +67,42 @@ class ConcreteMemory:
                     initial=region.data,
                 )
             )
+        # A gap between sections belongs to the section before it; a gap at the start
+        # of a page, to the section after it.
+        for index, region in enumerate(regions):
+            if region.size == 0:
+                continue
+            following = regions[index + 1].start if index + 1 < len(regions) else None
+            page_end = -(-region.end // PAGE_SIZE) * PAGE_SIZE
+            tail_end = page_end if following is None else min(page_end, following)
+            page_start = region.start // PAGE_SIZE * PAGE_SIZE
+            for start, end in ((region.end, tail_end), (page_start, region.start)):
+                for gap_start, gap_end in memory._unmapped(start, end):
+                    memory.map(
+                        Mapping(
+                            name=f"{region.name} (page)",
+                            start=gap_start,
+                            size=gap_end - gap_start,
+                            readable=region.readable,
+                            writable=region.writable,
+                            initial=None,
+                        )
+                    )
         return memory
+
+    def _unmapped(self, start: int, end: int) -> list[tuple[int, int]]:
+        """The parts of [start, end) no mapping covers."""
+        gaps: list[tuple[int, int]] = []
+        position = start
+        for mapping in self._mappings:
+            if mapping.end <= position or mapping.start >= end:
+                continue
+            if mapping.start > position:
+                gaps.append((position, mapping.start))
+            position = max(position, mapping.end)
+        if position < end:
+            gaps.append((position, end))
+        return gaps
 
     @property
     def mappings(self) -> tuple[Mapping, ...]:

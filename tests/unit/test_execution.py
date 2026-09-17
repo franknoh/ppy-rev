@@ -48,6 +48,26 @@ def test_memory_permissions_and_endianness() -> None:
         memory.map(Mapping("clash", 0x2008, 0x10, True, True, None))
 
 
+def test_sections_extend_to_the_end_of_their_page() -> None:
+    program = ProgramBuilder()
+    program.data(".got.plt", 0x603000, bytes(0x68))
+    program.data(".data", 0x603070, bytes(0x47), writable=True)
+    program.data(".bss", 0x6030B7, bytes(0x11), writable=True)
+    memory = ConcreteMemory.for_module(lift_export(program.build()).module)
+    # A short .bss: the loader maps the rest of its page, writable, as zeros.
+    memory.write(0x6030C8, b"\xff" * 0x20)
+    assert memory.read(0x6030E8, 8) == bytes(8)
+    assert memory.load(0x603FF8, 64) == 0
+    # The gap before .data belongs to the read-only section before it.
+    assert memory.read(0x603068, 8) == bytes(8)
+    with pytest.raises(MemoryFaultError):
+        memory.store(0x603068, 1, 8)
+    with pytest.raises(MemoryFaultError):
+        memory.load(0x604000, 8)
+    with pytest.raises(MemoryFaultError):
+        memory.load(0x602FF8, 8)
+
+
 def _loop_program() -> ProgramBuilder:
     program = ProgramBuilder()
     loop = program.code(0x1000, [op("COPY", [const(0, 8)], reg("RCX"))])
