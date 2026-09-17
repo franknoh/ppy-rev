@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol
 
+from ppy_rev.analysis.locations import Location
 from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.diagnostics import DiagnosticCode
 from ppy_rev.execution.memory import MemoryFaultError
@@ -929,11 +930,19 @@ class Executor:
         checkpoint = state.memory.checkpoint()
         pending, stopped = self._fork(state, choices, origin)
         arrived: list[State] = []
+        escaped: list[State] = []
         while pending:
             current = pending.pop()
             frame = current.frame
             if len(current.frames) == depth and frame.block == region.join and not frame.position:
                 arrived.append(current)
+                continue
+            if (
+                len(current.frames) == depth
+                and not frame.position
+                and frame.block not in region.blocks
+            ):
+                escaped.append(current)  # left the loop: continues on its own
                 continue
             try:
                 outcome = self._step(current)
@@ -947,15 +956,56 @@ class Executor:
                 pending.extend(outcome[0])
                 stopped.extend(outcome[1])
         if len(arrived) <= 1:
-            return arrived, stopped
-        merged = self._merge(arrived, shared_constraints, checkpoint, origin)
+            return arrived + escaped, stopped
+        merged = self._merge(arrived, shared_constraints, checkpoint, origin, region.join)
         if merged is None:
-            return arrived, stopped
+            return arrived + escaped, stopped
         merged.decisions = decisions + 1
-        return [merged], stopped
+        return [merged, *escaped], stopped
+
+    def _address_cells(self, state: State) -> set[int]:
+        """Bytes of memory the current function loads addresses from, where known now.
+
+        This only steers merging (merged values stay exact), so a slot whose address is not
+        known yet is simply not counted.
+        """
+        frame = state.frame
+        cells: set[int] = set()
+        for location in self._regions.address_slots(frame.function):
+            address = self._resolve_location(state, location)
+            if address is not None:
+                cells.update(range(address, address + self._pointer_width // 8))
+        return cells
+
+    def _resolve_location(self, state: State, location: Location) -> int | None:
+        base, offset = location
+        match base:
+            case ("const", _):
+                value = 0
+            case ("value", int() as identifier):
+                known = state.frame.values.get(identifier)
+                if known is None or not known.is_const:
+                    return None
+                value = known.value
+            case ("load", tuple() as inner, int() as width):
+                pointer = self._resolve_location(state, inner)
+                if pointer is None or not state.memory.accessible(pointer, width // 8, False):
+                    return None
+                loaded = state.memory.load(pointer, width)
+                if not loaded.is_const:
+                    return None
+                value = loaded.value
+            case _:
+                return None
+        return (value + offset) & ((1 << self._pointer_width) - 1)
 
     def _merge(
-        self, states: list[State], shared_constraints: int, checkpoint: object, origin: Origin
+        self,
+        states: list[State],
+        shared_constraints: int,
+        checkpoint: object,
+        origin: Origin,
+        join: int,
     ) -> State | None:
         """Fold states that forked after `shared_constraints` into the last one.
 
@@ -970,10 +1020,17 @@ class Executor:
             for current in states
         ]
         merged = states[-1]
+        if any(not _same_io(current, merged) for current in states[:-1]):
+            return None
         frame_values = [current.frame.values for current in states]
         # Values some path never defined were defined inside the region and cannot be used
         # after its join, which none of those definitions dominate.
-        shared = set(frame_values[0]).intersection(*frame_values[1:])
+        usable = self._regions.usable_after(merged.frame.function, join)
+        shared = {
+            identifier
+            for identifier in set(frame_values[0]).intersection(*frame_values[1:])
+            if usable(identifier)
+        }
         addressing = self._regions.addressing(merged.frame.function)
         values: dict[int, Expr] = {}
         for identifier in shared:
@@ -986,9 +1043,11 @@ class Executor:
             *(current.memory.written_since(checkpoint) for current in states)
         )
         bytes_: dict[int, Expr] = {}
+        address_cells = self._address_cells(merged)
         for address in sorted(written):
             candidates = [current.memory.read_byte(address) for current in states]
-            choice = _choose(selectors, candidates, allow_constants=False)
+            allowed = address not in address_cells
+            choice = _choose(selectors, candidates, allow_constants=allowed)
             if choice is None:
                 return None
             bytes_[address] = choice
@@ -1010,6 +1069,18 @@ class Executor:
             f"one of {len(states)} merged paths",
         )
         return merged
+
+
+def _same_io(first: State, second: State) -> bool:
+    one, other = first.io, second.io
+    return (
+        one.stdin is other.stdin
+        and one.stdin_position == other.stdin_position
+        and one.stdin_reads == other.stdin_reads
+        and one.heap_next == other.heap_next
+        and len(one.stdout) == len(other.stdout)
+        and all(a is b for a, b in zip(one.stdout, other.stdout, strict=True))
+    )
 
 
 def _choose(selectors: list[Expr], values: list[Expr], allow_constants: bool) -> Expr | None:

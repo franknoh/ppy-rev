@@ -56,6 +56,20 @@ def test_regions_are_loop_free_call_free_diamonds() -> None:
     assert RegionFinder(max_blocks=1).region(_function(DIAMOND), 0) is None
 
 
+LOOP_WITH_EXIT_ARM = {0: (1,), 1: (2, 6), 2: (3, 4), 3: (5,), 4: (5, 7), 5: (1,), 6: (), 7: ()}
+"""A loop whose diamond has an arm that may leave the function (block 7)."""
+
+
+def test_loop_diamonds_merge_where_the_paths_that_stay_meet() -> None:
+    finder = RegionFinder()
+    function = _function(LOOP_WITH_EXIT_ARM)
+    assert finder.region(function, 2) == MergeRegion(2, 5, frozenset({3, 4}))
+    assert finder.region(function, 4) == MergeRegion(4, 5, frozenset())
+    # A branch whose ways round the loop meet only at the header merges there.
+    rotated = _function({0: (1,), 1: (2, 3), 2: (1, 4), 3: (1,), 4: ()})
+    assert RegionFinder().region(rotated, 1) == MergeRegion(1, 1, frozenset({2, 3}))
+
+
 def test_addressing_follows_values_through_memory() -> None:
     builder = FunctionBuilder([("RDI", 64), ("RSI", 64)])
     block = builder.block()
