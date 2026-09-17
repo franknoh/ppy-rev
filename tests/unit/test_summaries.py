@@ -131,8 +131,10 @@ def test_memcmp_memcpy_memset(left: bytes, right: bytes, size: int) -> None:
 
 @settings(max_examples=60, deadline=None)
 @given(text, text)
-def test_strcpy_and_strcspn(left: bytes, right: bytes) -> None:
+def test_string_copies_and_strcspn(left: bytes, right: bytes) -> None:
     _run_both("strcpy", [OUT, LEFT], left, right)
+    for size in (0, 1, 5, 24):
+        _run_both("strncpy", [OUT, LEFT, size], left, right)
     # The model scans a symbolic string against a concrete set of rejected bytes.
     rejected = bytes(sorted(set(right) - {0}))[:4]
     _run_both("strcspn", [LEFT, RIGHT], left, rejected, concrete_right=True)

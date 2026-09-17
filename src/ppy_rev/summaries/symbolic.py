@@ -70,6 +70,7 @@ class SymbolicLibc:
             "memmove": self._memmove,
             "memset": self._memset,
             "strcpy": self._strcpy,
+            "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "read": self._read,
             "fgets": self._fgets,
@@ -270,6 +271,26 @@ class SymbolicLibc:
         for index, byte in enumerate([*text, _ZERO_BYTE]):
             old = self._byte(call, destination + index)
             self._write(call, destination + index, sx.ite(copying, byte, old))
+            copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
+        return self._returns(call, sx.const(destination, 64))
+
+    def _strncpy(self, call: _Call) -> list[ExternalOutcome]:
+        destination = self._concrete(call, call.arguments[0], "destination")
+        source = self._concrete(call, call.arguments[1], "source")
+        size = self._concrete(call, call.arguments[2], "size")
+        if size > 1 << 20:
+            raise _Unsupported(f"strncpy of {size} bytes")
+        # Source bytes are read only up to a terminator that is certainly there.
+        text: list[Expr] = []
+        while len(text) < size:
+            byte = self._byte(call, source + len(text))
+            if byte.is_const and byte.value == 0:
+                break
+            text.append(byte)
+        copying = sx.TRUE
+        for index in range(size):
+            byte = text[index] if index < len(text) else _ZERO_BYTE
+            self._write(call, destination + index, sx.ite(copying, byte, _ZERO_BYTE))
             copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
         return self._returns(call, sx.const(destination, 64))
 
