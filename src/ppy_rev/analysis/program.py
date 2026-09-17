@@ -36,16 +36,24 @@ def calls(function: Function) -> Iterator[tuple[Call, int]]:
 
 
 def external_name(module: Module, call: Call) -> str | None:
+    """The library function a call reaches: directly, or through a resolved GOT entry."""
     match call.target:
         case ExternalTarget(name=name):
             return canonical_name(name)
         case DirectTarget(address=address):
-            for external in module.externals:
-                if address in external.addresses:
-                    return canonical_name(external.name)
-            return None
+            return _external_at(module, address)
+        case IndirectTarget(candidates=candidates) if candidates:
+            names = {_external_at(module, address) for address in candidates}
+            return names.pop() if len(names) == 1 else None
         case IndirectTarget():
             return None
+
+
+def _external_at(module: Module, address: int) -> str | None:
+    for external in module.externals:
+        if address in external.addresses:
+            return canonical_name(external.name)
+    return None
 
 
 def find_main(module: Module) -> Function:
