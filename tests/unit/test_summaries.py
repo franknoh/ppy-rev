@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -10,7 +12,7 @@ from ppy_rev.execution.memory import ConcreteMemory, Mapping
 from ppy_rev.execution.program import STANDARD_STREAMS
 from ppy_rev.ir.model import Endianness, Origin
 from ppy_rev.solver.z3_backend import Z3Backend
-from ppy_rev.summaries.concrete import ConcreteIO, ConcreteLibc
+from ppy_rev.summaries.concrete import ConcreteIO, ConcreteLibc, UnsupportedLibraryCallError
 from ppy_rev.summaries.symbolic import SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.evaluate import evaluate
@@ -27,6 +29,13 @@ OUT = DATA + 0x300
 MODULE = module_for(registers=REGISTERS)
 
 text = st.binary(min_size=0, max_size=12)
+numbers = st.lists(st.sampled_from(b" \t+-0123456789a"), max_size=12).map(bytes)
+scan_input = (
+    st.lists(st.sampled_from(b" \n+-0123456789ax,\xff"), max_size=10)
+    .map(bytes)
+    # Runs of whitespace a directive skips are explored as one byte (see the model).
+    .map(lambda data: re.sub(rb"[ \n]+", lambda run: run.group(0)[:1], data))
+)
 
 
 def _image() -> ConcreteMemory:
@@ -42,8 +51,13 @@ def _run_both(
     right: bytes,
     stdin: bytes = b"",
     concrete_right: bool = False,
+    concrete_left: bool = False,
 ) -> None:
-    """Place `left`/`right` at LEFT/RIGHT (symbolically, then concretely) and compare."""
+    """Place `left`/`right` at LEFT/RIGHT (symbolically, then concretely) and compare.
+
+    A model may split into several states; exactly one of them must admit the concrete
+    input, and it must agree with the concrete model.
+    """
     concrete_memory = _image()
     concrete_memory.write(LEFT, left + b"\0")
     concrete_memory.write(RIGHT, right + b"\0")
@@ -53,11 +67,15 @@ def _run_both(
 
     executor = Executor(MODULE, Z3Backend(), Goal())
     image = _image()
-    symbolic = [(LEFT, left)]
-    if concrete_right:
-        image.write(RIGHT, right + b"\0")
-    else:
-        symbolic.append((RIGHT, right))
+    symbolic: list[tuple[int, bytes]] = []
+    for base, content, concrete_content in (
+        (LEFT, left, concrete_left),
+        (RIGHT, right, concrete_right),
+    ):
+        if concrete_content:
+            image.write(base, content + b"\0")
+        else:
+            symbolic.append((base, content))
     memory = SymbolicMemory(image)
     assignment: dict[str, int] = {}
     for base, content in symbolic:
@@ -75,12 +93,17 @@ def _run_both(
         executor, state, name, symbolic_arguments, Origin(0, 0)
     )
     assert outcomes is not None
-    (outcome,) = outcomes
+    (outcome,) = [
+        outcome
+        for outcome in outcomes
+        if all(evaluate(item.condition, assignment) for item in outcome.state.constraints)
+    ]
     assert isinstance(outcome, Returned), outcome
     result = evaluate(outcome.outputs["RAX"], assignment)
-    assert result == concrete["RAX"], (name, left, right, result, concrete["RAX"])
+    assert result == concrete["RAX"], (name, left, right, stdin, result, concrete["RAX"])
+    assert outcome.state.io.stdin_position == io.stdin_position or name == "fgets"
     for address in range(DATA, DATA + 0x400):
-        symbolic_byte = evaluate(memory.read_byte(address), assignment)
+        symbolic_byte = evaluate(outcome.state.memory.read_byte(address), assignment)
         assert symbolic_byte == concrete_memory.read(address, 1)[0], (name, hex(address))
 
 
@@ -132,6 +155,50 @@ def test_strcspn_refuses_a_symbolic_rejected_set() -> None:
     assert outcomes is not None
     (outcome,) = outcomes
     assert isinstance(outcome, Failed) and outcome.reason is StopReason.UNSUPPORTED
+
+
+@settings(max_examples=80, deadline=None)
+@given(numbers)
+def test_number_parsing(value: bytes) -> None:
+    _run_both("atoi", [LEFT], value, b"")
+    _run_both("atol", [LEFT], value, b"")
+    _run_both("strtol", [LEFT, OUT, 10], value, b"")
+
+
+@settings(max_examples=120, deadline=None)
+@given(
+    st.sampled_from([b"%s", b"%3s", b"%d", b"%d %d", b"%c", b"x%d", b"%hhd", b"%*d %s", b"%d,%d"]),
+    scan_input,
+)
+def test_scanf(template: bytes, data: bytes) -> None:
+    pointers = [LEFT, OUT, OUT + 0x40, OUT + 0x80]
+    _run_both("scanf", pointers, template, b"", stdin=data, concrete_left=True)
+
+
+def test_character_functions() -> None:
+    character = sx.symbol("c", 64)
+    concrete = ConcreteLibc(SYSV_X86_64)
+    for name in ("isalpha", "isdigit", "isspace", "ispunct", "toupper", "tolower"):
+        executor = Executor(MODULE, Z3Backend(), Goal())
+        state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+        outcomes = SymbolicLibc(SYSV_X86_64).call(
+            executor, state, name, {"RDI": character}, Origin(0, 0)
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned)
+        for value in [*range(-140, 270), 0x7FFFFFFF, -0x80000000, 0x1_0000_0041]:
+            assignment = {"c": value & 0xFFFFFFFFFFFFFFFF}
+            admitted = all(
+                evaluate(item.condition, assignment) for item in outcome.state.constraints
+            )
+            try:
+                expected = concrete(name, dict(assignment, RDI=assignment["c"]), _image())
+            except UnsupportedLibraryCallError:
+                assert not admitted, (name, value)
+                continue
+            assert admitted, (name, value)
+            assert evaluate(outcome.outputs["RAX"], assignment) == expected["RAX"], (name, value)
 
 
 def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:

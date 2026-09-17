@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import ConcreteMemory
-from ppy_rev.execution.program import HEAP_SIZE, HEAP_START, STANDARD_STREAMS
+from ppy_rev.execution.program import CTYPE_POINTERS, HEAP_SIZE, HEAP_START, STANDARD_STREAMS
 from ppy_rev.ir.model import mask
+from ppy_rev.ir.semantics import to_signed
+from ppy_rev.summaries import ctype, scanning
 from ppy_rev.summaries.formatting import FormatError, format_printf
 from ppy_rev.summaries.libc import canonical_name
 
@@ -75,7 +77,24 @@ class ConcreteLibc:
             "malloc": self._malloc,
             "calloc": self._calloc,
             "free": lambda arguments, memory: 0,
+            "atoi": self._atoi,
+            "atol": self._atol,
+            "atoll": self._atol,
+            "strtol": self._strtol,
+            "strtoll": self._strtol,
+            "scanf": self._scanf,
+            "toupper": lambda arguments, memory: self._case(ctype.to_upper, arguments),
+            "tolower": lambda arguments, memory: self._case(ctype.to_lower, arguments),
+            **{
+                name: lambda arguments, memory, pointer=pointer: pointer
+                for name, pointer in CTYPE_POINTERS.items()
+            },
+            **{
+                name: lambda arguments, memory, flag=flag: self._classify(flag, arguments)
+                for name, flag in ctype.CLASSIFIERS.items()
+            },
         }
+        self._registers: dict[str, int] = {}
 
     def __call__(
         self, name: str, registers: dict[str, int], memory: ConcreteMemory
@@ -84,6 +103,7 @@ class ConcreteLibc:
         if handler is None:
             raise KeyError(name)
         arguments = [registers.get(register, 0) for register in self.convention.integer_parameters]
+        self._registers = registers
         result = handler(arguments, memory)
         returned = dict(registers)
         returned[self.convention.integer_returns[0]] = result & mask(64)
@@ -191,6 +211,67 @@ class ConcreteLibc:
         byte = self.io.stdin[self.io.stdin_position]
         self.io.stdin_position += 1
         return byte
+
+    def _scanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        try:
+            directives = scanning.parse_format(self._string(memory, arguments[0]))
+        except scanning.FormatError as error:
+            raise UnsupportedLibraryCallError(f"scanf: {error}") from error
+        io = self.io
+        scanned = scanning.scan(directives, io.stdin[io.stdin_position :])
+        io.stdin_position += scanned.consumed
+        for index, assignment in enumerate(scanned.assignments):
+            destination = self._variadic(arguments, 1 + index, memory)
+            match assignment.content:
+                case bytes() as content if (
+                    assignment.directive.kind is scanning.DirectiveKind.STRING
+                ):
+                    memory.write(destination, content + b"\0")
+                case bytes() as content:
+                    memory.write(destination, content)
+                case int() as value:
+                    size = assignment.directive.store_size
+                    memory.store(destination, value & mask(size * 8), size * 8)
+        return scanned.result & 0xFFFFFFFF
+
+    def _variadic(self, arguments: list[int], index: int, memory: ConcreteMemory) -> int:
+        """Integer argument `index`, from its register or the caller's stack."""
+        if index < len(arguments):
+            return arguments[index]
+        stack = self._registers[self.convention.stack_pointer]
+        # Above the return address are the stack-passed arguments, in order.
+        return memory.load(stack + 8 * (1 + index - len(arguments)), 64)
+
+    # -- numbers and characters ------------------------------------------------------------
+
+    def _atoi(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return scanning.parse_long(self._string(memory, arguments[0])).value & 0xFFFFFFFF
+
+    def _atol(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return scanning.parse_long(self._string(memory, arguments[0])).value & mask(64)
+
+    def _strtol(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        text, end_pointer, base = arguments[0], arguments[1], to_signed(arguments[2], 32)
+        if base != 10:
+            raise UnsupportedLibraryCallError(f"strtol with base {base}")
+        number = scanning.parse_long(self._string(memory, text))
+        if end_pointer:
+            memory.store(end_pointer, text + number.end, 64)
+        return number.value & mask(64)
+
+    @staticmethod
+    def _case(mapping: Callable[[int], int], arguments: list[int]) -> int:
+        character = to_signed(arguments[0] & 0xFFFFFFFF, 32)
+        if not ctype.FIRST <= character <= ctype.LAST:
+            return character & 0xFFFFFFFF
+        return mapping(character) & 0xFFFFFFFF
+
+    @staticmethod
+    def _classify(flag: int, arguments: list[int]) -> int:
+        character = to_signed(arguments[0] & 0xFFFFFFFF, 32)
+        if not ctype.FIRST <= character <= ctype.LAST:
+            raise UnsupportedLibraryCallError(f"character class of {character} is undefined")
+        return ctype.classification(character) & flag
 
     # -- output ----------------------------------------------------------------------------
 

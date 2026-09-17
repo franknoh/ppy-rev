@@ -12,8 +12,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ppy_rev.abi import CallingConvention
-from ppy_rev.execution.program import HEAP_SIZE, HEAP_START, STANDARD_STREAMS
+from ppy_rev.execution.memory import MemoryFaultError
+from ppy_rev.execution.program import CTYPE_POINTERS, HEAP_SIZE, HEAP_START, STANDARD_STREAMS
 from ppy_rev.ir.model import Origin
+from ppy_rev.solver.backend import Status
+from ppy_rev.summaries import ctype, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.executor import (
@@ -25,7 +28,7 @@ from ppy_rev.symbolic.executor import (
     StopReason,
 )
 from ppy_rev.symbolic.expr import Expr
-from ppy_rev.symbolic.state import State
+from ppy_rev.symbolic.state import ConstraintKind, State
 
 _NEWLINE = sx.const(0x0A, 8)
 _ZERO_BYTE = sx.const(0, 8)
@@ -85,6 +88,22 @@ class SymbolicLibc:
             "__stack_chk_fail": self._abort,
             "malloc": self._malloc,
             "calloc": self._calloc,
+            "atoi": self._atoi,
+            "atol": self._atol,
+            "atoll": self._atol,
+            "strtol": self._strtol,
+            "strtoll": self._strtol,
+            "scanf": self._scanf,
+            "toupper": lambda call: self._case(call, 0x61, 0x7A, -0x20),
+            "tolower": lambda call: self._case(call, 0x41, 0x5A, 0x20),
+            **{
+                name: lambda call, pointer=pointer: self._returns(call, sx.const(pointer, 64))
+                for name, pointer in CTYPE_POINTERS.items()
+            },
+            **{
+                name: lambda call, flag=flag: self._classify(call, flag)
+                for name, flag in ctype.CLASSIFIERS.items()
+            },
         }
 
     def call(
@@ -112,11 +131,14 @@ class SymbolicLibc:
 
     # -- helpers ---------------------------------------------------------------------------
 
-    def _returns(self, call: _Call, value: Expr) -> list[ExternalOutcome]:
+    def _outputs(self, call: _Call, value: Expr) -> dict[str, Expr]:
         outputs = dict(call.registers)
         result_register = self.convention.integer_returns[0]
         outputs[result_register] = value if value.width == 64 else sx.zero_extend(value, 64)
-        return [Returned(call.state, outputs)]
+        return outputs
+
+    def _returns(self, call: _Call, value: Expr) -> list[ExternalOutcome]:
+        return [Returned(call.state, self._outputs(call, value))]
 
     def _returns_zero(self, call: _Call) -> list[ExternalOutcome]:
         return self._returns(call, sx.const(0, 64))
@@ -372,6 +394,171 @@ class SymbolicLibc:
             call, sx.symbol(f"__printf_{call.origin.address:x}_{call.state.id}", 64)
         )
 
+    # -- numbers ---------------------------------------------------------------------------
+
+    def _parse(self, call: _Call) -> list[tuple[State, Expr, Expr]]:
+        """strtol(text, &end, 10), split by the shape of the number.
+
+        Plain numbers (no leading whitespace, an optional sign, at most ten digits) each get
+        a state with a simple value; one more state covers every other input with the exact
+        scanner, so no input is left out. Longer numbers are rare and much harder for the
+        solver, so that state is explored last.
+        """
+        address = self._concrete(call, call.arguments[0], "string")
+        text = self._string_bytes(call, address)
+        options: list[tuple[Expr, tuple[int, int] | None]] = []
+        if text:
+            first = text[0]
+            sign = sx.bool_or(
+                sx.equal(first, sx.const(0x2B, 8)), sx.equal(first, sx.const(0x2D, 8))
+            )
+            options.append(
+                (sx.bool_not(sx.bool_or(sign, _is_digit(first), _is_space(first))), (0, 0))
+            )
+            for signed in (0, 1):
+                head = sign if signed else _is_digit(first)
+                digits = sx.TRUE
+                for count in range(1, min(_PLAIN_DIGITS, len(text) - signed) + 1):
+                    digits = sx.bool_and(digits, _is_digit(text[signed + count - 1]))
+                    after = signed + count
+                    ends = sx.TRUE if after == len(text) else sx.bool_not(_is_digit(text[after]))
+                    options.append((sx.bool_and(head, digits, ends), (signed, count)))
+        plain = sx.bool_or(*(condition for condition, _ in options))
+        options.append((sx.bool_not(plain), None))
+        results: list[tuple[State, Expr, Expr]] = []
+        for state, shape in _split(call, call.state, options, "number shape"):
+            if shape is None:
+                # Unusual numbers (leading whitespace, long digit runs) come after plain ones.
+                state.decisions += _PLAIN_DIGITS
+                result, end, any_digit = _strtol_expression(text)
+                results.append((state, result, sx.ite(any_digit, end, sx.const(0, 64))))
+                continue
+            signed, count = shape
+            magnitude = sx.const(0, 64)
+            for byte in text[signed : signed + count]:
+                numeral = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+                magnitude = sx.add(sx.mul(magnitude, sx.const(10, 64)), numeral)
+            negative = sx.equal(text[0], sx.const(0x2D, 8)) if signed else sx.FALSE
+            value = sx.ite(negative, sx.negate(magnitude), magnitude)
+            results.append((state, value, sx.const(signed + count if count else 0, 64)))
+        return results
+
+    def _atoi(self, call: _Call) -> list[ExternalOutcome]:
+        return [
+            Returned(state, self._outputs(call, sx.zero_extend(sx.extract(result, 0, 32), 64)))
+            for state, result, _ in self._parse(call)
+        ]
+
+    def _atol(self, call: _Call) -> list[ExternalOutcome]:
+        return [
+            Returned(state, self._outputs(call, result)) for state, result, _ in self._parse(call)
+        ]
+
+    def _strtol(self, call: _Call) -> list[ExternalOutcome]:
+        base = self._concrete(call, sx.extract(call.arguments[2], 0, 32), "base")
+        if base != 10:
+            raise _Unsupported(f"base {base}")
+        end_pointer = self._concrete(call, call.arguments[1], "end pointer")
+        address = self._concrete(call, call.arguments[0], "string")
+        outcomes: list[ExternalOutcome] = []
+        for state, result, end in self._parse(call):
+            if end_pointer:
+                stored = sx.add(sx.const(address, 64), end)
+                for index in range(8):
+                    location = end_pointer + index
+                    if not state.memory.accessible(location, 1, write=True):
+                        raise _Fault(f"write to unwritable memory at {location:#x}")
+                    state.memory.write_byte(location, sx.extract(stored, index * 8, 8))
+            outcomes.append(Returned(state, self._outputs(call, result)))
+        return outcomes
+
+    # -- characters ------------------------------------------------------------------------
+
+    def _case(self, call: _Call, first: int, last: int, delta: int) -> list[ExternalOutcome]:
+        character = sx.extract(call.arguments[0], 0, 32)
+        mapped = sx.ite(
+            _in_signed_range(character, first, last),
+            sx.add(character, sx.const(delta & 0xFFFFFFFF, 32)),
+            sx.ite(
+                _in_signed_range(character, ctype.FIRST, -2),
+                sx.add(character, sx.const(0x100, 32)),
+                character,
+            ),
+        )
+        return self._returns(call, sx.zero_extend(mapped, 64))
+
+    def _classify(self, call: _Call, flag: int) -> list[ExternalOutcome]:
+        character = sx.extract(call.arguments[0], 0, 32)
+        in_table = _in_signed_range(character, ctype.FIRST, ctype.LAST)
+        if in_table is not sx.TRUE:
+            executor, state = call.executor, call.state
+            if executor.feasible(state, [sx.bool_not(in_table)]) is not Status.UNSAT:
+                if executor.feasible(state, [in_table]) is Status.UNSAT:
+                    raise _Unsupported("the character is outside the classification table")
+                executor.add_constraint(
+                    state,
+                    in_table,
+                    ConstraintKind.LIBRARY,
+                    call.origin,
+                    f"{call.name} is undefined outside -128..255",
+                )
+                executor.approximate(
+                    state,
+                    f"{call.name} at {call.origin.address:#x} assumes its argument indexes "
+                    "the table",
+                    may_hide_paths=True,
+                )
+        runs: list[tuple[int, int]] = []
+        for code in range(0x80):
+            if ctype.classification(code) & flag:
+                if runs and runs[-1][1] == code - 1:
+                    runs[-1] = (runs[-1][0], code)
+                else:
+                    runs.append((code, code))
+        member = sx.bool_or(*(_in_signed_range(character, low, high) for low, high in runs))
+        return self._returns(call, sx.ite(member, sx.const(flag, 64), sx.const(0, 64)))
+
+    # -- scanf -----------------------------------------------------------------------------
+
+    def _scanf(self, call: _Call) -> list[ExternalOutcome]:
+        """scanf over the symbolic stdin stream, forking where the input's shape decides.
+
+        Every alternative (how a token ends, whether a conversion fails) becomes its own
+        state with the condition that selects it, so positions in the stream stay concrete.
+        Whitespace skipped by a directive is never visible to the program: an input that
+        skips several whitespace bytes behaves exactly like one that skips a single byte
+        of it, so only zero or one skipped byte is explored.
+        """
+        template = self._string_bytes(call, self._concrete(call, call.arguments[0], "format"))
+        if any(not byte.is_const for byte in template):
+            raise _Unsupported("the format string is symbolic")
+        try:
+            directives = scanning.parse_format(bytes(byte.value for byte in template))
+        except scanning.FormatError as error:
+            raise _Unsupported(str(error)) from error
+        assignments = sum(
+            1 for directive in directives if directive.assigns and _converts(directive)
+        )
+        destinations = [
+            self._concrete(call, self._variadic(call, 1 + index), "pointer")
+            for index in range(assignments)
+        ]
+        scanner = _Scanner(self, call, directives, destinations)
+        return scanner.run()
+
+    def _variadic(self, call: _Call, index: int) -> Expr:
+        registers = self.convention.integer_parameters
+        if index < len(registers):
+            return call.arguments[index]
+        stack = call.registers.get(self.convention.stack_pointer)
+        if stack is None:
+            raise _Unsupported("stack-passed arguments without a stack pointer")
+        address = self._concrete(call, stack, "stack pointer") + 8 * (1 + index - len(registers))
+        try:
+            return call.state.memory.load(address, 64)
+        except MemoryFaultError as fault:
+            raise _Fault(str(fault)) from fault
+
     # -- process ---------------------------------------------------------------------------
 
     def _exit(self, call: _Call) -> list[ExternalOutcome]:
@@ -401,3 +588,310 @@ class SymbolicLibc:
         for index in range(count * size if address else 0):
             self._write(call, address + index, _ZERO_BYTE)
         return self._returns(call, sx.const(address, 64))
+
+
+def _strtol_expression(text: list[Expr]) -> tuple[Expr, Expr, Expr]:
+    """strtol(text, &end, 10) over possibly symbolic bytes, exactly.
+
+    Returns the saturated 64-bit value, the index just past the last digit, and whether
+    any digit was read. The C scanner is run over every byte as a small state machine
+    whose state is carried in if-then-else expressions.
+    """
+    skipping, signed, in_digits, finished = sx.TRUE, sx.FALSE, sx.FALSE, sx.FALSE
+    negative, overflow, any_digit = sx.FALSE, sx.FALSE, sx.FALSE
+    value = sx.const(0, 64)
+    end = sx.const(0, 64)
+    cutoff = sx.const((1 << 64) // 10, 64)
+    for index, byte in enumerate(text):
+        digit = _in_range(byte, 0x30, 0x39)
+        space = sx.bool_or(*(sx.equal(byte, sx.const(code, 8)) for code in ctype.WHITESPACE))
+        sign = sx.bool_or(sx.equal(byte, sx.const(0x2B, 8)), sx.equal(byte, sx.const(0x2D, 8)))
+        stay = sx.bool_and(skipping, space)
+        take_sign = sx.bool_and(skipping, sign)
+        take_first = sx.bool_and(sx.bool_or(skipping, signed), digit)
+        take_more = sx.bool_and(in_digits, digit)
+        numeral = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+        too_big = sx.bool_or(
+            sx.unsigned_less(cutoff, value),
+            sx.bool_and(
+                sx.equal(value, cutoff),
+                sx.unsigned_less(sx.const(((1 << 64) - 1) % 10, 64), numeral),
+            ),
+        )
+        overflow = sx.bool_or(overflow, sx.bool_and(take_more, too_big))
+        value = sx.ite(
+            take_first,
+            numeral,
+            sx.ite(
+                sx.bool_and(take_more, sx.bool_not(too_big)),
+                sx.add(sx.mul(value, sx.const(10, 64)), numeral),
+                value,
+            ),
+        )
+        minus = sx.equal(byte, sx.const(0x2D, 8))
+        negative = sx.bool_or(
+            sx.bool_and(take_sign, minus), sx.bool_and(sx.bool_not(take_sign), negative)
+        )
+        took_digit = sx.bool_or(take_first, take_more)
+        end = sx.ite(took_digit, sx.const(index + 1, 64), end)
+        any_digit = sx.bool_or(any_digit, take_first)
+        finished = sx.bool_or(finished, sx.bool_not(sx.bool_or(stay, take_sign, took_digit)))
+        skipping, signed, in_digits = stay, take_sign, took_digit
+    del finished  # every later step already requires a phase that finishing leaves
+    limit = sx.const(1 << 63, 64)
+    too_large = sx.bool_or(
+        overflow,
+        sx.bool_and(negative, sx.unsigned_less(limit, value)),
+        sx.bool_and(sx.bool_not(negative), sx.unsigned_less_equal(limit, value)),
+    )
+    saturated = sx.ite(negative, limit, sx.const((1 << 63) - 1, 64))
+    result = sx.ite(too_large, saturated, sx.ite(negative, sx.negate(value), value))
+    return result, end, any_digit
+
+
+_PLAIN_DIGITS = 10
+"""Digits of a plain number: enough for any 32-bit value, never enough to overflow long."""
+
+
+def _split[T](
+    call: _Call, state: State, options: list[tuple[Expr, T]], note: str
+) -> list[tuple[State, T]]:
+    """One state per feasible option; the options' conditions must exclude each other."""
+    executor = call.executor
+    chosen: list[tuple[State, T]] = []
+    live = [(condition, tag) for condition, tag in options if condition is not sx.FALSE]
+    for index, (condition, tag) in enumerate(live):
+        child = state if index == len(live) - 1 else state.fork(executor.new_state_id())
+        executor.add_constraint(child, condition, ConstraintKind.LIBRARY, call.origin, note)
+        if condition is not sx.TRUE and executor.feasible(child) is Status.UNSAT:
+            continue
+        chosen.append((child, tag))
+    if len(chosen) > 1:
+        for child, _ in chosen:
+            child.decisions += 1
+    return chosen
+
+
+def _in_range(byte: Expr, low: int, high: int) -> Expr:
+    width = byte.width
+    return sx.bool_and(
+        sx.unsigned_less_equal(sx.const(low, width), byte),
+        sx.unsigned_less_equal(byte, sx.const(high, width)),
+    )
+
+
+def _in_signed_range(value: Expr, low: int, high: int) -> Expr:
+    width = value.width
+    return sx.bool_and(
+        sx.signed_less_equal(sx.const(low & ((1 << width) - 1), width), value),
+        sx.signed_less_equal(value, sx.const(high & ((1 << width) - 1), width)),
+    )
+
+
+def _is_space(byte: Expr) -> Expr:
+    return sx.bool_or(*(sx.equal(byte, sx.const(code, 8)) for code in ctype.WHITESPACE))
+
+
+def _is_digit(byte: Expr) -> Expr:
+    return _in_range(byte, 0x30, 0x39)
+
+
+def _converts(directive: scanning.Directive) -> bool:
+    return directive.kind not in (scanning.DirectiveKind.SPACE, scanning.DirectiveKind.LITERAL)
+
+
+@dataclass(slots=True)
+class _Scan:
+    """One way the input can drive scanf so far."""
+
+    state: State
+    position: int
+    assigned: int = 0
+    directive: int = 0
+    result: int | None = None
+
+
+class _Scanner:
+    def __init__(
+        self,
+        libc: SymbolicLibc,
+        call: _Call,
+        directives: list[scanning.Directive],
+        destinations: list[int],
+    ) -> None:
+        self.libc = libc
+        self.call = call
+        self.directives = directives
+        self.destinations = destinations
+
+    def run(self) -> list[ExternalOutcome]:
+        io = self.call.state.io
+        pending = [_Scan(self.call.state, io.stdin_position)]
+        outcomes: list[ExternalOutcome] = []
+        while pending:
+            scan = pending.pop()
+            if scan.result is None and scan.directive == len(self.directives):
+                scan.result = scan.assigned
+            if scan.result is not None:
+                outcomes.append(self._finish(scan))
+                continue
+            directive = self.directives[scan.directive]
+            scan.directive += 1
+            pending.extend(reversed(self._step(scan, directive)))
+        return outcomes
+
+    def _finish(self, scan: _Scan) -> ExternalOutcome:
+        io = scan.state.io
+        if scan.position > io.stdin_position:
+            io.stdin_reads.append((io.stdin_position, scan.position, False))
+            io.stdin_position = scan.position
+        outputs = dict(self.call.registers)
+        result = (scan.result or 0) & 0xFFFFFFFF
+        outputs[self.libc.convention.integer_returns[0]] = sx.const(result, 64)
+        return Returned(scan.state, outputs)
+
+    # -- stream ------------------------------------------------------------------------------
+
+    def _byte(self, scan: _Scan, index: int) -> Expr | None:
+        stdin = scan.state.io.stdin
+        return stdin[index] if index < len(stdin) else None
+
+    def _fork[T](self, scan: _Scan, options: list[tuple[Expr, T]]) -> list[tuple[_Scan, T]]:
+        """Split `scan` by mutually exclusive conditions, keeping the feasible ones."""
+        return [
+            (_Scan(state, scan.position, scan.assigned, scan.directive, scan.result), tag)
+            for state, tag in _split(self.call, scan.state, options, "scanf input")
+        ]
+
+    def _skip_space(self, scan: _Scan) -> list[_Scan]:
+        first = self._byte(scan, scan.position)
+        if first is None:
+            return [scan]
+        second = self._byte(scan, scan.position + 1)
+        second_ends = sx.TRUE if second is None else sx.bool_not(_is_space(second))
+        branches = self._fork(
+            scan,
+            [
+                (sx.bool_not(_is_space(first)), 0),
+                (sx.bool_and(_is_space(first), second_ends), 1),
+            ],
+        )
+        for branch, skipped in branches:
+            branch.position += skipped
+        return [branch for branch, _ in branches]
+
+    # -- directives --------------------------------------------------------------------------
+
+    def _step(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        kind = directive.kind
+        branches = [scan] if kind not in scanning.SKIPS_WHITESPACE else self._skip_space(scan)
+        if kind is scanning.DirectiveKind.SPACE:
+            return branches
+        result: list[_Scan] = []
+        for branch in branches:
+            byte = self._byte(branch, branch.position)
+            if byte is None:
+                branch.result = scanning.EOF if not branch.assigned else branch.assigned
+                result.append(branch)
+            elif kind is scanning.DirectiveKind.LITERAL:
+                result.extend(self._literal(branch, directive, byte))
+            elif kind is scanning.DirectiveKind.STRING:
+                result.extend(self._string(branch, directive))
+            elif kind is scanning.DirectiveKind.CHARACTERS:
+                result.append(self._characters(branch, directive))
+            else:
+                result.extend(self._decimal(branch, directive))
+        return result
+
+    def _literal(self, scan: _Scan, directive: scanning.Directive, byte: Expr) -> list[_Scan]:
+        matches = sx.equal(byte, sx.const(directive.literal, 8))
+        branches = self._fork(scan, [(matches, 1), (sx.bool_not(matches), 0)])
+        for branch, matched in branches:
+            if matched:
+                branch.position += 1
+            else:
+                branch.result = branch.assigned
+        return [branch for branch, _ in branches]
+
+    def _store(self, scan: _Scan, directive: scanning.Directive, content: list[Expr]) -> None:
+        if not directive.assigns:
+            return
+        destination = self.destinations[scan.assigned]
+        for index, byte in enumerate(content):
+            address = destination + index
+            if not scan.state.memory.accessible(address, 1, write=True):
+                raise _Fault(f"scanf writes to unwritable memory at {address:#x}")
+            scan.state.memory.write_byte(address, byte)
+        scan.assigned += 1
+
+    def _string(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        start = scan.position
+        stdin = scan.state.io.stdin
+        longest = len(stdin) - start
+        if directive.width is not None:
+            longest = min(longest, directive.width)
+        options: list[tuple[Expr, int]] = []
+        prefix = sx.TRUE
+        for length in range(1, longest + 1):
+            prefix = sx.bool_and(prefix, sx.bool_not(_is_space(stdin[start + length - 1])))
+            after = self._byte(scan, start + length)
+            ends = sx.TRUE if length == directive.width or after is None else _is_space(after)
+            options.append((sx.bool_and(prefix, ends), length))
+        branches = self._fork(scan, options)
+        for branch, length in branches:
+            content = list(stdin[start : start + length])
+            self._store(branch, directive, [*content, _ZERO_BYTE])
+            branch.position = start + length
+        return [branch for branch, _ in branches]
+
+    def _characters(self, scan: _Scan, directive: scanning.Directive) -> _Scan:
+        stdin = scan.state.io.stdin
+        start = scan.position
+        content = list(stdin[start : start + (directive.width or 1)])
+        self._store(scan, directive, content)
+        scan.position = start + len(content)
+        return scan
+
+    def _decimal(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        stdin = scan.state.io.stdin
+        start = scan.position
+        available = len(stdin) - start
+        limit = available if directive.width is None else min(available, directive.width)
+        first = stdin[start]
+        sign = sx.bool_or(sx.equal(first, sx.const(0x2B, 8)), sx.equal(first, sx.const(0x2D, 8)))
+        # (sign bytes, digit count): no digits is a matching failure, after which a sign
+        # that was read stays consumed.
+        options: list[tuple[Expr, tuple[int, int]]] = []
+        for signed in (0, 1):
+            head = sign if signed else sx.bool_not(sign)
+            if signed + 1 > limit:
+                options.append((head, (signed, 0)))
+                continue
+            digits = sx.TRUE
+            options.append(
+                (sx.bool_and(head, sx.bool_not(_is_digit(stdin[start + signed]))), (signed, 0))
+            )
+            for count in range(1, limit - signed + 1):
+                digits = sx.bool_and(digits, _is_digit(stdin[start + signed + count - 1]))
+                after = self._byte(scan, start + signed + count)
+                if signed + count == directive.width or after is None:
+                    ends = sx.TRUE
+                else:
+                    ends = sx.bool_not(_is_digit(after))
+                options.append((sx.bool_and(head, digits, ends), (signed, count)))
+        result: list[_Scan] = []
+        for branch, (signed, count) in self._fork(scan, options):
+            if count == 0:
+                branch.position = start + signed
+                branch.result = branch.assigned
+                result.append(branch)
+                continue
+            token = list(stdin[start : start + signed + count])
+            value, _, _ = _strtol_expression(token)
+            size = directive.store_size
+            self._store(
+                branch, directive, [sx.extract(value, 8 * index, 8) for index in range(size)]
+            )
+            branch.position = start + signed + count
+            result.append(branch)
+        return result

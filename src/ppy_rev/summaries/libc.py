@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ppy_rev.abi import CallingConvention
+from ppy_rev.summaries.ctype import CLASSIFIERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,18 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("malloc", 1),
         LibraryFunction("calloc", 2),
         LibraryFunction("free", 1),
+        LibraryFunction("atoi", 1),
+        LibraryFunction("atol", 1),
+        LibraryFunction("atoll", 1),
+        LibraryFunction("strtol", 3),
+        LibraryFunction("strtoll", 3),
+        LibraryFunction("scanf", 1, variadic=True),
+        LibraryFunction("toupper", 1),
+        LibraryFunction("tolower", 1),
+        LibraryFunction("__ctype_b_loc", 0),
+        LibraryFunction("__ctype_toupper_loc", 0),
+        LibraryFunction("__ctype_tolower_loc", 0),
+        *(LibraryFunction(name, 1) for name in CLASSIFIERS),
     )
 }
 
@@ -56,8 +69,13 @@ ALIASES = {
     "__memset_chk": "memset",
     "__strcpy_chk": "strcpy",
     "__read_chk": "read",
+    "__isoc99_scanf": "scanf",
+    "__isoc23_scanf": "scanf",
+    "__isoc23_strtol": "strtol",
+    "__isoc23_strtoll": "strtoll",
 }
-"""Fortified variants whose leading parameters match the plain function exactly."""
+"""Fortified and standard-revision variants whose leading parameters match the plain
+function exactly (and whose behaviour does too, for what the models support)."""
 
 
 def modeled_reads(convention: CallingConvention) -> Callable[[str], frozenset[str] | None]:

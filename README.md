@@ -72,16 +72,18 @@ Verification:
 ```
 
 `solve` finds `main`, discovers which inputs the program reads (`argv[k]` by following
-where the argv pointer flows; stdin through `read`, `fgets`, `getchar`), and ranks
+where the argv pointer flows; stdin through `read`, `fgets`, `getchar`, `scanf`), and ranks
 printed strings as likely success or failure outcomes. The goal is the call that prints
 the success string *with that string as its argument*, so branchless selection of the
 message (`cmov`) is handled. Symbolic execution then searches paths with the fewest
 symbolic decisions first, pruning states that can no longer reach the goal and merging
 the paths of loop-free branch regions where they join. Library calls use models of the
 C functions crackmes typically use (`strlen`, `strcmp`, `memcmp`, `read`, `fgets`,
-`puts`, `printf`, `exit`, ...); where a model over-approximates, such as the return
-value of a formatted `printf`, the result notes it. Every solution is re-run on the
-concrete RevIR interpreter before it is reported.
+`scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the ctype tables, `puts`, `printf`,
+`exit`, ...), checked against glibc by differential tests. Where a model approximates,
+the result says so, and an approximation that could hide paths turns `unsat` into
+`analysis incomplete`. Every solution is re-run on the concrete RevIR interpreter before
+it is reported.
 
 Discovery can be overridden: `--argv INDEX` or `--stdin LENGTH`, `--goal-address` or
 `--goal-string`, `--avoid-address`/`--avoid-string`. Constraints are never assumed

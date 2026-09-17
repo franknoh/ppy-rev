@@ -28,10 +28,13 @@ SUCCESS = {
     "helper_function": b"Correct!",
     "fgets_check": b"Access granted",
     "stdin_read": b"Success!",
+    "scanf_check": b"Unlocked",
+    "atoi_check": b"Correct!",
+    "ctype_check": b"Well done",
     "recursive_check": b"Correct!",
     "dispatch_check": b"Access granted",
 }
-STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read"})
+STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
 VARIANTS = [(compiler, level) for compiler in ("gcc", "clang") for level in ("O0", "O2")]
 
 
