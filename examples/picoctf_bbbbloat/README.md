@@ -50,8 +50,6 @@ Solution:
   549255
 ```
 
-About 12 seconds.
-
 ## Why the hint
 
 The flag is decoded at run time, so the binary contains no success message, only the

@@ -29,8 +29,9 @@ with `.venv` activated.
 
 ## Usage
 
-Try it on real CTF challenges first: [`examples/`](examples/README.md) has five classic
-crackmes, each with its own walkthrough.
+Try it on real CTF challenges first: [`examples/`](examples/README.md) has nineteen of
+them, from picoCTF to DEF CON qualifiers, each with its own walkthrough. Most need no
+options at all.
 
 ```bash
 examples/fetch.sh                                       # download the original binaries

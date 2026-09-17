@@ -49,8 +49,6 @@ Solution:
   CTF{0The1Quick2Brown3Fox4Jumped5Over6The7Lazy8Fox9}
 ```
 
-About 14 seconds.
-
 ## Why the hint
 
 Without it, `ppy-rev solve` answers with an **empty key**, and it is right. `strncpy` fills

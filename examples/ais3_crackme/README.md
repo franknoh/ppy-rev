@@ -54,8 +54,6 @@ Verification:
   RevIR execution: passed (reaches the goal)
 ```
 
-About 7 seconds, most of it Ghidra's first analysis (later runs use the cache).
-
 ## How ppy-rev gets there
 
 - **Input:** `argv[1]` flows into `strlen` and into `verify`, so it is the input.

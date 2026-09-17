@@ -51,7 +51,7 @@ Solution:
   Code_Talkers?_
 ```
 
-About 7 seconds. Only 12 characters are checked, so anything may follow them: the
+Only 12 characters are checked, so anything may follow them: the
 answer above is valid as it is. Add `--length 12` to get exactly `Code_Talkers`.
 
 ## How ppy-rev gets there

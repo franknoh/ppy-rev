@@ -61,7 +61,7 @@ Solution:
   flag{we_beleaf_in_your_re_future}
 ```
 
-About 100 seconds: the slowest of these examples.
+The slowest of these examples, at about two and a half minutes.
 
 ## Why the hint
 
