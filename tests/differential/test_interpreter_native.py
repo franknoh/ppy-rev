@@ -20,6 +20,7 @@ from ppy_rev.execution.process import enter_call, standard_memory
 from ppy_rev.ir.model import Module
 from ppy_rev.ir.validate import validate_module
 from ppy_rev.lift.lifter import lift_export
+from ppy_rev.simplify.pipeline import simplify_module
 
 pytestmark = [pytest.mark.ghidra, pytest.mark.native]
 
@@ -84,15 +85,19 @@ def _interpret(module: Module, name: str, a: int, b: int) -> int:
     return outputs["RAX"]
 
 
+@pytest.mark.parametrize("simplified", [False, True], ids=["lifted", "simplified"])
 @pytest.mark.parametrize(("compiler", "optimization"), VARIANTS)
 def test_interpreter_matches_native_execution(
     analyzer: Analyzer,
     compile_fixture: type[FixtureCompiler],
     compiler: str,
     optimization: str,
+    simplified: bool,
 ) -> None:
     binary = compile_fixture.build("arith_ops", compiler, optimization)
     module = lift_export(analyzer.export(binary)).module
+    if simplified:
+        module = simplify_module(module)
     assert validate_module(module) == []
     cases = [(name, a, b) for name in PROBES for a, b in _inputs(name)]
     expected = _native(binary, cases)

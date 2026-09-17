@@ -1,0 +1,140 @@
+module xor_check_gcc_O0
+target x86-64 little-endian pointer=64 sp=RSP pc=RIP
+
+register RAX:64 @0x0
+register RCX:64 @0x8
+register RDX:64 @0x10
+register RSP:64 @0x20
+register RBP:64 @0x28
+register RSI:64 @0x30
+register RDI:64 @0x38
+register CF:8 @0x200
+register PF:8 @0x202
+register ZF:8 @0x206
+register SF:8 @0x207
+register OF:8 @0x20b
+register RIP:64 @0x288
+
+memory .rodata 0x102000 +0x3c r-- data
+extern puts [0x101060]
+extern strlen [0x101070]
+
+function check @0x101169
+  input RCX -> v0:64
+  input RDX -> v1:64
+  input RSP -> v2:64
+  input RBP -> v3:64
+  input RSI -> v4:64
+  input RDI -> v5:64
+  outputs (RAX, RCX, RDX, RSP, RBP, RSI)
+  bb0 @0x10116d:
+    v6:64 = sub v2, 0x8:64                                  ; 0x10116d:1
+    store v6, v3                                            ; 0x10116d:2
+    v7:64 = add v2, 0xffffffffffffffe0:64                   ; 0x101175:0
+    store v7, v5                                            ; 0x101175:2
+    v8:64 = add v2, 0xffffffffffffffd0:64                   ; 0x101180:0
+    store v8, 0x101185:64                                   ; 0x101180:1
+    call extern strlen@0x101070 (RAX=v5, RCX=v0, RDX=v1, RSP=v8, RSI=v4, RDI=v5) -> (RAX=v9:64, RCX=v10:64, RDX=v11:64, RSP=v12:64, RSI=v13:64, RDI=v14:64, CF=v15:8, PF=v16:8, ZF=v17:8, SF=v18:8, OF=v19:8); 0x101180:2
+    v20:64 = sub v9, 0xb:64                                 ; 0x101185:3
+    v21:8 = equal v20, 0x0:64                               ; 0x101185:5
+    branch v21, bb2, bb1                                    ; 0x101189:0
+  bb1 @0x10118b:
+    jump bb8                                                ; 0x101190:0
+  bb2 @0x101192:
+    v22:64 = add v2, 0xfffffffffffffff0:64                  ; 0x101192:0
+    store v22, 0x0:64                                       ; 0x101192:2
+    jump bb6                                                ; 0x10119a:0
+  bb3 @0x10119c:
+    v23:64 = load v7                                        ; 0x10119c:1
+    v24:64 = load v22                                       ; 0x1011a0:1
+    v25:64 = add v24, v23                                   ; 0x1011a4:2
+    v26:8 = load v25                                        ; 0x1011a7:0
+    v27:32 = zero_extend v26                                ; 0x1011a7:1
+    v28:32 = xor v27, 0x42:32                               ; 0x1011aa:2
+    v29:64 = zero_extend v28                                ; 0x1011aa:2
+    v30:64 = add v24, 0x102008:64                           ; 0x1011ba:2
+    v31:8 = load v30                                        ; 0x1011bd:0
+    v32:8 = xor v26, 0x42:8                                 ; 0x1011c0:0
+    v33:8 = sub v32, v31                                    ; 0x1011c0:3
+    v34:8 = equal v33, 0x0:8                                ; 0x1011c0:5
+    branch v34, bb5, bb4                                    ; 0x1011c2:0
+  bb4 @0x1011c4:
+    jump bb8                                                ; 0x1011c9:0
+  bb5 @0x1011cb:
+    v35:64 = load v22                                       ; 0x1011cb:1
+    v36:64 = add v35, 0x1:64                                ; 0x1011cb:6
+    store v22, v36                                          ; 0x1011cb:7
+    jump bb6                                                ; 0x1011cb:16
+  bb6 @0x1011d0:
+    v37:64 = phi [bb2: v10] [bb5: 0x102008:64]
+    v38:64 = phi [bb2: v11] [bb5: v29]
+    v39:64 = load v22                                       ; 0x1011d0:1
+    v40:8 = unsigned_less v39, 0xa:64                       ; 0x1011d0:3
+    v41:64 = sub v39, 0xa:64                                ; 0x1011d0:5
+    v42:8 = equal v41, 0x0:64                               ; 0x1011d0:7
+    v43:8 = boolean_or v40, v42                             ; 0x1011d5:0
+    branch v43, bb3, bb7                                    ; 0x1011d5:1
+  bb7 @0x1011d7:
+    jump bb8                                                ; 0x1011d7:0
+  bb8 @0x1011dc:
+    v44:64 = phi [bb1: 0x0:64] [bb4: 0x0:64] [bb7: 0x1:64]
+    v45:64 = phi [bb1: v10] [bb4: 0x102008:64] [bb7: v37]
+    v46:64 = phi [bb1: v11] [bb4: v29] [bb7: v38]
+    v47:64 = load v6                                        ; 0x1011dc:1
+    v48:64 = load v2                                        ; 0x1011dd:0
+    v49:64 = add v2, 0x8:64                                 ; 0x1011dd:1
+    return (RAX=v44, RCX=v45, RDX=v46, RSP=v49, RBP=v47, RSI=v13) via v48; 0x1011dd:2
+
+function main @0x1011de
+  input RCX -> v0:64
+  input RDX -> v1:64
+  input RSP -> v2:64
+  input RBP -> v3:64
+  input RSI -> v4:64
+  input RDI -> v5:64
+  outputs (RAX, RDX, RSP, RBP)
+  bb0 @0x1011e2:
+    v6:64 = sub v2, 0x8:64                                  ; 0x1011e2:1
+    store v6, v3                                            ; 0x1011e2:2
+    v7:64 = add v2, 0xffffffffffffffe8:64                   ; 0x1011e6:2
+    v8:64 = add v2, 0xfffffffffffffff4:64                   ; 0x1011ea:0
+    v9:32 = truncate v5                                     ; 0x1011ea:1
+    store v8, v9                                            ; 0x1011ea:2
+    store v7, v4                                            ; 0x1011ed:2
+    v10:32 = sub v9, 0x2:32                                 ; 0x1011f1:5
+    v11:8 = equal v10, 0x0:32                               ; 0x1011f1:7
+    branch v11, bb2, bb1                                    ; 0x1011f5:0
+  bb1 @0x1011f7:
+    v12:64 = add v2, 0xffffffffffffffe0:64                  ; 0x101201:0
+    store v12, 0x101206:64                                  ; 0x101201:1
+    call extern puts@0x101060 (RAX=0x102013:64, RCX=v0, RDX=v1, RSP=v12, RSI=v4, RDI=0x102013:64) -> (RAX=v13:64, RCX=v14:64, RDX=v15:64, RSP=v16:64, RSI=v17:64, RDI=v18:64, CF=v19:8, PF=v20:8, ZF=v21:8, SF=v22:8, OF=v23:8); 0x101201:2
+    jump bb5                                                ; 0x10120b:0
+  bb2 @0x10120d:
+    v24:64 = load v7                                        ; 0x10120d:1
+    v25:64 = add v24, 0x8:64                                ; 0x101211:2
+    v26:64 = load v25                                       ; 0x101215:0
+    v27:64 = add v2, 0xffffffffffffffe0:64                  ; 0x10121b:0
+    store v27, 0x101220:64                                  ; 0x10121b:1
+    call check@0x101169 (RCX=v0, RDX=v1, RSP=v27, RBP=v6, RSI=v4, RDI=v26) -> (RAX=v28:64, RCX=v29:64, RDX=v30:64, RSP=v31:64, RBP=v32:64, RSI=v33:64); 0x10121b:2
+    v34:32 = truncate v28                                   ; 0x101220:2
+    v35:8 = equal v34, 0x0:32                               ; 0x101220:4
+    branch v35, bb4, bb3                                    ; 0x101222:0
+  bb3 @0x101224:
+    v36:64 = sub v31, 0x8:64                                ; 0x10122e:0
+    store v36, 0x101233:64                                  ; 0x10122e:1
+    call extern puts@0x101060 (RAX=0x10202c:64, RCX=v29, RDX=v30, RSP=v36, RSI=v33, RDI=0x10202c:64) -> (RAX=v37:64, RCX=v38:64, RDX=v39:64, RSP=v40:64, RSI=v41:64, RDI=v42:64, CF=v43:8, PF=v44:8, ZF=v45:8, SF=v46:8, OF=v47:8); 0x10122e:2
+    jump bb5                                                ; 0x101238:0
+  bb4 @0x10123a:
+    v48:64 = sub v31, 0x8:64                                ; 0x101244:0
+    store v48, 0x101249:64                                  ; 0x101244:1
+    call extern puts@0x101060 (RAX=0x102035:64, RCX=v29, RDX=v30, RSP=v48, RSI=v33, RDI=0x102035:64) -> (RAX=v49:64, RCX=v50:64, RDX=v51:64, RSP=v52:64, RSI=v53:64, RDI=v54:64, CF=v55:8, PF=v56:8, ZF=v57:8, SF=v58:8, OF=v59:8); 0x101244:2
+    jump bb5                                                ; 0x101249:0
+  bb5 @0x10124e:
+    v60:64 = phi [bb1: 0x2:64] [bb3: 0x0:64] [bb4: 0x1:64]
+    v61:64 = phi [bb1: v15] [bb3: v39] [bb4: v51]
+    v62:64 = phi [bb1: v6] [bb3: v32] [bb4: v32]
+    v63:64 = load v62                                       ; 0x10124e:1
+    v64:64 = add v62, 0x8:64                                ; 0x10124e:2
+    v65:64 = load v64                                       ; 0x10124f:0
+    v66:64 = add v62, 0x10:64                               ; 0x10124f:1
+    return (RAX=v60, RDX=v61, RSP=v66, RBP=v63) via v65     ; 0x10124f:2

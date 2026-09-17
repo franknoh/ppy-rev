@@ -16,6 +16,7 @@ from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
 from ppy_rev.diagnostics import PpyRevError, Severity
 from ppy_rev.info import ProgramInfo
 from ppy_rev.ir.text import format_module
+from ppy_rev.simplify.pipeline import simplify_module
 
 EXIT_ERROR = 1
 EXIT_INTERNAL = 70
@@ -47,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     lift.add_argument("--emit-ir", action="store_true", help="print the RevIR text form")
     lift.add_argument("-o", "--output", type=Path, help="write output here instead of stdout")
     lift.add_argument("--function", action="append", help="limit output to these functions")
+    lift.add_argument(
+        "--no-simplify", action="store_true", help="show RevIR exactly as lifted from p-code"
+    )
     lift.set_defaults(handler=_lift)
     return parser
 
@@ -103,8 +107,9 @@ def _lift(arguments: argparse.Namespace, out: TextIO) -> int:
     binary: Path = arguments.binary
     output: Path | None = arguments.output
     selected: list[str] | None = arguments.function
+    no_simplify: bool = arguments.no_simplify
     result = _analyzer(arguments).lift(binary)
-    module = result.module
+    module = result.module if no_simplify else simplify_module(result.module)
     if selected:
         missing = sorted(set(selected) - {function.name for function in module.functions})
         if missing:

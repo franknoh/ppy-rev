@@ -28,7 +28,7 @@ contains a checksum-verified Ghidra and every tool the test suite needs.
 
 ```bash
 ppy-rev info ./chall                # architecture, entry point, sections, functions
-ppy-rev lift ./chall --emit-ir      # RevIR for every recovered function
+ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function (--no-simplify: raw)
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ```
 
@@ -48,8 +48,16 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
 - `ppy_rev.lift`: raw p-code → RevIR. Control flow is recovered at p-code
   granularity; registers and temporaries become SSA values; calls and returns
   carry register state explicitly.
-- `ppy_rev.ir`: the immutable RevIR model, its text form, CFG utilities, and a
-  structural validator (single definitions, dominance, operation widths).
+- `ppy_rev.ir`: the immutable RevIR model, its reference concrete semantics, text
+  form, CFG utilities, and a structural validator (single definitions, dominance,
+  operation widths).
+- `ppy_rev.simplify`: interprocedural register-interface narrowing, constant folding
+  with width-exact identities, common subexpression elimination, block-local
+  store/load forwarding, dead code elimination, and CFG cleanup. Operations that
+  may fault are never removed.
+- `ppy_rev.execution`: a strict concrete RevIR interpreter with an explicit memory
+  model. It is the semantic oracle: tests compare it against native execution of
+  the same compiled code, before and after simplification.
 
 RevIR values have explicit bit widths; signedness belongs to operations.
 Lifting is based on raw p-code (exact instruction semantics); Ghidra's

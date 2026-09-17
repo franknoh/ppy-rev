@@ -53,6 +53,7 @@ from ppy_rev.ir.model import (
     mask,
     operation_output,
 )
+from ppy_rev.ir.transform import map_operation, map_terminator
 from ppy_rev.lift.cfg import (
     CondGoto,
     FallThrough,
@@ -584,11 +585,12 @@ class FunctionBuilder:
             renumber[var.id] = len(renumber)
             return Var(renumber[var.id], var.width)
 
+        def rename(var: Var) -> Var:
+            return Var(renumber[var.id], var.width)
+
         def use(operand: Operand) -> Operand:
             resolved = self._resolve(operand)
-            if isinstance(resolved, Const):
-                return resolved
-            return Var(renumber[resolved.id], resolved.width)
+            return resolved if isinstance(resolved, Const) else rename(resolved)
 
         names = {
             ("register", group.offset, group.size): (index, group.name)
@@ -639,8 +641,8 @@ class FunctionBuilder:
                     id=block_id,
                     address=scaffold.source.address,
                     phis=phis,
-                    operations=tuple(_rewrite(op, use, renumber) for op in scaffold.operations),
-                    terminator=_rewrite_terminator(terminator, use, renumber),
+                    operations=tuple(map_operation(op, use, rename) for op in scaffold.operations),
+                    terminator=map_terminator(terminator, use, rename),
                     instructions=tuple(scaffold.instructions),
                 )
             )
@@ -651,108 +653,6 @@ class FunctionBuilder:
             output_registers=tuple(group.name for group in self.context.register_order),
             blocks=tuple(blocks),
         )
-
-
-def _renamed(var: Var, renumber: dict[int, int]) -> Var:
-    return Var(renumber[var.id], var.width)
-
-
-def _rewrite(
-    operation: Operation, use: Callable[[Operand], Operand], renumber: dict[int, int]
-) -> Operation:
-    match operation:
-        case BinaryOp():
-            return BinaryOp(
-                operation.opcode,
-                _renamed(operation.output, renumber),
-                use(operation.left),
-                use(operation.right),
-                operation.origin,
-            )
-        case UnaryOp():
-            return UnaryOp(
-                operation.opcode,
-                _renamed(operation.output, renumber),
-                use(operation.operand),
-                operation.origin,
-            )
-        case Subpiece():
-            return Subpiece(
-                _renamed(operation.output, renumber),
-                use(operation.operand),
-                operation.low_bit,
-                operation.origin,
-            )
-        case Piece():
-            return Piece(
-                _renamed(operation.output, renumber),
-                use(operation.high),
-                use(operation.low),
-                operation.origin,
-            )
-        case Load():
-            return Load(
-                _renamed(operation.output, renumber), use(operation.address), operation.origin
-            )
-        case Store():
-            return Store(use(operation.address), use(operation.value), operation.origin)
-        case Call():
-            return _rewrite_call(operation, use, renumber)
-        case UserOp():
-            return UserOp(
-                operation.name,
-                None if operation.output is None else _renamed(operation.output, renumber),
-                tuple(use(operand) for operand in operation.inputs),
-                operation.origin,
-            )
-        case Unsupported():
-            return Unsupported(
-                operation.pcode_opcode,
-                None if operation.output is None else _renamed(operation.output, renumber),
-                tuple(use(operand) for operand in operation.inputs),
-                operation.reason,
-                operation.origin,
-            )
-
-
-def _rewrite_call(call: Call, use: Callable[[Operand], Operand], renumber: dict[int, int]) -> Call:
-    target = call.target
-    if isinstance(target, IndirectTarget):
-        target = IndirectTarget(use(target.address), target.candidates)
-    return Call(
-        target,
-        call.argument_registers,
-        tuple(use(argument) for argument in call.arguments),
-        call.result_registers,
-        tuple(_renamed(result, renumber) for result in call.results),
-        call.origin,
-    )
-
-
-def _rewrite_terminator(
-    terminator: Terminator, use: Callable[[Operand], Operand], renumber: dict[int, int]
-) -> Terminator:
-    match terminator:
-        case Branch():
-            return Branch(
-                use(terminator.condition),
-                terminator.true_target,
-                terminator.false_target,
-                terminator.origin,
-            )
-        case IndirectJump():
-            return IndirectJump(use(terminator.address), terminator.targets, terminator.origin)
-        case Return():
-            return Return(
-                tuple(use(value) for value in terminator.values),
-                None if terminator.return_address is None else use(terminator.return_address),
-                terminator.origin,
-            )
-        case TailCall():
-            call = _rewrite_call(terminator.call, use, renumber)
-            return TailCall(call, call.results, terminator.origin)
-        case Jump() | Halt() | Stop():
-            return terminator
 
 
 def _reverse_postorder(cfg: FunctionCfg) -> list[int]:

@@ -183,10 +183,11 @@ def _widths(operation: Operation, registers: dict[str, int], pointer_width: int)
                     if output.width != operand.width:
                         problems.append(f"{opcode} must preserve width")
         case Subpiece(output=output, operand=operand, low_bit=low_bit):
-            if low_bit < 0 or low_bit >= operand.width:
-                problems.append(f"subpiece low bit {low_bit} outside {operand.width} bits")
-            elif output.width > operand.width:
-                problems.append("subpiece must not widen")
+            if low_bit < 0 or low_bit + output.width > operand.width:
+                problems.append(
+                    f"subpiece of bits {low_bit}..{low_bit + output.width} "
+                    f"exceeds {operand.width} bits"
+                )
         case Piece(output=output, high=high, low=low):
             if output.width != high.width + low.width:
                 problems.append("piece width is not the sum of its parts")
