@@ -90,6 +90,7 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
         out.write(
             f"  states: {statistics.states}\n"
             f"  solver calls: {statistics.solver_calls}\n"
+            f"  sliced operations: {statistics.sliced_operations}\n"
             f"  seconds: {statistics.seconds:.2f}\n"
         )
     out.write(f"\nSolver:\n  backend: {result.backend}\n  result: {result.status}\n")

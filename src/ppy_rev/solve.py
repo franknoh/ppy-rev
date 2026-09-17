@@ -13,6 +13,7 @@ from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import find_main, reachable_functions, string_references
 from ppy_rev.analysis.reachability import GoalReachability
+from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
@@ -151,6 +152,8 @@ class SolveStatistics:
     states: int
     solver_calls: int
     seconds: float
+    sliced_operations: int = 0
+    """Operations skipped because they cannot influence reaching the goal."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +183,11 @@ def solve_module(
     goal, avoid = _select_goals(module, reachable, request)
     inputs = _select_inputs(module, main, request)
     reachability = GoalReachability(module, frozenset({goal.address}))
+    program_slice = backward_slice(
+        module,
+        frozenset({goal.address, *(candidate.address for candidate in avoid)}),
+        main.entry,
+    )
 
     def executor() -> Executor:
         return Executor(
@@ -189,6 +197,7 @@ def solve_module(
             SymbolicLibc(calling_convention(module.target)),
             request.budget,
             reachability,
+            program_slice,
         )
 
     search = executor()
@@ -254,6 +263,7 @@ def solve_module(
             states=statistics.states,
             solver_calls=statistics.solver_calls,
             seconds=time.monotonic() - started,
+            sliced_operations=statistics.sliced,
         ),
         notes=tuple(dict.fromkeys(notes + _unsat_notes(status, inputs))),
         smt2=smt2,

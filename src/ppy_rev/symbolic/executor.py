@@ -18,6 +18,7 @@ from typing import Protocol
 
 from ppy_rev.analysis.locations import Location
 from ppy_rev.analysis.reachability import GoalReachability
+from ppy_rev.analysis.slicing import Slice
 from ppy_rev.diagnostics import DiagnosticCode
 from ppy_rev.execution.memory import MemoryFaultError
 from ppy_rev.ir.model import (
@@ -48,6 +49,7 @@ from ppy_rev.ir.model import (
     UnaryOp,
     Unsupported,
     UserOp,
+    Var,
 )
 from ppy_rev.solver.backend import SolverBackend, Status
 from ppy_rev.symbolic import encode
@@ -157,6 +159,8 @@ class Statistics:
     merges: int = 0
     """Paths folded into another path's state at the end of a branch region."""
     hiding_approximations: set[str] = field(default_factory=set[str])
+    sliced: int = 0
+    """Operations skipped because the backward slice showed they cannot matter."""
     """Approximations made on some path that may have excluded feasible behaviour."""
 
 
@@ -234,8 +238,10 @@ class Executor:
         externals: ExternalModels | None = None,
         budget: Budget | None = None,
         reachability: GoalReachability | None = None,
+        program_slice: Slice | None = None,
     ) -> None:
         self.module = module
+        self.slice = program_slice
         self.goal = goal
         self.reachability = reachability
         self.externals = externals or NoExternals()
@@ -386,6 +392,13 @@ class Executor:
             frame.position += 1
             state.steps += 1
             self.statistics.steps += 1
+            if (
+                self.slice is not None
+                and not isinstance(operation, Call)
+                and self.slice.skips(function.entry, block.id, frame.position - 1)
+            ):
+                self.statistics.sliced += 1
+                return None
             return self._operation(state, frame, operation)
         if frame.position == len(block.operations):
             frame.position += 1
@@ -420,7 +433,13 @@ class Executor:
     def value(self, frame: Frame, operand: Operand) -> Expr:
         if isinstance(operand, Const):
             return sx.const(operand.value, operand.width)
-        return frame.values[operand.id]
+        found = frame.values.get(operand.id)
+        if found is None:
+            raise _Stop(
+                StopReason.UNSUPPORTED,
+                f"v{operand.id} in {frame.function.name} has no value (was it sliced away?)",
+            )
+        return found
 
     def _operation(
         self, state: State, frame: Frame, operation: Operation
@@ -647,6 +666,21 @@ class Executor:
             for register, operand in zip(call.argument_registers, call.arguments, strict=True)
         }
         reached = self._call_conditions(state, call, arguments)
+        if (
+            not tail
+            and self.slice is not None
+            and self.slice.skips(frame.function.entry, frame.block, frame.position - 1)
+        ):
+            # Only output: the call returns, popping its return address, and nothing else.
+            self.statistics.sliced += 1
+            outputs: dict[str, Expr] = {}
+            pointer = arguments.get(self._stack_pointer)
+            if pointer is not None:
+                outputs[self._stack_pointer] = sx.add(
+                    pointer, sx.const(self._pointer_width // 8, pointer.width)
+                )
+            self._bind_results(frame, call, arguments, outputs)
+            return ([state], reached) if reached else None
         try:
             outcome = self._dispatch(state, frame, call, arguments, tail)
         except _Stop as stop:
@@ -828,9 +862,12 @@ class Executor:
         return_address: Operand | None,
         origin: Origin,
     ) -> tuple[list[State], list[Stopped]] | None:
+        outermost = len(state.frames) == 1
         outputs = {
             register: self.value(frame, value)
             for register, value in zip(frame.function.output_registers, values, strict=True)
+            # What the outermost function returns may have been sliced away as irrelevant.
+            if not (outermost and isinstance(value, Var) and value.id not in frame.values)
         }
         if return_address is not None and frame.expected_return is not None:
             actual = self.value(frame, return_address)

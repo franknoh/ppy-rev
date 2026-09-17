@@ -82,7 +82,9 @@ the success string *with that string as its argument*, so branchless selection o
 message (`cmov`) is handled. Symbolic execution then searches paths with the fewest
 symbolic decisions first, pruning states that can no longer reach the goal and merging
 the paths of loop-free branch regions where they join (inside a loop, paths that leave
-the loop continue on their own). Library calls use models of the
+the loop continue on their own).
+A backward slice from the goal skips work that cannot matter: messages printed along the
+way, and helper functions that only print. Library calls use models of the
 C functions crackmes typically use (`strlen`, `strcmp`, `memcmp`, `read`, `fgets`,
 `scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the ctype tables, `puts`, `printf`,
 `exit`, ...), checked against glibc by differential tests. Where a model approximates,
