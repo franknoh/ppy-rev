@@ -1,7 +1,7 @@
 """The C library summaries against glibc itself, through a compiled probe program.
 
 tests/fixtures/src/libc_probe.c runs scanf with each of its formats over given input, and
-reports strtol/atoi results and the C locale's character functions.
+reports strtol/atoi results, the C locale's character functions, and rand sequences.
 """
 
 from __future__ import annotations
@@ -140,3 +140,16 @@ def test_character_functions_match_glibc(probe: Path) -> None:
         modeled = [libc(name, registers, memory)["RAX"] & 0xFFFFFFFF for name in names]
         assert modeled == [value & 0xFFFFFFFF for value in native], character
         assert ctype.to_upper(character) & 0xFFFFFFFF == native[5] & 0xFFFFFFFF
+
+
+@pytest.mark.parametrize("seed", ["none", "0", "1", "42", "0x7fffffff", "0x80000000", "0xffffffff"])
+def test_rand_matches_glibc(probe: Path, seed: str) -> None:
+    completed = subprocess.run(
+        [str(probe), "rand", seed], capture_output=True, text=True, check=True
+    )
+    libc = ConcreteLibc(SYSV_X86_64)
+    memory = ConcreteMemory(Endianness.LITTLE)
+    if seed != "none":
+        libc("srand", {"RDI": int(seed, 0)}, memory)
+    modeled = [libc("rand", {}, memory)["RAX"] for _ in range(400)]
+    assert modeled == [int(line) for line in completed.stdout.split()]

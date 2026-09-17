@@ -250,3 +250,24 @@ def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:
     assert executor.statistics.hiding_approximations == {
         "stdin after a symbolic-length fgets line is treated as empty"
     }
+
+
+def test_rand_follows_the_seed_in_both_models() -> None:
+    concrete = ConcreteLibc(SYSV_X86_64)
+    memory = _image()
+    concrete("srand", {"RDI": 1234}, memory)
+    expected = [concrete("rand", {}, memory)["RAX"] for _ in range(5)]
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+    libc = SymbolicLibc(SYSV_X86_64)
+    (seeded,) = libc.call(executor, state, "srand", {"RDI": sx.const(1234, 64)}, Origin(0, 0)) or []
+    assert isinstance(seeded, Returned)
+    values: list[int] = []
+    for _ in range(5):
+        (outcome,) = libc.call(executor, state, "rand", {}, Origin(0, 0)) or []
+        assert isinstance(outcome, Returned)
+        values.append(outcome.outputs["RAX"].value)
+    assert values == expected
+    symbolic_seed = {"RDI": sx.symbol("seed", 64)}
+    (refused,) = libc.call(executor, state, "srand", symbolic_seed, Origin(0, 0)) or []
+    assert isinstance(refused, Failed) and refused.reason is StopReason.UNSUPPORTED

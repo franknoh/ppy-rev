@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ppy_rev.ir.model import Call, Function, Origin
+from ppy_rev.summaries.glibc_random import UNSEEDED, RandomState
 from ppy_rev.symbolic.expr import Expr
 from ppy_rev.symbolic.memory import SymbolicMemory
 
@@ -42,6 +43,8 @@ class SymbolicIO:
     stdout: list[Expr] = field(default_factory=list[Expr])
     """Bytes written to standard output, in order."""
     heap_next: int = 0
+    random: RandomState = UNSEEDED
+    """glibc's rand state, which only a concrete srand seed changes."""
     approximations: list[str] = field(default_factory=list[str])
     """Places where a library model over-approximated a result."""
 
@@ -52,6 +55,7 @@ class SymbolicIO:
             stdin_reads=list(self.stdin_reads),
             stdout=list(self.stdout),
             heap_next=self.heap_next,
+            random=self.random,
             approximations=list(self.approximations),
         )
 

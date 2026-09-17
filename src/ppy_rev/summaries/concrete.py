@@ -16,6 +16,7 @@ from ppy_rev.ir.model import mask
 from ppy_rev.ir.semantics import to_signed
 from ppy_rev.summaries import ctype, scanning
 from ppy_rev.summaries.formatting import FormatError, format_printf
+from ppy_rev.summaries.glibc_random import UNSEEDED, RandomState, advance, seeded
 from ppy_rev.summaries.libc import canonical_name
 
 
@@ -38,6 +39,7 @@ class ConcreteIO:
     stdin_position: int = 0
     stdout: bytearray = field(default_factory=bytearray)
     heap_next: int = HEAP_START
+    random: RandomState = UNSEEDED
 
 
 type _Handler = Callable[[list[int], ConcreteMemory], int]
@@ -63,6 +65,8 @@ class ConcreteLibc:
             "read": self._read,
             "fgets": self._fgets,
             "gets": self._gets,
+            "srand": self._srand,
+            "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
             "putchar": self._putchar,
@@ -205,6 +209,16 @@ class ConcreteLibc:
         memory.write(buffer, taken + b"\0")
         self.io.stdin_position += len(taken)
         return buffer
+
+    def _srand(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self.io.random = seeded(arguments[0] & 0xFFFFFFFF)
+        return 0
+
+    def _rand(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del arguments, memory
+        self.io.random, value = advance(self.io.random)
+        return value
 
     def _gets(self, arguments: list[int], memory: ConcreteMemory) -> int:
         remaining = self.io.stdin[self.io.stdin_position :]

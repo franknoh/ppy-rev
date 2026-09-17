@@ -1,4 +1,4 @@
-/* Reports what glibc's scanf, strtol, and ctype functions do, for comparison with the models. */
+/* Reports what glibc's scanf, strtol, ctype, and rand functions do, for comparison with the models. */
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +21,15 @@ int main(int argc, char **argv) {
         char *end;
         long value = strtol(argv[2], &end, 10);
         printf("%ld %ld %d\n", value, (long)(end - argv[2]), atoi(argv[2]));
+        return 0;
+    }
+    if (argc == 3 && strcmp(argv[1], "rand") == 0) {
+        if (strcmp(argv[2], "none") != 0) {
+            srand((unsigned)strtoul(argv[2], NULL, 0));
+        }
+        for (int i = 0; i < 400; i++) {
+            printf("%d\n", rand());
+        }
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "ctype") == 0) {

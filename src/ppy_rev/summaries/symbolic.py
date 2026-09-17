@@ -16,7 +16,7 @@ from ppy_rev.execution.memory import MemoryFaultError
 from ppy_rev.execution.program import CTYPE_POINTERS, HEAP_SIZE, HEAP_START, STANDARD_STREAMS
 from ppy_rev.ir.model import Origin
 from ppy_rev.solver.backend import Status
-from ppy_rev.summaries import ctype, scanning
+from ppy_rev.summaries import ctype, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.executor import (
@@ -75,6 +75,8 @@ class SymbolicLibc:
             "read": self._read,
             "fgets": self._fgets,
             "gets": self._gets,
+            "srand": self._srand,
+            "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
             "putchar": self._putchar,
@@ -362,6 +364,15 @@ class SymbolicLibc:
         else:
             io.stdin_position += consumed
         return self._returns(call, sx.const(buffer, 64))
+
+    def _srand(self, call: _Call) -> list[ExternalOutcome]:
+        seed = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "srand seed")
+        call.state.io.random = glibc_random.seeded(seed)
+        return self._returns_zero(call)
+
+    def _rand(self, call: _Call) -> list[ExternalOutcome]:
+        call.state.io.random, value = glibc_random.advance(call.state.io.random)
+        return self._returns(call, sx.const(value, 64))
 
     def _gets(self, call: _Call) -> list[ExternalOutcome]:
         """A line without its newline, however long: bytes the program cannot hold crash it."""
