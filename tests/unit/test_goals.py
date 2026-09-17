@@ -39,3 +39,11 @@ def test_strings_used_more_than_once_are_less_certain() -> None:
     once = rank_goals([_reference(b"Access granted", 0x10)])
     twice = rank_goals([_reference(b"Access granted", 0x10), _reference(b"Access granted", 0x10)])
     assert once[0].confidence > twice[0].confidence
+
+
+def test_short_verdict_words() -> None:
+    ranked = rank_goals([_reference(b"Granted", 0x10), _reference(b"Rejected", 0x20)])
+    assert [(candidate.text, candidate.outcome) for candidate in ranked] == [
+        ("Granted", Outcome.SUCCESS),
+        ("Rejected", Outcome.FAILURE),
+    ]
