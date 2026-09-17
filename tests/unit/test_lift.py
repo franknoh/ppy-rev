@@ -272,6 +272,72 @@ def test_temporaries_stay_instruction_local() -> None:
     assert [item.register for item in function.inputs] == ["RAX", "RSP"]
 
 
+def test_temporary_slices_read_the_wider_temporary() -> None:
+    # Shape of x86 PCMPEQB: one 16-byte temporary, then comparisons of its single bytes.
+    program = ProgramBuilder()
+    after = program.code(
+        0x1000,
+        [
+            op("COPY", [reg("RCX")], tmp(0x100, 8)),
+            op("INT_EQUAL", [reg("AL"), tmp(0x100, 1)], tmp(0x200, 1)),
+            op("INT_ZEXT", [tmp(0x103, 2)], reg("RDX")),
+            op("INT_ZEXT", [tmp(0x200, 1)], reg("RAX")),
+        ],
+    )
+    program.code(after, ret(), length=1)
+    program.function("f", 0x1000)
+    result = _lift(program)
+    assert result.diagnostics == ()
+    function = _function(result.module, "f")
+    rcx = _input(function, "RCX")
+    operations = function.blocks[0].operations
+    low = next(item for item in operations if isinstance(item, UnaryOp) and item.operand == rcx)
+    assert low.opcode is UnaryOpcode.TRUNCATE and low.output.width == 8
+    (middle,) = (item for item in operations if isinstance(item, Subpiece))
+    assert (middle.operand, middle.low_bit, middle.output.width) == (rcx, 24, 16)
+    assert [item.register for item in function.inputs] == ["RAX", "RCX", "RSP"]
+
+
+def test_partial_temporary_writes_are_refused() -> None:
+    program = ProgramBuilder()
+    after = program.code(
+        0x1000,
+        [
+            op("COPY", [reg("RCX")], tmp(0x100, 8)),
+            op("COPY", [const(7, 1)], tmp(0x101, 1)),
+            op("COPY", [tmp(0x100, 8)], reg("RAX")),
+        ],
+    )
+    program.code(after, ret(), length=1)
+    program.function("f", 0x1000)
+    result = _lift(program)
+    operations = _function(result.module, "f").blocks[0].operations
+    assert [item.pcode_opcode for item in operations if isinstance(item, Unsupported)] == [
+        "VARNODE",
+        "VARNODE",
+        "VARNODE",
+    ]
+    assert {d.code for d in result.diagnostics} == {DiagnosticCode.UNSUPPORTED_OPERATION}
+
+
+def test_undefined_temporaries_are_refused_not_inputs() -> None:
+    program = ProgramBuilder()
+    after = program.code(0x1000, [op("COPY", [const(1, 8)], reg("RCX"))])
+    after = program.code(after, [op("INT_ADD", [tmp(0x80, 8), reg("RCX")], reg("RAX"))])
+    program.code(after, ret(), length=1)
+    program.function("f", 0x1000)
+    result = _lift(program)
+    function = _function(result.module, "f")
+    assert [item.register for item in function.inputs] == ["RSP"]
+    (block,) = function.blocks
+    undefined = block.operations[0]
+    assert isinstance(undefined, Unsupported) and undefined.output is not None
+    add = next(item for item in block.operations if isinstance(item, BinaryOp))
+    assert add.left == undefined.output
+    assert [start.position for start in block.instructions] == [0, 0, 2]
+    assert [d.code for d in result.diagnostics] == [DiagnosticCode.MALFORMED_PCODE]
+
+
 def test_lifting_is_deterministic() -> None:
     from ppy_rev.ir.text import format_module
 

@@ -155,6 +155,7 @@ class FunctionBuilder:
         self._phi_users: dict[int, list[_Phi]] = {}
         self._replacement: dict[int, Operand] = {}
         self._inputs: dict[VarKey, Var] = {}
+        self._unique_layouts: dict[int, dict[_Range, _Range | None]] = {}
 
     # -- values ------------------------------------------------------------------------
 
@@ -256,6 +257,25 @@ class FunctionBuilder:
             )
         return value
 
+    def _undefined_temporaries(self) -> list[Operation]:
+        """Explicitly unsupported definitions for temporaries read before any write.
+
+        They are not function inputs: executing the function refuses instead of reading
+        a value the p-code never defined.
+        """
+        origin = Origin(self.cfg.entry, 0)
+        return [
+            Unsupported(
+                "VARNODE",
+                value,
+                (),
+                f"temporary unique:{key[1]:#x}:{key[2]} is read before it is written",
+                origin,
+            )
+            for key, value in sorted(self._inputs.items())
+            if key[0] != "register"
+        ]
+
     # -- varnodes ------------------------------------------------------------------------
 
     def _emit(self, block: int, operation: Operation) -> None:
@@ -267,21 +287,19 @@ class FunctionBuilder:
             case "const":
                 return Const(varnode.offset & mask(width), width)
             case "unique":
-                # Temporaries are local to one instruction's p-code and are always read at
-                # exactly the size they were written, so each (offset, size) is a variable.
-                return self.read_variable(("unique", varnode.offset, varnode.size), block)
+                slot = self._unique_slot(varnode, origin)
+                if slot is None:
+                    output = self._new_var(width)
+                    self._overlapping_temporary(block, varnode, "read", origin, output, ())
+                    return output
+                key = ("unique", slot.offset, slot.size)
+                whole = self.read_variable(key, block)
+                return self._slice(block, whole, (varnode.offset - slot.offset) * 8, width, origin)
             case "register":
                 key, group = self._storage(varnode)
                 whole = self.read_variable(key, block)
                 low_bit = (varnode.offset - group.offset) * 8
-                if low_bit == 0 and width == group.size * 8:
-                    return whole
-                output = self._new_var(width)
-                if low_bit == 0:
-                    self._emit(block, UnaryOp(UnaryOpcode.TRUNCATE, output, whole, origin))
-                else:
-                    self._emit(block, Subpiece(output, whole, low_bit, origin))
-                return output
+                return self._slice(block, whole, low_bit, width, origin)
             case "ram":
                 output = self._new_var(width)
                 address = Const(varnode.offset, self.context.pointer_width)
@@ -295,7 +313,11 @@ class FunctionBuilder:
     def write_varnode(self, block: int, varnode: Varnode, value: Operand, origin: Origin) -> None:
         match varnode.space:
             case "unique":
-                self.write_variable(("unique", varnode.offset, varnode.size), block, value)
+                slot = self._unique_slot(varnode, origin)
+                if slot is None or slot.size != varnode.size:
+                    self._overlapping_temporary(block, varnode, "write", origin, None, (value,))
+                else:
+                    self.write_variable(("unique", slot.offset, slot.size), block, value)
             case "register":
                 key, group = self._storage(varnode)
                 low_bit = (varnode.offset - group.offset) * 8
@@ -325,6 +347,44 @@ class FunctionBuilder:
                 self._emit(block, Store(address, value, origin))
             case space:
                 self._unsupported_space(block, space, "write", origin, None, (value,))
+
+    def _slice(
+        self, block: int, whole: Operand, low_bit: int, width: int, origin: Origin
+    ) -> Operand:
+        if low_bit == 0 and width == whole.width:
+            return whole
+        output = self._new_var(width)
+        if low_bit == 0:
+            self._emit(block, UnaryOp(UnaryOpcode.TRUNCATE, output, whole, origin))
+        else:
+            self._emit(block, Subpiece(output, whole, low_bit, origin))
+        return output
+
+    def _unique_slot(self, varnode: Varnode, origin: Origin) -> _Range | None:
+        layout = self._unique_layouts.get(origin.address)
+        if layout is None:
+            instruction = self.context.instructions.get(origin.address)
+            pcode = () if instruction is None else instruction.pcode
+            layout = _unique_layout(pcode)
+            self._unique_layouts[origin.address] = layout
+        requested = _Range(varnode.offset, varnode.size)
+        return layout.get(requested, requested)
+
+    def _overlapping_temporary(
+        self,
+        block: int,
+        varnode: Varnode,
+        action: str,
+        origin: Origin,
+        output: Var | None,
+        inputs: tuple[Operand, ...],
+    ) -> None:
+        reason = (
+            f"{action} of temporary unique:{varnode.offset:#x}:{varnode.size} overlapping "
+            "a temporary of a different size"
+        )
+        self._emit(block, Unsupported("VARNODE", output, inputs, reason, origin))
+        self._diagnose(DiagnosticCode.UNSUPPORTED_OPERATION, reason, block, origin)
 
     def _storage(self, varnode: Varnode) -> tuple[VarKey, StorageGroup]:
         group = self.context.registers.group_of(varnode.offset, varnode.size)
@@ -597,16 +657,18 @@ class FunctionBuilder:
             for index, group in enumerate(self.context.register_order)
         }
 
-        def input_order(key: VarKey) -> tuple[int, int, int]:
-            known = names.get(key)
-            return (0, known[0], 0) if known else (1, key[1], key[2])
-
         inputs = [
-            FunctionInput(
-                names[key][1] if key in names else f"unique_{key[1]:x}_{key[2]}",
-                define(self._inputs[key]),
-            )
-            for key in sorted(self._inputs, key=input_order)
+            FunctionInput(names[key][1], define(self._inputs[key]))
+            for key in sorted(set(self._inputs).intersection(names), key=lambda key: names[key])
+        ]
+        undefined = self._undefined_temporaries()
+        entry = self.blocks[0]
+        entry.operations[:0] = undefined
+        entry.instructions = [
+            InstructionStart(start.address, start.position + len(undefined))
+            if start.position > 0
+            else start
+            for start in entry.instructions
         ]
         reachable = set(order)
         live_phis: dict[int, list[_Phi]] = {}
@@ -653,6 +715,47 @@ class FunctionBuilder:
             output_registers=tuple(group.name for group in self.context.register_order),
             blocks=tuple(blocks),
         )
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class _Range:
+    offset: int
+    size: int
+
+    @property
+    def end(self) -> int:
+        return self.offset + self.size
+
+
+def _unique_layout(pcode: tuple[PcodeOp, ...]) -> dict[_Range, _Range | None]:
+    """Map each temporary of one instruction to the variable holding its bytes.
+
+    SLEIGH may write a temporary once and read slices of it (x86 PCMPEQB compares byte
+    temporaries inside a 16-byte one). Overlapping temporaries form one variable spanning
+    their union, readable at any slice, provided every write covers that whole span.
+    Partial writes into a wider temporary map to None and are refused rather than guessed.
+    """
+    ranges: set[_Range] = set()
+    written: set[_Range] = set()
+    for op in pcode:
+        for varnode in (*op.inputs, *(() if op.output is None else (op.output,))):
+            if varnode.space == "unique":
+                ranges.add(_Range(varnode.offset, varnode.size))
+        if op.output is not None and op.output.space == "unique":
+            written.add(_Range(op.output.offset, op.output.size))
+    layout: dict[_Range, _Range | None] = {}
+    group: list[_Range] = []
+    for item in [*sorted(ranges), None]:
+        if group and (item is None or item.offset >= max(member.end for member in group)):
+            span = _Range(group[0].offset, max(member.end for member in group) - group[0].offset)
+            writes = written.intersection(group)
+            slot = span if writes <= {span} and (writes or len(group) == 1) else None
+            for member in group:
+                layout[member] = slot
+            group = []
+        if item is not None:
+            group.append(item)
+    return layout
 
 
 def _reverse_postorder(cfg: FunctionCfg) -> list[int]:
