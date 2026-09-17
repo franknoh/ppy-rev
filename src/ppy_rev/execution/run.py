@@ -49,10 +49,15 @@ def run_program(
     stdin: bytes = b"",
     watches: tuple[Watch, ...] = (),
     limits: Limits | None = None,
+    reserve: dict[int, int] | None = None,
 ) -> ProgramRun:
-    """Execute main until it returns, exits, fails, or triggers a watch."""
+    """Execute main until it returns, exits, fails, or triggers a watch.
+
+    `reserve` lays out argv as `enter_main` does for symbolic exploration, so a concrete
+    run sees the same addresses a symbolic one did.
+    """
     memory = program_memory(module)
-    entry = enter_main(module, memory, arguments)
+    entry = enter_main(module, memory, arguments, reserve)
     io = ConcreteIO(stdin=stdin)
     libc = ConcreteLibc(calling_convention(module.target), io)
     at_instruction = {watch.address: watch for watch in watches if watch.register is None}

@@ -513,7 +513,8 @@ def _verify(
     arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
     for index in symbols.argv:
         arguments[index] = argv or b""
-    run = run_program(module, main, arguments, stdin or b"", watches)
+    reserve = {index: len(content) for index, content in symbols.argv.items()}
+    run = run_program(module, main, arguments, stdin or b"", watches, reserve=reserve)
     verified = run.first_watch is not None and run.first_watch.name == "goal"
     native = None if request.native is None else _run_native(request, arguments, stdin, goal)
     return Solution(argv, stdin, verified, "reaches the goal" if verified else run.outcome, native)
