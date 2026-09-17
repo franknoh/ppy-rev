@@ -53,6 +53,7 @@ from ppy_rev.symbolic import encode
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.bounds import unsigned_bounds
 from ppy_rev.symbolic.expr import Expr
+from ppy_rev.symbolic.regions import MergeRegion, RegionFinder
 from ppy_rev.symbolic.state import Constraint, ConstraintKind, Frame, State
 
 
@@ -94,6 +95,8 @@ class Budget:
     """Largest address range a symbolic load may cover."""
     store_range: int = 256
     """Largest address range a symbolic store may cover."""
+    merge_paths: bool = True
+    """Merge the paths of loop-free, call-free branch regions where they join again."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +140,8 @@ class Statistics:
     """(function entry, block id) pairs executed by some state."""
     pruned: int = 0
     """States discarded because they could no longer reach the goal."""
+    merges: int = 0
+    """Paths folded into another path's state at the end of a branch region."""
 
 
 @dataclass(slots=True)
@@ -231,6 +236,7 @@ class Executor:
         self._next_state = 0
         self._auxiliary = 0
         self._pending: list[tuple[int, int, State]] = []
+        self._regions = RegionFinder()
         self._started = time.monotonic()
         self._exploration = Exploration([], [], self.statistics)
 
@@ -800,14 +806,18 @@ class Executor:
                     target = terminator.true_target if condition.value else terminator.false_target
                     self._transfer(frame, block.id, target)
                     return None
-                return self._fork(
-                    state,
-                    [
-                        (condition, terminator.true_target),
-                        (sx.bool_not(condition), terminator.false_target),
-                    ],
-                    terminator.origin,
+                choices = [
+                    (condition, terminator.true_target),
+                    (sx.bool_not(condition), terminator.false_target),
+                ]
+                region = (
+                    self._regions.region(frame.function, block.id)
+                    if self.budget.merge_paths
+                    else None
                 )
+                if region is not None:
+                    return self._fork_and_merge(state, choices, terminator.origin, region)
+                return self._fork(state, choices, terminator.origin)
             case IndirectJump():
                 target = self.value(frame, terminator.address)
                 if target.is_const:
@@ -890,6 +900,97 @@ class Executor:
             for successor in successors:
                 successor.decisions += 1
         return successors, stopped
+
+    # -- merging ---------------------------------------------------------------------------
+
+    def _fork_and_merge(
+        self, state: State, choices: list[tuple[Expr, int]], origin: Origin, region: MergeRegion
+    ) -> tuple[list[State], list[Stopped]]:
+        """Fork, run every path through `region` to its join, and merge the arrivals."""
+        depth = len(state.frames)
+        shared_constraints = len(state.constraints)
+        decisions = state.decisions
+        checkpoint = state.memory.checkpoint()
+        pending, stopped = self._fork(state, choices, origin)
+        arrived: list[State] = []
+        while pending:
+            current = pending.pop()
+            frame = current.frame
+            if len(current.frames) == depth and frame.block == region.join and not frame.position:
+                arrived.append(current)
+                continue
+            try:
+                outcome = self._step(current)
+            except _Stop as stop:
+                failure = self._stopped(current, stop.reason, stop.detail)
+                stopped.append(replace(failure, code=stop.code))
+                continue
+            if outcome is None:
+                pending.append(current)
+            else:
+                pending.extend(outcome[0])
+                stopped.extend(outcome[1])
+        if len(arrived) <= 1:
+            return arrived, stopped
+        merged = self._merge(arrived, shared_constraints, checkpoint, origin)
+        merged.decisions = decisions + 1
+        return [merged], stopped
+
+    def _merge(
+        self, states: list[State], shared_constraints: int, checkpoint: object, origin: Origin
+    ) -> State:
+        """Fold states that forked after `shared_constraints` into the last one.
+
+        Their constraint suffixes are mutually exclusive (each starts with a different
+        branch outcome), so each value is an if-then-else chain over those suffixes.
+        """
+        self.statistics.merges += len(states) - 1
+        selectors = [
+            sx.bool_and(*(item.condition for item in current.constraints[shared_constraints:]))
+            for current in states
+        ]
+        merged = states[-1]
+
+        def choose(values: list[tuple[Expr, Expr]]) -> Expr:
+            result = values[-1][1]
+            for selector, value in reversed(values[:-1]):
+                result = sx.ite(selector, value, result)
+            return result
+
+        frame_values = [current.frame.values for current in states]
+        for identifier in set[int]().union(*frame_values):
+            present = [
+                (selector, values[identifier])
+                for selector, values in zip(selectors, frame_values, strict=True)
+                if identifier in values
+            ]
+            merged.frame.values[identifier] = choose(present)
+        written = set[int]().union(
+            *(current.memory.written_since(checkpoint) for current in states)
+        )
+        for address in sorted(written):
+            current_byte = merged.memory.read_byte(address)
+            byte = choose(
+                [
+                    (selector, current.memory.read_byte(address))
+                    for selector, current in zip(selectors, states, strict=True)
+                ]
+            )
+            if byte is not current_byte:
+                merged.memory.write_byte(address, byte)
+        for current in states[:-1]:
+            merged.steps = max(merged.steps, current.steps)
+            for site, visits in current.branch_counts.items():
+                merged.branch_counts[site] = max(merged.branch_counts.get(site, 0), visits)
+        del merged.constraints[shared_constraints:]
+        self.add_constraint(
+            merged,
+            sx.bool_or(*selectors),
+            ConstraintKind.BRANCH,
+            origin,
+            f"one of {len(states)} merged paths",
+        )
+        return merged
 
 
 def _address(function: Function, frame: Frame) -> int | None:

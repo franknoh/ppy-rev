@@ -43,6 +43,33 @@ def control_flow(function: Function) -> ControlFlow:
     )
 
 
+def immediate_post_dominators(function: Function) -> tuple[int | None, ...]:
+    """Each block's nearest strict post-dominator.
+
+    None when only the virtual exit post-dominates a block (paths leave the function
+    separately) or when the block cannot reach an exit at all.
+    """
+    count = len(function.blocks)
+    # Node 0 of the reversed graph is a virtual exit following every exiting block; node
+    # b + 1 is block b.
+    reversed_successors: list[list[int]] = [[] for _ in range(count + 1)]
+    reversed_predecessors: list[list[int]] = [[] for _ in range(count + 1)]
+    for block in function.blocks:
+        targets = successors(block.terminator)
+        if not targets:
+            reversed_successors[0].append(block.id + 1)
+            reversed_predecessors[block.id + 1].append(0)
+        for target in targets:
+            reversed_successors[target + 1].append(block.id + 1)
+            reversed_predecessors[block.id + 1].append(target + 1)
+    order = _reverse_postorder(tuple(tuple(items) for items in reversed_successors))
+    dominators = _dominators(order, reversed_predecessors, count + 1)
+    return tuple(
+        None if dominator is None or dominator == 0 else dominator - 1
+        for dominator in dominators[1:]
+    )
+
+
 def _reverse_postorder(successor_lists: tuple[tuple[int, ...], ...]) -> tuple[int, ...]:
     if not successor_lists:
         return ()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ppy_rev.diagnostics import DiagnosticCode
 from ppy_rev.execution.interpreter import Interpreter
 from ppy_rev.execution.process import enter_call, standard_memory
@@ -72,7 +74,9 @@ def test_unreachable_goal_explores_everything_without_a_solution() -> None:
     solution = _solve(_module(program), _rax_is(7))
     assert solution.model is None
     assert solution.exploration.incomplete == []
-    assert solution.exploration.statistics.stops[StopReason.RETURNED] == 2
+    # Both sides of the branch meet again before returning, as one merged state.
+    assert solution.exploration.statistics.stops[StopReason.RETURNED] == 1
+    assert solution.exploration.statistics.merges == 1
 
 
 def test_goal_and_avoid_addresses() -> None:
@@ -210,3 +214,44 @@ def test_symbolic_pointer_is_bounded_by_the_path_condition() -> None:
     solution = _solve(module, _rax_is(0x55))
     assert solution.model == {"x": 5}
     assert solution.exploration.incomplete == []
+
+
+def _bit_sum_loop() -> Module:
+    """rax = sum of i for every set bit i < 16 of rdi, with one branch per bit."""
+    program = ProgramBuilder()
+    loop = program.code(
+        0x1000, [op("COPY", [const(0, 8)], reg("RAX")), op("COPY", [const(0, 8)], reg("RCX"))]
+    )
+    take = program.code(
+        loop,
+        [
+            op("INT_RIGHT", [reg("RDI"), reg("CL")], reg("RDX")),
+            op("INT_AND", [reg("RDX"), const(1, 8)], reg("RDX")),
+            op("INT_EQUAL", [reg("RDX"), const(0, 8)], reg("ZF")),
+            op("CBRANCH", [ram(loop + 8), reg("ZF")]),
+        ],
+    )
+    step = program.code(take, [op("INT_ADD", [reg("RAX"), reg("RCX")], reg("RAX"))])
+    exit_ = program.code(
+        step,
+        [
+            op("INT_ADD", [reg("RCX"), const(1, 8)], reg("RCX")),
+            op("INT_LESS", [reg("RCX"), const(16, 8)], reg("CF")),
+            op("CBRANCH", [ram(loop), reg("CF")]),
+        ],
+    )
+    program.code(exit_, ret(), length=1)
+    program.function("f", 0x1000)
+    return _module(program)
+
+
+def test_branch_diamonds_in_a_loop_are_merged() -> None:
+    module = _bit_sum_loop()
+    budget = Budget(max_states=200)
+    merged = _solve(module, _rax_is(1 + 4 + 15), budget)
+    assert merged.model is not None
+    assert _interpret(module, merged.model["x"]) == 20
+    assert merged.exploration.statistics.merges == 16
+    separate = _solve(module, _rax_is(1 + 4 + 15), replace(budget, merge_paths=False))
+    assert separate.model is None
+    assert separate.exploration.budget_exhausted is not None

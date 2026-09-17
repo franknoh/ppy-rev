@@ -36,6 +36,25 @@ class SymbolicMemory:
         self._layer = _Layer(shared)
         return SymbolicMemory(self.image, _Layer(shared))
 
+    def checkpoint(self) -> object:
+        """A marker for `written_since`: later writes, in this memory or its forks, go above it."""
+        shared = self._layer
+        self._layer = _Layer(shared)
+        return shared
+
+    def written_since(self, checkpoint: object) -> set[int]:
+        """Addresses possibly written after `checkpoint`.
+
+        Once layers have been flattened the marker is gone, and every address this memory
+        has ever written is returned instead: a superset, never an omission.
+        """
+        written: set[int] = set()
+        layer: _Layer | None = self._layer
+        while layer is not None and layer is not checkpoint:
+            written.update(layer.cells)
+            layer = layer.parent
+        return written
+
     def mapping_at(self, address: int) -> Mapping | None:
         return self.image.mapping_at(address)
 
