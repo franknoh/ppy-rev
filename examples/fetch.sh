@@ -70,3 +70,24 @@ fetch lactf_string_cheese/string_cheese "$ARCHIVE/LA/2023/rev/string-cheese/stri
     eba17b9931d826b8573291ab25833a4a6394f110dbd3b6c95e67bc2df606e1c9
 fetch ductf_no_strings/nostrings "$ARCHIVE/DownUnderCTF/2021/rev/no_strings/nostrings" \
     62bdc1ff08af6647109112372fdcb09a9f3eaa0d164a8542e251de9ecbdb187f
+fetch swampctf_beginner_rev/BeginnerREV "$ARCHIVE/SwampCTF/2024/rev/Beginner_Rev/BeginnerREV" \
+    97954541938d204f912fee00607c52d910e6eb6d04fd7bee94cd503fd9478ca1
+fetch tamuctf_nope/nope "$ARCHIVE/TAMUctf/2023/rev/nope/nope" \
+    51555767fbc46b57f4e60f2daaefc9ade60d959af41fd2cf35bab75584aaa266
+fetch b01lers_crackme/crackme "$ARCHIVE/b01lers/2022/rev/crackme/crackme" \
+    803297bd98b1611303e70403aee8b0d4c13213dfc8f8975b94e7a333007cc538
+fetch b01lers_crackme_2/crackme_2 "$ARCHIVE/b01lers/2022/rev/crackme_2/crackme_2" \
+    34ba696bbe1ed17088182be50c5692853a6eb8322578db7f10d47c42704191b7
+fetch angstrom_one_bite/one_bite "$ARCHIVE/angstromCTF/2019/rev/One_Bite/one_bite" \
+    697526f731d6484c6fc1066070b722e3a833bef6c3280fcbae1004083460e887
+fetch angstrom_high_quality_checks/high_quality_checks \
+    "$ARCHIVE/angstromCTF/2019/rev/High_Quality_Checks/high_quality_checks" \
+    6f9ff36334b1c8be130f5fd13d6d77c1de6f546512d1421370fc874948d6e37c
+fetch angstrom_guess_the_flag/guess_the_flag "$ARCHIVE/angstromCTF/2024/rev/Guess_the_Flag/guess_the_flag" \
+    b2d1ba18d7fcc3ef5e9c0c09ac07ae7d01519ee5cfb2fdfc8ba88b8e9d7877d6
+fetch angstrom_autorev_assemble/autorev_assemble "$ARCHIVE/angstromCTF/2020/rev/Autorev_Assemble/autorev_assemble" \
+    0c1db256e64f3df76a174ed3983b7836d5f0f6b71439574fb27a00a0b7316bcf
+fetch redpwn_check/challenge "$ARCHIVE/redpwn/2022/rev/check/challenge" \
+    a1f18fee801dbd562e410497ea26541b86839eec8f344abfea87ab8040a25c52
+fetch spaceheroes_acheron/Acheron "$ARCHIVE/SpaceHeroes/2023/rev/Acheron/Acheron" \
+    1f366c28327f9de41bc31a73cac9cb6b968ed4b0263124f703597d4707a11476
