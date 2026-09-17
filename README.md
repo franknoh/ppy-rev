@@ -69,7 +69,7 @@ input and goal, and what the search did.
 
 ```bash
 ppy-rev info ./chall                # architecture, entry point, sections, functions
-ppy-rev analyze ./chall             # inputs, likely outcomes, relevant code, VMs, diagnostics
+ppy-rev analyze ./chall             # inputs, outcomes, flag format, relevant code, VMs
 ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function (--no-simplify: raw)
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ppy-rev lift ./chall --emit-ppy -o out --check-ppy

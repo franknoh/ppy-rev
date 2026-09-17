@@ -91,3 +91,18 @@ fetch redpwn_check/challenge "$ARCHIVE/redpwn/2022/rev/check/challenge" \
     a1f18fee801dbd562e410497ea26541b86839eec8f344abfea87ab8040a25c52
 fetch spaceheroes_acheron/Acheron "$ARCHIVE/SpaceHeroes/2023/rev/Acheron/Acheron" \
     1f366c28327f9de41bc31a73cac9cb6b968ed4b0263124f703597d4707a11476
+fetch irisctf_baby_rev/baby_baby_rev "$ARCHIVE/IrisCTF/2023/rev/baby_rev/baby_baby_rev" \
+    b1cf9d9af5ec817b7051eadd1abcb6b7f97f938df0d14c28a3bbe99395e995be
+fetch heroctf_scarface/scarface "$ARCHIVE/HeroCTF/2023/rev/Scarface/scarface" \
+    0d626cb5565646e601861ac4481d4481b16d6e9cd713577328efc20b71f2cc75
+fetch thjcc_pocketvm/chall "$ARCHIVE/THJCC/2026/rev/PocketVM/chall" \
+    dda09c3047ed9fb213bcb595957065bf8f1f533c7edbbb1bf9d4e8e3ce93df44
+fetch thjcc_super_baby_reverse/THJCC_Super_Baby_Reverse \
+    "$ARCHIVE/THJCC/2026/rev/Super_baby_reverse/THJCC_Super_Baby_Reverse" \
+    b9469757fea9dfa95083ae0d059e4a88a58250f7062d33c71327b46dfcfed511
+fetch tscctf_link_start/chal "$ARCHIVE/TSCCTF/2025/rev/Link_Start/chal" \
+    3a5a06329deb1b209d2ff4a88241618c70d2ecba31035fd0d02259cda26b791a
+fetch wreckctf_flag_checker/chal "$ARCHIVE/WRECKCTF/2022/rev/flag-checker/chal" \
+    4a53637b9e16eada5f1d6915ee06f262bd10e697a5c021adcb624c43495c4324
+fetch n00bzctf_welcome/chal "$ARCHIVE/n00bzCTF/2023/rev/Welcome/chal" \
+    f8c29ae6069f002e98eecc1b313dd3cc26d5add6bc586e0d9f16427f7406f7a7

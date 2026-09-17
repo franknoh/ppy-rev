@@ -234,6 +234,9 @@ def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
         out.write(_outcome(candidate))
     if not report.successes:
         out.write("  none (pass --goal-address or --goal-string to solve)\n")
+    if report.flag_formats:
+        shapes = ", ".join(f"{prefix}*}}" for prefix in report.flag_formats)
+        out.write(f"  flag format in the program's data: {shapes}\n")
     out.write("\nFailure candidates:\n")
     for candidate in report.failures:
         out.write(_outcome(candidate))

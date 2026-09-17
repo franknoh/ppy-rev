@@ -6,7 +6,9 @@
 | Binary | `bbbbloat`, x86-64 PIE ELF, stripped, padded with junk arithmetic |
 | Input | stdin (`scanf("%d")`) |
 | Hints needed | `--goal-address 0x1014d6` |
-| Answer | `549255` (the program then prints the flag) |
+| Answer | `549255` |
+
+The program then prints the flag.
 
 ## The challenge
 

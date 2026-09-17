@@ -6,7 +6,7 @@
 | Binary | `autorev_assemble`, x86-64 ELF, not stripped |
 | Input | stdin (`fgets`) |
 | Hints needed | none |
-| Answer | `Blockchain big data solutions ... actf{wr0t3_4_pr0gr4m_t0_h3lp_y0u_w1th_th1s_...}` |
+| Answer | `actf{wr0t3_4_pr0gr4m_t0_h3lp_y0u_w1th_th1s_df93171eb49e21a3a436e186bc68a5b2d8ed}` |
 
 ## The challenge
 
@@ -21,7 +21,8 @@ fgets(z, 0x100, stdin);
 if (f268(z) && f723(z) && f611(z) && f985(z) && /* ... */) puts("CORRECT");
 ```
 
-The answer is a sentence with the flag inside it.
+The answer is a sentence with the flag inside it, so `solve` prints a whole line of
+filler around the flag.
 
 ## Solve it
 

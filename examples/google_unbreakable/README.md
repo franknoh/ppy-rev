@@ -28,8 +28,7 @@ if (buffer[0] != (buffer[0x1e] ^ buffer[0x26]) - buffer[8] + buffer[6])
 
 ```bash
 examples/fetch.sh
-uv run ppy-rev solve examples/google_unbreakable/unbreakable-enterprise-product-activation \
-    --flag-format 'CTF{*}'
+uv run ppy-rev solve examples/google_unbreakable/unbreakable-enterprise-product-activation --flag-format 'CTF{*}'
 ```
 
 ```text
