@@ -75,6 +75,8 @@ class StopReason(StrEnum):
     SOLVER_UNKNOWN = "solver-unknown"
 
 
+_ENUMERATED_ADDRESSES = 8
+"""Addresses a pointer may take before enumerating them costs more than bounding them."""
 INCOMPLETE_REASONS = frozenset(
     {
         StopReason.UNSUPPORTED,
@@ -522,28 +524,23 @@ class Executor:
 
     # -- memory ----------------------------------------------------------------------------
 
-    _ENUMERATED = 8
-    """Addresses a pointer may take before enumerating them costs more than bounding them."""
-
     def _candidates(
         self, state: State, address: Expr, size: int, write: bool, limit: int
     ) -> list[int]:
         low, high = unsigned_bounds(address)
         if high - low + 1 > limit:
-            # Most symbolic pointers turn out to have one value, or a handful: asking for
-            # them one at a time costs two solver calls, bounding a 64-bit range costs 128.
-            found = self._enumerate(state, address, min(limit, self._ENUMERATED))
+            # Most symbolic pointers have one value, or a handful: asking the solver for
+            # them one at a time costs two calls, bounding a 64-bit range costs 128.
+            found = self._enumerate(state, address, min(limit, _ENUMERATED_ADDRESSES))
             if found is not None:
                 return [
                     candidate
                     for candidate in found
                     if state.memory.accessible(candidate, size, write)
                 ]
-        if high - low + 1 > limit and self.seed is not None:
-            concrete = self._seed_value(address)
+            concrete = self._seed_value(address) if self.seed is not None else None
             if concrete is not None:
                 return self._concretize(state, address, concrete, size, write)
-        if high - low + 1 > limit:
             low, high = self._feasible_bounds(state, address, low, high)
         if high - low + 1 > limit:
             raise _Stop(
