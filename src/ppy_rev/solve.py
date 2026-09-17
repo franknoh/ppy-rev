@@ -489,6 +489,8 @@ def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:
         return SolveStatus.UNKNOWN
     if exploration.timed_out:
         return SolveStatus.TIMEOUT
+    if exploration.statistics.hiding_approximations:
+        return SolveStatus.INCOMPLETE
     if exploration.budget_exhausted is not None:
         return SolveStatus.BUDGET_EXHAUSTED
     reasons = {stop.reason for stop in exploration.incomplete}
@@ -520,6 +522,9 @@ def _incomplete_notes(exploration: Exploration) -> list[str]:
     notes: list[str] = []
     if exploration.budget_exhausted is not None:
         notes.append(f"exploration stopped after {exploration.budget_exhausted}")
+    notes.extend(
+        f"approximated: {note}" for note in sorted(exploration.statistics.hiding_approximations)
+    )
     for stop in exploration.incomplete[:10]:
         notes.append(_describe_stop(stop))
     return notes

@@ -132,3 +132,20 @@ def test_strcspn_refuses_a_symbolic_rejected_set() -> None:
     assert outcomes is not None
     (outcome,) = outcomes
     assert isinstance(outcome, Failed) and outcome.reason is StopReason.UNSUPPORTED
+
+
+def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    stdin = tuple(sx.symbol(f"in_{index}", 8) for index in range(8))
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO(stdin=stdin))
+    arguments = {
+        "RDI": sx.const(OUT, 64),
+        "RSI": sx.const(4, 64),
+        "RDX": sx.const(STANDARD_STREAMS["stdin"], 64),
+    }
+    outcomes = SymbolicLibc(SYSV_X86_64).call(executor, state, "fgets", arguments, Origin(0, 0))
+    assert outcomes is not None
+    assert state.io.stdin == ()
+    assert executor.statistics.hiding_approximations == {
+        "stdin after a symbolic-length fgets line is treated as empty"
+    }

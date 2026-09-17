@@ -309,8 +309,10 @@ class SymbolicLibc:
         if consumed is None:
             # The rest of stdin is only meaningful once the line length is known.
             io.stdin = io.stdin[: io.stdin_position]
-            call.state.io.approximations.append(
-                "stdin after a symbolic-length fgets line is treated as empty"
+            call.executor.approximate(
+                call.state,
+                "stdin after a symbolic-length fgets line is treated as empty",
+                may_hide_paths=True,
             )
         else:
             io.stdin_position += consumed
@@ -361,8 +363,10 @@ class SymbolicLibc:
         # Formatted output is not needed to decide reachability, but its length could be:
         # model it as unconstrained and record the over-approximation. Solutions are
         # re-checked by concrete execution, which formats exactly.
-        call.state.io.approximations.append(
-            f"printf result at {call.origin.address:#x} is unconstrained"
+        call.executor.approximate(
+            call.state,
+            f"printf result at {call.origin.address:#x} is unconstrained",
+            may_hide_paths=False,
         )
         return self._returns(
             call, sx.symbol(f"__printf_{call.origin.address:x}_{call.state.id}", 64)

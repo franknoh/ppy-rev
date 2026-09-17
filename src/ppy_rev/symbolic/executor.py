@@ -142,6 +142,8 @@ class Statistics:
     """States discarded because they could no longer reach the goal."""
     merges: int = 0
     """Paths folded into another path's state at the end of a branch region."""
+    hiding_approximations: set[str] = field(default_factory=set[str])
+    """Approximations made on some path that may have excluded feasible behaviour."""
 
 
 @dataclass(slots=True)
@@ -433,6 +435,18 @@ class Executor:
                     StopReason.UNSUPPORTED, operation.reason, DiagnosticCode.UNSUPPORTED_OPERATION
                 )
         return None
+
+    def approximate(self, state: State, note: str, *, may_hide_paths: bool) -> None:
+        """Record that a model approximated here.
+
+        Over-approximations (extra behaviour) only risk solutions that fail verification;
+        approximations that may exclude behaviour make "no path reaches the goal"
+        inconclusive.
+        """
+        if note not in state.io.approximations:
+            state.io.approximations.append(note)
+        if may_hide_paths:
+            self.statistics.hiding_approximations.add(note)
 
     def add_constraint(
         self,
