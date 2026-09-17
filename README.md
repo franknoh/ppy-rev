@@ -240,18 +240,22 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
   the same compiled code, before and after simplification.
 - `ppy_rev.symbolic` and `ppy_rev.solver`: symbolic execution of RevIR over
   hash-consed bit-vector expressions, with a narrow solver interface and a Z3
-  backend. Pointers that are symbolic over a small range (bounded syntactically or by
-  the path condition) are modeled exactly; wider ones stop symbolic exploration with a
-  diagnostic (concolic search fixes them to a seed value instead). Division by a symbolic
+  backend. A symbolic pointer is resolved by asking the solver for the addresses it can
+  take, or by bounding its range; when there are too many, symbolic exploration stops with
+  a diagnostic (concolic search fixes them to a seed value instead). Division by a symbolic
   divisor constrains it to be non-zero, since RevIR division faults.
 - `ppy_rev.summaries`: C library models, concrete (for the interpreter) and symbolic,
-  tested against each other.
+  tested against each other and against glibc, including its `rand`. Where a model forks on
+  the shape of the input (how a number or a token ends), the alternatives are tests on
+  single input bytes, decided without the solver.
 - `ppy_rev.analysis`: whole-program facts for solving: `main`, input discovery, goal
-  ranking from strings, goal reachability, backward slicing, and the `analyze` report.
+  ranking from strings (prompts and complaints are not verdicts), flag shapes the program
+  mentions, goal reachability, backward slicing, and the `analyze` report.
 - `ppy_rev.vm`: bytecode interpreters: dispatcher detection, specialization of the
   interpreter to its bytecode (VM lifting), and the instruction set description.
 - `ppy_rev.verify`: sandboxed native execution for `solve --verify`.
-- `ppy_rev.ppy`: PPy emission and validation with `ppy check`.
+- `ppy_rev.ppy`: PPy emission and validation with `ppy check`, including the C library
+  models and the front end that make an emitted program runnable.
 
 RevIR values have explicit bit widths; signedness belongs to operations.
 Lifting is based on raw p-code (exact instruction semantics); Ghidra's
