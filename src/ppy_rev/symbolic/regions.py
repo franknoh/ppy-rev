@@ -13,8 +13,11 @@ from dataclasses import dataclass
 
 from ppy_rev.ir.cfg import immediate_post_dominators
 from ppy_rev.ir.model import (
+    BinaryOp,
+    BinaryOpcode,
     Branch,
     Call,
+    Const,
     Function,
     IndirectJump,
     IndirectTarget,
@@ -26,6 +29,7 @@ from ppy_rev.ir.model import (
     Store,
     TailCall,
     Var,
+    mask,
     operation_inputs,
     operation_output,
     successors,
@@ -114,43 +118,108 @@ def _acyclic(function: Function, blocks: set[int]) -> bool:
     return all(visit(block_id) for block_id in sorted(blocks))
 
 
-def _addressing(function: Function) -> frozenset[int]:
-    definitions: dict[int, Phi | Operation] = {}
-    roots: list[Operand] = []
-    for block in function.blocks:
-        for phi in block.phis:
-            definitions[phi.output.id] = phi
-        for operation in block.operations:
-            for output in operation_output(operation):
-                definitions[output.id] = operation
-            match operation:
-                case Load(address=address) | Store(address=address):
-                    roots.append(address)
-                case Call(target=IndirectTarget(address=address)):
-                    roots.append(address)
+type _Base = tuple[str, int] | tuple[str, "_Location", int]
+type _Location = tuple[_Base, int]
+"""An address as a base and a constant offset; loaded bases are keyed by where they load."""
+
+
+class _Addressing:
+    """Values that flow into memory addresses or jump targets, including through memory.
+
+    A value stored where some address is later loaded from carries into that address, so
+    stores and loads are matched by location: a constant offset from a base that is a
+    constant, a function value, or the value loaded from another such location (a pointer
+    kept in a stack slot at -O0).
+    """
+
+    def __init__(self, function: Function) -> None:
+        self.definitions: dict[int, Phi | Operation] = {}
+        self.stores: list[Store] = []
+        self.roots: list[Operand] = []
+        for block in function.blocks:
+            for phi in block.phis:
+                self.definitions[phi.output.id] = phi
+            for operation in block.operations:
+                for output in operation_output(operation):
+                    self.definitions[output.id] = operation
+                match operation:
+                    case Load(address=address):
+                        self.roots.append(address)
+                    case Store(address=address):
+                        self.roots.append(address)
+                        self.stores.append(operation)
+                    case Call(target=IndirectTarget(address=address)):
+                        self.roots.append(address)
+                    case _:
+                        pass
+            match block.terminator:
+                case IndirectJump(address=address):
+                    self.roots.append(address)
+                case TailCall(call=Call(target=IndirectTarget(address=address))):
+                    self.roots.append(address)
                 case _:
                     pass
-        match block.terminator:
-            case IndirectJump(address=address):
-                roots.append(address)
-            case TailCall(call=Call(target=IndirectTarget(address=address))):
-                roots.append(address)
+        self._locations: dict[int, _Location] = {}
+
+    def location(self, operand: Operand, depth: int = 0) -> _Location:
+        if isinstance(operand, Const):
+            return (("const", 0), operand.value)
+        known = self._locations.get(operand.id)
+        if known is not None:
+            return known
+        definition = self.definitions.get(operand.id)
+        result: _Location
+        match definition:
+            case BinaryOp(
+                opcode=BinaryOpcode.ADD | BinaryOpcode.SUB, left=left, right=Const(value=delta)
+            ):
+                base, offset = self.location(left, depth + 1)
+                sign = 1 if definition.opcode is BinaryOpcode.ADD else -1
+                result = (base, (offset + sign * delta) & mask(definition.output.width))
+            case Load(address=address) if depth < _LOCATION_DEPTH:
+                result = (("load", self.location(address, depth + 1), definition.output.width), 0)
             case _:
-                pass
-    marked: set[int] = set()
-    work = [root for root in roots if isinstance(root, Var)]
-    while work:
-        var = work.pop()
-        if var.id in marked:
-            continue
-        marked.add(var.id)
-        match definitions.get(var.id):
-            case Phi(incoming=incoming):
-                work.extend(value for _, value in incoming if isinstance(value, Var))
-            case Load() | Call() | None:
-                pass  # a loaded or returned value starts a new chain
-            case operation:
-                work.extend(
-                    value for value in operation_inputs(operation) if isinstance(value, Var)
-                )
-    return frozenset(marked)
+                result = (("value", operand.id), 0)
+        self._locations[operand.id] = result
+        return result
+
+    def solve(self) -> frozenset[int]:
+        marked: set[int] = set()
+        slots: set[_Location] = set()
+        work = [root for root in self.roots if isinstance(root, Var)]
+        changed = True
+        while changed:
+            while work:
+                var = work.pop()
+                if var.id in marked:
+                    continue
+                marked.add(var.id)
+                match self.definitions.get(var.id):
+                    case Phi(incoming=incoming):
+                        work.extend(value for _, value in incoming if isinstance(value, Var))
+                    case Load(address=address):
+                        slots.add(self.location(address))
+                    case Call() | None:
+                        pass
+                    case operation:
+                        work.extend(
+                            value for value in operation_inputs(operation) if isinstance(value, Var)
+                        )
+            changed = False
+            for store in self.stores:
+                value = store.value
+                if (
+                    isinstance(value, Var)
+                    and value.id not in marked
+                    and self.location(store.address) in slots
+                ):
+                    work.append(value)
+                    changed = True
+        return frozenset(marked)
+
+
+_LOCATION_DEPTH = 8
+
+
+def _addressing(function: Function) -> frozenset[int]:
+    return _Addressing(function).solve()

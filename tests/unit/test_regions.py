@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ppy_rev.ir.cfg import immediate_post_dominators
 from ppy_rev.ir.model import (
+    BinaryOpcode,
     Branch,
     Call,
     Const,
@@ -53,3 +54,19 @@ def test_regions_are_loop_free_call_free_diamonds() -> None:
     assert RegionFinder().region(_function(EARLY_RETURN), 0) is None
     assert RegionFinder().region(_function(DIAMOND, calls=frozenset({2})), 0) is None
     assert RegionFinder(max_blocks=1).region(_function(DIAMOND), 0) is None
+
+
+def test_addressing_follows_values_through_memory() -> None:
+    builder = FunctionBuilder([("RDI", 64), ("RSI", 64)])
+    block = builder.block()
+    pointer = block.binary(BinaryOpcode.ADD, builder.input("RDI"), Const(1, 64))
+    data = block.binary(BinaryOpcode.ADD, builder.input("RSI"), Const(2, 64))
+    block.store(Const(0x5000, 64), pointer)  # a pointer kept in a slot
+    block.store(Const(0x6000, 64), data)  # plain data
+    reloaded = block.load(Const(0x5000, 64), 64)
+    block.load(reloaded, 8)
+    block.load(Const(0x6000, 64), 64)
+    builder.terminators[block.id] = Return((), None, ORIGIN)
+    addressing = RegionFinder().addressing(builder.finish(()))
+    assert pointer.id in addressing and builder.input("RDI").id in addressing
+    assert data.id not in addressing and builder.input("RSI").id not in addressing
