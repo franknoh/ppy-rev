@@ -13,6 +13,7 @@ from ppy_rev._version import __version__
 from ppy_rev.cli import commands
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.solve import Strategy
+from ppy_rev.symbolic.executor import Budget
 from ppy_rev.symbolic.inputs import Charset
 from ppy_rev.verify.sandbox import DEFAULT_IMAGE
 
@@ -155,9 +156,23 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
         help="symbolic search, concolic search, or symbolic then concolic (default auto)",
     )
     search.add_argument("--seed", metavar="TEXT", help="the first input concolic search follows")
-    limits = solve.add_argument_group("limits")
+    defaults = Budget()
+    limits = solve.add_argument_group("limits (running out is reported, never taken as unsat)")
     limits.add_argument("--timeout", type=float, default=600.0, metavar="SECONDS")
-    limits.add_argument("--max-states", type=int, default=20_000)
+    limits.add_argument("--max-states", type=int, default=defaults.max_states)
+    limits.add_argument(
+        "--max-steps", type=int, default=defaults.max_steps, help="RevIR operations executed"
+    )
+    limits.add_argument("--max-call-depth", type=int, default=defaults.max_call_depth)
+    limits.add_argument(
+        "--max-loop-iterations",
+        type=int,
+        default=defaults.max_branch_visits,
+        help="times one path may fork at the same branch",
+    )
+    limits.add_argument(
+        "--solver-timeout", type=float, metavar="SECONDS", help="per solver call (default 30)"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -100,7 +100,8 @@ given: `--length`, `--max-length` (default 64 for argv; stdin defaults to 256 by
 preferred but not required. `--solutions N` asks for distinct inputs, `--output FILE`
 writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's constraints as
 SMT-LIB, and `-v`/`-vv` show evidence, statistics, and path constraints. Limits:
-`--timeout` seconds and `--max-states`.
+`--timeout` (seconds), `--max-states`, `--max-steps`, `--max-call-depth`,
+`--max-loop-iterations`, and `--solver-timeout`; running out of one is reported as such.
 
 When symbolic search ends without an answer (a budget, or a symbolic pointer too wide to
 model), `solve` falls back to concolic search (`--strategy auto`, the default; `symbolic`

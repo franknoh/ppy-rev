@@ -238,3 +238,16 @@ def test_analyze_reports_what_solving_uses(
     assert "operations sliced away: " in text
     assert main(["analyze", str(compile_fixture.build("simple_vm", "gcc", "O2")), *arguments]) == 0
     assert "(confidence 0.9" in capsys.readouterr().out.split("VM dispatchers:")[1]
+
+
+def test_exhausted_budgets_are_reported_not_unsat(
+    analyzer: Analyzer, compile_fixture: type[FixtureCompiler], capsys: pytest.CaptureFixture[str]
+) -> None:
+    del analyzer
+    binary = compile_fixture.build("strcmp_argv", "gcc", "O2")
+    code, text = _solve(
+        binary, "--strategy", "symbolic", "--max-loop-iterations", "2", capsys=capsys
+    )
+    assert code == 2
+    assert "result: analysis incomplete" in text
+    assert "forked more than 2 times on one path" in text

@@ -122,6 +122,7 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
     avoid_string: list[str] | None = arguments.avoid_string
     timeout: float = arguments.timeout
     max_states: int = arguments.max_states
+    solver_timeout: float | None = arguments.solver_timeout
     verify: bool = arguments.verify
     sandbox_runtime: Path | None = arguments.sandbox_runtime
     sandbox_image: str = arguments.sandbox_image
@@ -142,8 +143,13 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
         solutions=arguments.solutions,
         budget=Budget(
             max_seconds=timeout,
-            solver_timeout_ms=int(min(timeout, 600) * 1000),
+            solver_timeout_ms=int(
+                (solver_timeout if solver_timeout is not None else min(timeout, 30.0)) * 1000
+            ),
             max_states=max_states,
+            max_steps=arguments.max_steps,
+            max_call_depth=arguments.max_call_depth,
+            max_branch_visits=arguments.max_loop_iterations,
         ),
         emit_smt2=arguments.emit_smt2 is not None,
         native=SandboxOptions(runtime=sandbox_runtime, image=sandbox_image) if verify else None,
