@@ -127,11 +127,13 @@ semantics on a relevant path are reported as such, never as `unsat`. Without
 
 `vm detect` looks for bytecode interpreters: a group of branches (a jump table, or a
 chain or tree of comparisons) deciding on one value fetched from memory, inside a loop its
-handlers return to. Each candidate lists the opcode fetch, the VM program counter (a
-memory field or a loop variable), the bytecode base when it is a constant, the handlers
-with the opcode values proven to select them, and its evidence, each item marked
-`proven` (follows from RevIR), `inferred`, or `heuristic`. Candidates below 0.6
-confidence, typically ordinary `switch` statements, are shown with `--all`.
+handlers return to, that decodes instructions: handlers advance the program counter by
+different amounts or read operands after the opcode. Each candidate lists the opcode
+fetch, the VM program counter (a memory field or a loop variable), the bytecode base when
+it is a constant, the handlers with the opcode values proven to select them, and its
+evidence, each item marked `proven` (follows from RevIR), `inferred`, or `heuristic`.
+Candidates below 0.6 confidence, typically ordinary `switch` statements and loops that
+branch on each byte of their input, are shown with `--all`.
 
 `vm lift` finds a path from `main` into the interpreter, takes the state there, and
 specializes the interpreter to its bytecode by partial evaluation of RevIR: the program

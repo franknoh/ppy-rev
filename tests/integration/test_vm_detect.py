@@ -48,6 +48,7 @@ def test_register_vm_dispatcher(
     assert all(by_opcode[opcode][1] for opcode in instructions)
     assert len({by_opcode[opcode][0] for opcode in instructions}) == len(instructions)
     assert by_opcode[0xF0][1] is False  # ACCEPT leaves the interpreter loop
+    assert any("by different amounts" in item.text for item in dispatcher.evidence)
 
 
 @pytest.mark.parametrize(("compiler", "level"), VARIANTS)
@@ -60,9 +61,10 @@ def test_stack_vm_dispatcher(
     opcodes = (0x11, 0x22, 0x33, 0x55, 0x66, 0x88)
     assert all(by_opcode[opcode][1] for opcode in opcodes)
     assert len({by_opcode[opcode][0] for opcode in opcodes}) == len(opcodes)
+    assert any("by different amounts" in item.text for item in dispatcher.evidence)
 
 
-@pytest.mark.parametrize("name", ["switch_check", "arith_ops", "strcmp_argv"])
+@pytest.mark.parametrize("name", ["switch_check", "arith_ops", "strcmp_argv", "class_count"])
 def test_ordinary_programs_have_no_likely_dispatcher(
     analyzer: Analyzer, compile_fixture: type[FixtureCompiler], name: str
 ) -> None:

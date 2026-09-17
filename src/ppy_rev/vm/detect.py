@@ -3,7 +3,10 @@
 A dispatcher is a group of branches (a jump table, or a chain or tree of comparisons)
 that all decide on one selector value, fanning out to many handler blocks. It is a VM
 dispatcher when the selector is fetched from memory at an index the loop keeps updating
-(the VM program counter) and the handlers return to the loop.
+(the VM program counter), the handlers return to the loop, and the loop decodes
+instructions: handlers advance the program counter by different amounts, or read operands
+after the opcode. A loop that steps through its input one element at a time and branches on
+each (a character classifier) has everything else.
 
 Every candidate carries its evidence, each marked as proven from RevIR, inferred, or a
 heuristic guess, and a confidence score. Opcode-to-handler mappings are proven by
@@ -56,6 +59,9 @@ _SYMBOLS = {
 }
 LIKELY_DISPATCHER = 0.6
 """Confidence from which a candidate is reported as a VM dispatcher by default."""
+_UNSTRUCTURED = 0.6
+"""Scales the confidence of a loop without instruction structure below `LIKELY_DISPATCHER`."""
+_SAME_DEPTH = 6
 MIN_HANDLERS = 4
 MAX_OPCODE_VALUES = 256
 _TABLE_ENTRY_BITS = 16
@@ -98,6 +104,20 @@ class OpcodeFetch:
     """The memory location of a program counter kept in memory."""
     program_counter_phi: int | None = None
     """The loop phi holding a program counter kept in a register."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Instructions:
+    """Signs that the dispatch loop decodes instructions rather than walking data."""
+
+    varying_advance: bool
+    """The program counter advances differently depending on the handler."""
+    operand_readers: int
+    """Handlers that read from the bytecode at an index other than the opcode's."""
+
+    @property
+    def found(self) -> bool:
+        return self.varying_advance or self.operand_readers > 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,7 +373,8 @@ class _FunctionDispatchers:
             )
             for exit_id in exits
         )
-        evidence = self._evidence(group, key, fetch, handlers, header)
+        instructions = self._instructions(fetch, handlers, header)
+        evidence = self._evidence(group, key, fetch, handlers, header, instructions)
         return Dispatcher(
             function=self.function.name,
             function_entry=self.function.entry,
@@ -362,7 +383,7 @@ class _FunctionDispatchers:
             loop_header=None if header is None else self.function.blocks[header].address,
             fetch=fetch,
             handlers=handlers,
-            confidence=_confidence(fetch, handlers, header, group, self.function),
+            confidence=_confidence(fetch, handlers, header, group, self.function, instructions),
             evidence=evidence,
         )
 
@@ -591,6 +612,143 @@ class _FunctionDispatchers:
                     work.append(successor)
         return False
 
+    # -- instruction structure ---------------------------------------------------------------
+
+    def _instructions(
+        self, fetch: OpcodeFetch | None, handlers: tuple[Handler, ...], header: int | None
+    ) -> _Instructions:
+        counter = _counter_key(fetch)
+        if fetch is None or header is None or counter is None:
+            return _Instructions(varying_advance=False, operand_readers=0)
+        body = self._loop_body(header)
+        distinct: list[Operand] = []
+        for update in self._counter_updates(fetch, body):
+            if not any(self._same_value(update, known) for known in distinct):
+                distinct.append(update)
+        varying = len(distinct) > 1
+        if fetch.program_counter_location is not None:
+            # Unoptimized code advances a counter in memory by repeating the same increment.
+            returning = [handler for handler in handlers if handler.returns_to_dispatcher]
+            writers = self._counter_writers(fetch, tuple(returning))
+            varying = varying or 0 < writers < len(returning)
+        fetches = [
+            operation
+            for block in self.function.blocks
+            for operation in block.operations
+            if isinstance(operation, Load) and operation.origin.address in fetch.instructions
+        ]
+        readers = sum(
+            1 for handler in handlers if self._reads_operand(handler, counter, fetches, header)
+        )
+        return _Instructions(varying_advance=varying, operand_readers=readers)
+
+    def _counter_updates(self, fetch: OpcodeFetch, body: set[int]) -> list[Operand]:
+        """The values the program counter takes on the way around the loop, through phis."""
+        phi_blocks = {
+            phi.output.id: block.id for block in self.function.blocks for phi in block.phis
+        }
+        work: list[Operand] = []
+        if fetch.program_counter_phi is not None:
+            definition = self.definitions.get(fetch.program_counter_phi)
+            if isinstance(definition, Phi):
+                work.extend(value for source, value in definition.incoming if source in body)
+        elif fetch.program_counter_location is not None:
+            work.extend(
+                operation.value
+                for block_id in sorted(body)
+                for operation in self.function.blocks[block_id].operations
+                if isinstance(operation, Store)
+                and self.locations.of(operation.address) == fetch.program_counter_location
+            )
+        updates: list[Operand] = []
+        seen: set[int] = set()
+        while work:
+            value = self._peel(work.pop())
+            if isinstance(value, Const):
+                updates.append(value)
+                continue
+            if value.id in seen:
+                continue
+            seen.add(value.id)
+            definition = self.definitions.get(value.id)
+            if (
+                isinstance(definition, Phi)
+                and value.id != fetch.program_counter_phi
+                and phi_blocks.get(value.id) in body
+            ):
+                work.extend(item for source, item in definition.incoming if source in body)
+            else:
+                updates.append(value)
+        return updates
+
+    def _reads_operand(
+        self, handler: Handler, counter: _Key, fetches: list[Load], header: int
+    ) -> bool:
+        """The handler loads from an address indexed by the program counter, not the opcode's."""
+        if handler.block == header:
+            return False
+        for block_id in self._handler_blocks(handler.block):
+            for operation in self.function.blocks[block_id].operations:
+                if (
+                    isinstance(operation, Load)
+                    and operation not in fetches
+                    and counter in self._index_sources(operation.address)
+                    and not any(
+                        self._same_value(operation.address, fetched.address) for fetched in fetches
+                    )
+                ):
+                    return True
+        return False
+
+    def _same_value(self, left: Operand, right: Operand, depth: int = _SAME_DEPTH) -> bool:
+        """Whether two operands are computed the same way (reloading the same location).
+
+        Widening and truncation are ignored: they do not change how far a counter moves.
+        """
+        left, right = self._peel(left), self._peel(right)
+        if isinstance(left, Const) or isinstance(right, Const):
+            return left == right
+        if left.id == right.id:
+            return True
+        if depth == 0:
+            return False
+        first, second = self.definitions.get(left.id), self.definitions.get(right.id)
+        if isinstance(first, BinaryOp) and isinstance(second, BinaryOp):
+            return (
+                first.opcode is second.opcode
+                and self._same_value(first.left, second.left, depth - 1)
+                and self._same_value(first.right, second.right, depth - 1)
+            )
+        if isinstance(first, UnaryOp) and isinstance(second, UnaryOp):
+            return first.opcode is second.opcode and self._same_value(
+                first.operand, second.operand, depth - 1
+            )
+        if isinstance(first, Subpiece) and isinstance(second, Subpiece):
+            return first.low_bit == second.low_bit and self._same_value(
+                first.operand, second.operand, depth - 1
+            )
+        if isinstance(first, Load) and isinstance(second, Load):
+            return first.output.width == second.output.width and (
+                self.locations.of(first.address) == self.locations.of(second.address)
+                or self._same_value(first.address, second.address, depth - 1)
+            )
+        return False
+
+    def _peel(self, operand: Operand) -> Operand:
+        """`operand` without the extensions and truncations around it."""
+        while isinstance(operand, Var):
+            match self.definitions.get(operand.id):
+                case UnaryOp(
+                    opcode=UnaryOpcode.ZERO_EXTEND | UnaryOpcode.SIGN_EXTEND | UnaryOpcode.TRUNCATE,
+                    operand=inner,
+                ):
+                    operand = inner
+                case Subpiece(low_bit=0, operand=inner):
+                    operand = inner
+                case _:
+                    break
+        return operand
+
     # -- evidence ----------------------------------------------------------------------------
 
     def _evidence(
@@ -600,6 +758,7 @@ class _FunctionDispatchers:
         fetch: OpcodeFetch | None,
         handlers: tuple[Handler, ...],
         header: int | None,
+        instructions: _Instructions,
     ) -> tuple[Evidence, ...]:
         evidence: list[Evidence] = []
         tables = [
@@ -676,6 +835,28 @@ class _FunctionDispatchers:
                     Certainty.PROVEN,
                     f"{returning} of {len(handlers)} handlers return to the dispatch loop "
                     f"at {self.function.blocks[header].address:#x}",
+                )
+            )
+        if instructions.varying_advance:
+            evidence.append(
+                Evidence(
+                    Certainty.INFERRED,
+                    "handlers advance the VM program counter by different amounts",
+                )
+            )
+        if instructions.operand_readers:
+            evidence.append(
+                Evidence(
+                    Certainty.INFERRED,
+                    f"{instructions.operand_readers} handlers read operands from the bytecode",
+                )
+            )
+        if header is not None and not instructions.found:
+            evidence.append(
+                Evidence(
+                    Certainty.HEURISTIC,
+                    "no instruction structure (a program counter advanced differently by "
+                    "handlers, or operands read after the opcode): may be a loop over data",
                 )
             )
         return tuple(evidence)
@@ -818,6 +999,7 @@ def _confidence(
     header: int | None,
     group: set[int],
     function: Function,
+    instructions: _Instructions,
 ) -> float:
     score = 0.2
     returning = sum(1 for handler in handlers if handler.returns_to_dispatcher)
@@ -833,7 +1015,24 @@ def _confidence(
         score += 0.05
     if any(handler.opcodes for handler in handlers):
         score += 0.05
+    if fetch is not None and fetch.bytecode_region is not None:
+        score += 0.05
+    if instructions.found:
+        score += 0.05
+    else:
+        score *= _UNSTRUCTURED
     return round(min(score, 0.99), 2)
+
+
+def _counter_key(fetch: OpcodeFetch | None) -> _Key | None:
+    """The program counter as the index sources of a fetch address name it."""
+    if fetch is None:
+        return None
+    if fetch.program_counter_phi is not None:
+        return ("value", fetch.program_counter_phi)
+    if fetch.program_counter_location is not None:
+        return ("load", fetch.program_counter_location)
+    return None
 
 
 def _region_at(module: Module, address: int) -> MemoryRegion | None:
