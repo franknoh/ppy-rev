@@ -77,30 +77,30 @@ Verification:
 ```
 
 `solve` finds `main`, discovers which inputs the program reads (`argv[k]` by following
-where the argv pointer flows; stdin through `read`, `fgets`, `getchar`, `scanf`), and ranks
-printed strings as likely success or failure outcomes. The goal is the call that prints
-the success string *with that string as its argument*, so branchless selection of the
-message (`cmov`) is handled. Symbolic execution then searches paths with the fewest
+where the argv pointer flows; stdin through `read`, `fgets`, `getchar`, `scanf`), and
+ranks printed strings as likely success or failure outcomes. The goal is the call that
+prints the success string *with that string as its argument*, so branchless selection of
+the message (`cmov`) is handled. Symbolic execution then searches paths with the fewest
 symbolic decisions first, pruning states that can no longer reach the goal and merging
-the paths of loop-free branch regions where they join (inside a loop, paths that leave
-the loop continue on their own). A backward slice from the goal skips work that cannot
-matter: messages printed along the way, and helper functions that only print. Library calls use models of the
-C functions crackmes typically use (`strlen`, `strcmp`, `memcmp`, `read`, `fgets`,
-`scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the ctype tables, `puts`, `printf`,
-`exit`, ...), checked against glibc by differential tests. Where a model approximates,
-the result says so, and an approximation that could hide paths turns `unsat` into
-`analysis incomplete`. Every solution is re-run on the concrete RevIR interpreter before
-it is reported, and the shortest argv string is preferred.
+the paths of loop-free branch regions where they join (inside a loop, paths that leave the
+loop continue on their own). A backward slice from the goal skips work that cannot matter:
+messages printed along the way, and helper functions that only print.
+
+Library calls use models of the C functions crackmes typically use (`strlen`, `strcmp`,
+`memcmp`, `read`, `fgets`, `scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the ctype
+tables, `puts`, `printf`, `exit`, ...), checked against glibc by differential tests. Where
+a model approximates, the result says so, and an approximation that could hide paths
+turns `unsat` into `analysis incomplete`. Every solution is re-run on the concrete RevIR
+interpreter before it is reported, and the shortest argv string is preferred.
 
 Discovery can be overridden: `--argv INDEX` or `--stdin LENGTH`, `--goal-address` or
-`--goal-string`, `--avoid-address`/`--avoid-string`. Constraints are never assumed
-unless given: `--length`, `--max-length` (default 64 for argv; stdin defaults to 256
-bytes), `--prefix`, `--charset {printable,ascii,alnum,alpha,digits,hex}`. Printable
-solutions are preferred but not required. `--solutions N` asks for distinct inputs,
-`--output FILE` writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's
-constraints as SMT-LIB,
-and `-v`/`-vv` show evidence, statistics, and path constraints. Limits: `--timeout`
-seconds and `--max-states`.
+`--goal-string`, `--avoid-address`/`--avoid-string`. Constraints are never assumed unless
+given: `--length`, `--max-length` (default 64 for argv; stdin defaults to 256 bytes),
+`--prefix`, `--charset {printable,ascii,alnum,alpha,digits,hex}`. Printable solutions are
+preferred but not required. `--solutions N` asks for distinct inputs, `--output FILE`
+writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's constraints as
+SMT-LIB, and `-v`/`-vv` show evidence, statistics, and path constraints. Limits:
+`--timeout` seconds and `--max-states`.
 
 When symbolic search ends without an answer (a budget, or a symbolic pointer too wide to
 model), `solve` falls back to concolic search (`--strategy auto`, the default; `symbolic`
@@ -147,6 +147,21 @@ misbehaving in any other state.
 function, then re-verifies every solution on the original interpreter. It accepts the
 same options as `solve`.
 
+### Python API
+
+```python
+from pathlib import Path
+
+from ppy_rev import Analyzer, SolveRequest
+
+result = Analyzer().solve(SolveRequest(binary=Path("chall"), goal_string="Correct!"))
+print(result.status, [solution.argv for solution in result.solutions])
+```
+
+`Analyzer` also provides `info`, `analyze`, `lift`, and `simplify`; the VM tools are in
+`ppy_rev.vm.detect` and `ppy_rev.vm.lift`. Results are typed dataclasses; no Z3 or Ghidra
+objects cross the API.
+
 ## Architecture
 
 ```text
@@ -171,9 +186,9 @@ ELF ─► Ghidra headless ─► versioned JSON export ─► RevIR (SSA) ─�
 - `ppy_rev.symbolic` and `ppy_rev.solver`: symbolic execution of RevIR over
   hash-consed bit-vector expressions, with a narrow solver interface and a Z3
   backend. Pointers that are symbolic over a small range (bounded syntactically or by
-  the path condition) are modeled exactly; wider ones stop exploration with a
-  diagnostic. Division by a symbolic divisor constrains it to be non-zero, since RevIR
-  division faults.
+  the path condition) are modeled exactly; wider ones stop symbolic exploration with a
+  diagnostic (concolic search fixes them to a seed value instead). Division by a symbolic
+  divisor constrains it to be non-zero, since RevIR division faults.
 - `ppy_rev.summaries`: C library models, concrete (for the interpreter) and symbolic,
   tested against each other.
 - `ppy_rev.analysis`: whole-program facts for solving: `main`, input discovery, goal
