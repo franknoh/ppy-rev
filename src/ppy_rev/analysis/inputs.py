@@ -31,7 +31,18 @@ from ppy_rev.ir.model import (
 from ppy_rev.simplify.memory import CanonicalAddress
 
 STDIN_READERS = frozenset(
-    {"read", "fgets", "getchar", "gets", "fread", "getline", "scanf", "__isoc99_scanf", "fgetc"}
+    {
+        "read",
+        "fgets",
+        "getchar",
+        "gets",
+        "fread",
+        "getline",
+        "scanf",
+        "__isoc99_scanf",
+        "fgetc",
+        "std::getline",
+    }
 )
 """Library functions whose use means the program consumes standard input."""
 

@@ -22,7 +22,7 @@ from ppy_rev.execution.program import (
 )
 from ppy_rev.ir.model import Origin
 from ppy_rev.solver.backend import Status
-from ppy_rev.summaries import ctype, glibc_random, scanning
+from ppy_rev.summaries import ctype, cxx, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.evaluate import evaluate
@@ -84,6 +84,13 @@ class SymbolicLibc:
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "strchr": self._strchr,
+            "std::getline": self._getline,
+            "std::string::string": self._string_new,
+            "std::string::~string": self._returns_zero,
+            "std::string::size": self._string_size,
+            "std::string::data": self._string_data,
+            "std::string::empty": self._string_empty,
+            "std::ostream::operator<<": self._ostream_write,
             "read": self._read,
             "fgets": self._fgets,
             "gets": self._gets,
@@ -311,6 +318,124 @@ class SymbolicLibc:
             self._write(call, destination + index, sx.ite(copying, byte, _ZERO_BYTE))
             copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
         return self._returns(call, sx.const(destination, 64))
+
+    # -- the C++ standard library ----------------------------------------------------------
+
+    def _string_new(self, call: _Call) -> list[ExternalOutcome]:
+        """`std::string s;` or `std::string s(text)`: an object holding what it is given."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        source = call.executor.unique_value(call.state, call.arguments[1])
+        bytes_ = self._string_bytes(call, source) if source else []
+        self._store_string(call, call.state, object_at, bytes_)
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _store_string(
+        self,
+        call: _Call,
+        state: State,
+        object_at: int,
+        content: list[Expr],
+        size: Expr | None = None,
+        in_object: bool | None = None,
+    ) -> None:
+        """Write `content` into a `std::string`, laid out as libstdc++ lays it out.
+
+        `size` may be symbolic — a line whose length the input decides — in which case the
+        bytes past it are the terminator, as they are in the real thing. `in_object` says
+        which buffer holds them; by default the one libstdc++ would use for this length.
+        """
+        length = sx.const(len(content), 64) if size is None else size
+        if in_object is None:
+            in_object = len(content) <= cxx.SMALL
+        if in_object:
+            buffer = object_at + cxx.BUFFER
+        else:
+            buffer = self._allocate(call, len(content) + 1)
+            if not buffer:
+                raise _Unsupported("a std::string longer than the heap can hold")
+            self._store(call, state, object_at + cxx.CAPACITY, sx.const(len(content), 64))
+        self._store(call, state, object_at + cxx.DATA, sx.const(buffer, 64))
+        self._store(call, state, object_at + cxx.SIZE, length)
+        for index, byte in enumerate(content):
+            position = sx.const(index, 64)
+            self._write_to(
+                state, buffer + index, sx.ite(sx.unsigned_less(position, length), byte, _ZERO_BYTE)
+            )
+        self._write_to(state, buffer + len(content), _ZERO_BYTE)
+
+    @staticmethod
+    def _store(call: _Call, state: State, address: int, value: Expr) -> None:
+        del call
+        if not state.memory.accessible(address, value.width // 8, write=True):
+            raise _Fault(f"write to unwritable memory at {address:#x}")
+        state.memory.store(address, value)
+
+    @staticmethod
+    def _write_to(state: State, address: int, value: Expr) -> None:
+        if not state.memory.accessible(address, 1, write=True):
+            raise _Fault(f"write to unwritable memory at {address:#x}")
+        state.memory.write_byte(address, value)
+
+    def _string_field(self, call: _Call, offset: int) -> Expr:
+        object_at = self._concrete(call, call.arguments[0], "string")
+        address = object_at + offset
+        if not call.state.memory.accessible(address, 8, write=False):
+            raise _Fault(f"read of unmapped memory at {address:#x}")
+        return call.state.memory.load(address, 64)
+
+    def _string_size(self, call: _Call) -> list[ExternalOutcome]:
+        return self._returns(call, self._string_field(call, cxx.SIZE))
+
+    def _string_data(self, call: _Call) -> list[ExternalOutcome]:
+        return self._returns(call, self._string_field(call, cxx.DATA))
+
+    def _string_empty(self, call: _Call) -> list[ExternalOutcome]:
+        size = self._string_field(call, cxx.SIZE)
+        return self._returns(call, sx.flag(sx.equal(size, sx.const(0, 64)), 64))
+
+    def _ostream_write(self, call: _Call) -> list[ExternalOutcome]:
+        """`out << text`: what it prints matters only as output, so only that is modeled."""
+        stream = call.arguments[0]
+        text = call.executor.unique_value(call.state, call.arguments[1])
+        if text is not None and call.state.memory.accessible(text, 1, write=False):
+            call.state.io.stdout.extend(self._string_bytes(call, text))
+        return self._returns(call, stream)
+
+    def _getline(self, call: _Call) -> list[ExternalOutcome]:
+        """`std::getline(in, s)`: a line without its newline, into a std::string."""
+        object_at = self._concrete(call, call.arguments[1], "string")
+        io = call.state.io
+        taken = list(io.stdin[io.stdin_position :])
+        if not taken:
+            return self._returns(call, call.arguments[0])
+        # The line ends at the first newline; where that is may be up to the input.
+        length = sx.const(len(taken), 64)
+        for index in reversed(range(len(taken))):
+            length = sx.ite(sx.equal(taken[index], _NEWLINE), sx.const(index, 64), length)
+        # libstdc++ keeps a short string in the object and a longer one on the heap, and
+        # optimized code reads the object itself, so which it is has to be decided here.
+        short = sx.unsigned_less_equal(length, sx.const(cxx.SMALL, 64))
+        options = [(short, True), (sx.bool_not(short), False)]
+        if len(taken) <= cxx.SMALL:
+            options = [(sx.TRUE, True)]
+        outcomes: list[ExternalOutcome] = []
+        for state, is_short in _split(call, call.state, options, "a std::string holds 15 bytes"):
+            content = taken[: cxx.SMALL] if is_short else taken
+            self._store_string(call, state, object_at, content, length, in_object=is_short)
+            read_to = state.io.stdin_position + len(content)
+            state.io.stdin_reads.append((state.io.stdin_position, read_to, True))
+            consumed = call.executor.unique_value(state, length)
+            if consumed is None:
+                state.io.stdin = state.io.stdin[: state.io.stdin_position]
+                call.executor.approximate(
+                    state,
+                    "stdin after a symbolic-length getline is treated as empty",
+                    may_hide_paths=True,
+                )
+            else:
+                state.io.stdin_position += consumed + (1 if consumed < len(taken) else 0)
+            outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
+        return outcomes
 
     def _strchr(self, call: _Call) -> list[ExternalOutcome]:
         """`strchr(s, c)`: the first `c` in `s`, NULL if there is none.

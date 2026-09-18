@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ppy_rev.abi import CallingConvention
+from ppy_rev.summaries import cxx
 from ppy_rev.summaries.ctype import CLASSIFIERS
 
 
@@ -61,6 +62,13 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("toupper", 1),
         LibraryFunction("tolower", 1),
         LibraryFunction("strchr", 2),
+        LibraryFunction("std::getline", 2),
+        LibraryFunction("std::ostream::operator<<", 2),
+        LibraryFunction("std::string::string", 2),
+        LibraryFunction("std::string::~string", 1),
+        LibraryFunction("std::string::size", 1),
+        LibraryFunction("std::string::data", 1),
+        LibraryFunction("std::string::empty", 1),
         LibraryFunction("ptrace", 4, variadic=True),
         LibraryFunction("__errno_location", 0),
         LibraryFunction("__ctype_b_loc", 0),
@@ -105,7 +113,7 @@ def modeled_reads(convention: CallingConvention) -> Callable[[str], frozenset[st
 
 def canonical_name(name: str) -> str:
     base = name.split("@", 1)[0]
-    return ALIASES.get(base, base)
+    return ALIASES.get(base) or cxx.canonical(base) or base
 
 
 def library_function(name: str) -> LibraryFunction | None:

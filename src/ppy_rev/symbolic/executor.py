@@ -76,6 +76,8 @@ class StopReason(StrEnum):
     SOLVER_UNKNOWN = "solver-unknown"
 
 
+_NULL_PAGE = 0x1000
+"""Addresses this close to zero are a null pointer, not a wrong one."""
 _ENUMERATED_ADDRESSES = 8
 _CHOSEN_ADDRESSES = 64
 """How many constants a pointer may choose between before the solver is asked instead."""
@@ -715,7 +717,7 @@ class Executor:
             try:
                 return state.memory.load(address.value, width)
             except MemoryFaultError as fault:
-                raise _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}") from fault
+                raise _fault_stop(address.value, fault, origin) from fault
         candidates = self._candidates(state, address, size, False, self.budget.pointer_range)
         if not candidates:
             raise _Stop(StopReason.FAULT, f"symbolic load at {origin.address:#x} faults")
@@ -735,7 +737,7 @@ class Executor:
             try:
                 state.memory.store(address.value, value)
             except MemoryFaultError as fault:
-                raise _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}") from fault
+                raise _fault_stop(address.value, fault, origin) from fault
             return
         candidates = self._candidates(state, address, size, True, self.budget.store_range)
         if not candidates:
@@ -1401,3 +1403,21 @@ def constant_choices(value: Expr, limit: int) -> list[int] | None:
         if len(found) > limit:
             return None
     return sorted(found)
+
+
+def _fault_stop(address: int, fault: MemoryFaultError, origin: Origin) -> _Stop:
+    """A fault, unless it is the null dereference an unmodeled library object leads to.
+
+    A program that really dereferences a null pointer crashes, and a path that crashes
+    reaches nothing. But the same access happens when a library object ppy-rev does not
+    model — `std::cin`, say — is read as zeros, and calling that "no path reaches the
+    goal" would report a gap as a proof.
+    """
+    if address < _NULL_PAGE or address >= (1 << 64) - _NULL_PAGE:
+        return _Stop(
+            StopReason.UNSUPPORTED,
+            "null pointer dereference: a library object with no model, "
+            "or a pointer this analysis lost",
+            DiagnosticCode.UNSUPPORTED_OPERATION,
+        )
+    return _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}")

@@ -46,7 +46,17 @@ _FAILURE = (
     (re.compile(r"\berror\b"), 0.6),
 )
 _OUTPUT_FUNCTIONS = frozenset(
-    {"puts", "printf", "__printf_chk", "fputs", "fwrite", "write", "fprintf", "__fprintf_chk"}
+    {
+        "puts",
+        "printf",
+        "__printf_chk",
+        "fputs",
+        "fwrite",
+        "write",
+        "fprintf",
+        "__fprintf_chk",
+        "std::ostream::operator<<",
+    }
 )
 _PROMPT = re.compile(
     r"^\W*(enter|input|give me|gimme|guess|type|provide|tell me|what|please (enter|input|type|"

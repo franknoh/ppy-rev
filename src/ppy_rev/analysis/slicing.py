@@ -50,7 +50,17 @@ from ppy_rev.ir.model import (
 )
 
 OUTPUT_FUNCTIONS = frozenset(
-    {"puts", "putchar", "printf", "__printf_chk", "fputs", "fflush", "setbuf", "setvbuf"}
+    {
+        "puts",
+        "putchar",
+        "printf",
+        "__printf_chk",
+        "fputs",
+        "fflush",
+        "setbuf",
+        "setvbuf",
+        "std::ostream::operator<<",
+    }
 )
 """Library functions whose only effect is output (formats that write memory are refused)."""
 _FRAME_EXTENT = 1 << 16

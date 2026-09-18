@@ -20,7 +20,7 @@ from ppy_rev.execution.program import (
 )
 from ppy_rev.ir.model import mask
 from ppy_rev.ir.semantics import to_signed
-from ppy_rev.summaries import ctype, scanning
+from ppy_rev.summaries import ctype, cxx, scanning
 from ppy_rev.summaries.formatting import FormatError, format_printf
 from ppy_rev.summaries.glibc_random import UNSEEDED, RandomState, advance, seeded
 from ppy_rev.summaries.libc import canonical_name
@@ -73,6 +73,19 @@ class ConcreteLibc:
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "strchr": self._strchr,
+            "std::getline": self._getline,
+            "std::string::string": self._string_new,
+            "std::string::~string": lambda arguments, memory: 0,
+            "std::string::size": lambda arguments, memory: self._string_field(
+                memory, arguments[0], cxx.SIZE
+            ),
+            "std::string::data": lambda arguments, memory: self._string_field(
+                memory, arguments[0], cxx.DATA
+            ),
+            "std::string::empty": lambda arguments, memory: int(
+                self._string_field(memory, arguments[0], cxx.SIZE) == 0
+            ),
+            "std::ostream::operator<<": self._ostream_write,
             "ptrace": self._ptrace,
             "read": self._read,
             "fgets": self._fgets,
@@ -237,6 +250,46 @@ class ConcreteLibc:
         self.io.stdin_position += len(taken)
         return buffer
 
+    # -- the C++ standard library ----------------------------------------------------------
+
+    @staticmethod
+    def _string_field(memory: ConcreteMemory, object_at: int, offset: int) -> int:
+        return memory.load(object_at + offset, 64)
+
+    def _store_string(self, memory: ConcreteMemory, object_at: int, content: bytes) -> None:
+        if len(content) > cxx.SMALL:
+            buffer = self._allocate(len(content) + 1)
+            if not buffer:
+                raise UnsupportedLibraryCallError("a std::string longer than the heap can hold")
+            memory.store(object_at + cxx.CAPACITY, len(content), 64)
+        else:
+            buffer = object_at + cxx.BUFFER
+        memory.store(object_at + cxx.DATA, buffer, 64)
+        memory.store(object_at + cxx.SIZE, len(content), 64)
+        memory.write(buffer, content + b"\0")
+
+    def _string_new(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        source = arguments[1]
+        content = self._string(memory, source) if source else b""
+        self._store_string(memory, arguments[0], content)
+        return arguments[0]
+
+    def _ostream_write(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        text = arguments[1]
+        if text:
+            self.io.stdout.extend(self._string(memory, text))
+        return arguments[0]
+
+    def _getline(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        remaining = self.io.stdin[self.io.stdin_position :]
+        if not remaining:
+            return arguments[0]
+        newline = remaining.find(b"\n")
+        content = remaining if newline < 0 else remaining[:newline]
+        self._store_string(memory, arguments[1], content)
+        self.io.stdin_position += len(content) + (0 if newline < 0 else 1)
+        return arguments[0]
+
     def _srand(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory
         self.io.random = seeded(arguments[0] & 0xFFFFFFFF)
@@ -374,14 +427,16 @@ class ConcreteLibc:
         del arguments, memory
         raise ProgramExitError(134, "stack smashing detected")
 
+    def _allocate(self, size: int) -> int:
+        address = self.io.heap_next
+        if address + max(1, size) > HEAP_START + HEAP_SIZE:
+            return 0
+        self.io.heap_next = (address + max(1, size) + 31) & ~15
+        return address
+
     def _malloc(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory
-        size = max(1, arguments[0])
-        address = self.io.heap_next
-        if address + size > HEAP_START + HEAP_SIZE:
-            return 0
-        self.io.heap_next = (address + size + 31) & ~15
-        return address
+        return self._allocate(arguments[0])
 
     def _calloc(self, arguments: list[int], memory: ConcreteMemory) -> int:
         size = arguments[0] * arguments[1]

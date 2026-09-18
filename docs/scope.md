@@ -30,6 +30,11 @@ it rather than guessing.
 - **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
   rather than an assumption, so a challenge that only reveals its answer under a debugger is
   solved, and the answer says it needs one.
+- **Simple C++**: a line read with `std::getline` into a `std::string`, compared and printed
+  through `std::cout`, is modeled — `std::string` uses libstdc++'s own layout, so code that
+  reads the object directly agrees with code that calls `size()` and `data()`. This covers
+  C++ compiled without optimization; `-O2` inlines the iostream machinery, which is not
+  modeled and is reported as unsupported rather than guessed.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 
@@ -41,7 +46,7 @@ length, or a goal address).
 
 | Not solved | What you see |
 |---|---|
-| C++ with `std::string`/iostreams | `no likely success output found` — the message never reaches a call the ranker can read; naming the goal by hand only gets to `no model for imported function string` |
+| C++ built with optimization | the inlined iostream internals dereference objects with no model, reported as `unsupported semantics` — unoptimized C++ that calls the library is solved (see above) |
 | Rust | the same: ten in the survey below, none solved |
 | Go | not represented in the survey; its runtime does not reach `main` the way this expects |
 | Input from a file (`fopen`, `fread`) or a socket | `unsupported semantics: no model for imported function fopen`, at the first call |
@@ -65,7 +70,7 @@ thousand variants between them:
 | share | outcome |
 |---|---|
 | 4.5% (81) | an answer (11.7% counting each challenge once) |
-| 80% | no success string could be ranked — 71% of those are C++ iostreams, 20% print nothing recognizable |
+| 80% | no success string could be ranked — 71% of those are C++ iostreams (which today's `std::ostream` model would rank), 20% print nothing recognizable |
 | 6.3% | unsupported semantics — mostly `fopen` (28), signals and timing (15), `time`/`rand` (14) |
 | 3.0% | ran out of budget — 29 to path explosion, 4 to genuinely hard constraint systems |
 | 1.9% | `main` not found |
@@ -80,7 +85,8 @@ aimed at a string that turned out to be a prompt or a usage line rather than a s
 message. Today's goal ranking rejects prompts and negations, so that last group is smaller
 now, but the honest figure to quote from this survey is **55 of 1,796**. All 55 are plain C;
 there is not one C++, Go, or Rust solve, and not one where the input came from a file or a
-socket.
+socket. That survey predates the `std::string` and `std::ostream` models, so its C++ figure
+is a floor, not a ceiling.
 
 Time, wall clock including Ghidra: median 14 s, 90th percentile 37 s, longest 170 s. The
 tool's own analysis is a fraction of that — median 0.8 s — so most of a short solve is
