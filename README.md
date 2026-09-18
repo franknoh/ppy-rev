@@ -181,10 +181,11 @@ writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's constrain
 SMT-LIB, and `-v`/`-vv` show evidence, statistics, and path constraints. Limits:
 `--timeout` (seconds), `--max-states`, `--max-steps`, `--max-call-depth`,
 `--max-loop-iterations`, and `--solver-timeout`; running out of one is reported as such.
-A long run does not go quiet: after ten seconds it writes a line to stderr every few
+A long run does not go quiet. After ten seconds it writes a line to stderr every few
 seconds — the phase, paths waiting, operations, solver calls, blocks reached, and how much
-of the time went into the solver — and Ghidra says while it is still analyzing. That is on when stderr is a terminal; `--progress` and
-`--no-progress` decide it explicitly, and nothing on stdout changes either way.
+of that time went into the solver — and Ghidra reports while it is still analyzing. This is
+on when stderr is a terminal; `--progress` and `--no-progress` decide it explicitly, and
+nothing on stdout changes either way.
 
 When symbolic search ends without an answer (a budget, or a symbolic pointer too wide to
 model), `solve` falls back to concolic search (`--strategy auto`, the default; `symbolic`
