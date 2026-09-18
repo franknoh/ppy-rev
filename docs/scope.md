@@ -18,8 +18,10 @@ it rather than guessing.
 - **Arithmetic, xor, table lookups, ctype, `strlen`/`strcmp`/`memcmp`, `atoi`/`strtol`,
   `rand`/`srand`** (glibc's generator is modeled exactly), and the printing functions.
 - **Floating point**: `float` and `double` arithmetic, comparisons and conversions go to
-  the solver as IEEE-754, so a check like `(double)n * 1.5 + 0.25 > 63.0` is solved rather
+  the solver as IEEE-754, so a check like `(double)c * 1.5 + 0.25 > 63.0` is solved rather
   than refused. Emitting such a program as PPy is still refused, since PPy stays integral.
+  Floating point over a number parsed from text (`atoi` and then arithmetic on the result)
+  is where the solver struggles: those queries can exceed `--solver-timeout`.
 - **Loops and per-character checks**, including ones with several hundred constraints:
   [csaw_beleaf](../examples/csaw_beleaf/README.md) takes about three minutes,
   [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.

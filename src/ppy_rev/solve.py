@@ -21,7 +21,7 @@ from ppy_rev.analysis.program import (
     string_references,
 )
 from ppy_rev.analysis.reachability import GoalReachability
-from ppy_rev.analysis.slicing import backward_slice
+from ppy_rev.analysis.slicing import OUTPUT_FUNCTIONS, backward_slice
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
@@ -409,6 +409,7 @@ def _select_goals(
         if not successes:
             raise PpyRevError(
                 "no likely success output found; pass --goal-address or --goal-string"
+                + _printed_here(module, reachable)
             )
         goal = successes[0]
     avoid = [
@@ -421,6 +422,22 @@ def _select_goals(
     if request.goal_address is None and request.goal_string is None and not avoid:
         avoid = [candidate for candidate in ranked if candidate.outcome is Outcome.FAILURE]
     return goal, [candidate for candidate in avoid if candidate.address != goal.address]
+
+
+def _printed_here(module: Module, reachable: list[Function], limit: int = 12) -> str:
+    """The messages the program prints, so a goal can be named without disassembling it."""
+    seen: dict[bytes, int] = {}
+    for reference in string_references(module, reachable):
+        if reference.call in OUTPUT_FUNCTIONS and reference.text not in seen:
+            seen[reference.text] = reference.instruction
+    if not seen:
+        return ""
+    lines = [
+        f"  {address:#x}  {text.decode('latin-1')!r}"
+        for text, address in sorted(seen.items(), key=lambda item: item[1])[:limit]
+    ]
+    more = "" if len(seen) <= limit else f"\n  ... and {len(seen) - limit} more"
+    return "\nthe program prints:\n" + "\n".join(lines) + more
 
 
 def _by_string(

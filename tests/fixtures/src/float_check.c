@@ -1,14 +1,14 @@
 #include <stdio.h>
-#include <stdlib.h>
+#include <string.h>
 
-/* Floating point in the check itself: int to double, arithmetic, and comparisons. */
+/* Floating point in the check itself: byte to double, arithmetic, comparisons, and a
+   truncation back to an integer. One byte of input keeps the solving cheap. */
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        puts("usage: float_check <number>");
+    if (argc != 2 || strlen(argv[1]) != 1) {
+        puts("usage: float_check <character>");
         return 2;
     }
-    double value = (double)atoi(argv[1]);
-    double scaled = value * 1.5 + 0.25;
+    double scaled = (double)(unsigned char)argv[1][0] * 1.5 + 0.25;
     if (scaled > 63.0 && scaled < 64.0 && (int)scaled == 63) {
         puts("Correct!");
         return 0;

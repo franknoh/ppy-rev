@@ -45,7 +45,7 @@ SHORTEST = {
     "format_goal": b"0pen",
     "xor_check": b"rev_is_easy",
     "atoi_check": b"12345",
-    "float_check": b"42",
+    "float_check": b"*",
     "recursive_check": b"recursive",
     "vm_check": b"Vm_0k!",
     "simple_vm": b"vM_l1ft!",
