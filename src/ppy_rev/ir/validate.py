@@ -12,8 +12,11 @@ from ppy_rev.ir.cfg import ControlFlow, control_flow
 from ppy_rev.ir.model import (
     BOOLEAN_OPCODES,
     COMPARISON_OPCODES,
+    FLOAT_BINARY_OPCODES,
+    FLOAT_WIDTHS,
     SHIFT_OPCODES,
     BinaryOp,
+    BinaryOpcode,
     Call,
     Const,
     Function,
@@ -37,6 +40,16 @@ from ppy_rev.ir.model import (
 
 type Definition = tuple[int, int]
 """(block id, position); inputs use block -1. Phis sit at position -1 of their block."""
+
+
+_FLOAT_COMPARISONS = frozenset(
+    {
+        BinaryOpcode.FLOAT_EQUAL,
+        BinaryOpcode.FLOAT_NOT_EQUAL,
+        BinaryOpcode.FLOAT_LESS,
+        BinaryOpcode.FLOAT_LESS_EQUAL,
+    }
+)
 
 
 def validate_module(module: Module) -> list[str]:
@@ -158,6 +171,15 @@ def _widths(operation: Operation, registers: dict[str, int], pointer_width: int)
             if opcode in SHIFT_OPCODES:
                 if output.width != left.width:
                     problems.append(f"{opcode} output width differs from its operand")
+            elif opcode in FLOAT_BINARY_OPCODES:
+                floats = {left.width, right.width}
+                if len(floats) != 1 or not floats <= FLOAT_WIDTHS:
+                    problems.append(f"{opcode} operands are {left.width}/{right.width} bits")
+                elif opcode in _FLOAT_COMPARISONS:
+                    if output.width != 8:
+                        problems.append(f"{opcode} result is {output.width} bits, not a byte")
+                elif output.width != left.width:
+                    problems.append(f"{opcode} must preserve width")
             elif opcode in COMPARISON_OPCODES:
                 if left.width != right.width or output.width != 8:
                     problems.append(f"{opcode} widths {left.width}/{right.width}->{output.width}")
@@ -182,6 +204,28 @@ def _widths(operation: Operation, registers: dict[str, int], pointer_width: int)
                 case UnaryOpcode.COPY | UnaryOpcode.BITWISE_NOT | UnaryOpcode.TWOS_COMPLEMENT:
                     if output.width != operand.width:
                         problems.append(f"{opcode} must preserve width")
+                case UnaryOpcode.FLOAT_IS_NAN:
+                    if operand.width not in FLOAT_WIDTHS or output.width != 8:
+                        problems.append(f"{opcode} reads a float and answers in a byte")
+                case UnaryOpcode.FLOAT_FROM_SIGNED:
+                    if output.width not in FLOAT_WIDTHS:
+                        problems.append(f"{opcode} result is {output.width} bits")
+                case UnaryOpcode.FLOAT_TO_SIGNED:
+                    if operand.width not in FLOAT_WIDTHS:
+                        problems.append(f"{opcode} operand is {operand.width} bits")
+                case UnaryOpcode.FLOAT_TO_FLOAT:
+                    if {operand.width, output.width} - FLOAT_WIDTHS:
+                        problems.append(f"{opcode} widths {operand.width}->{output.width}")
+                case (
+                    UnaryOpcode.FLOAT_NEGATE
+                    | UnaryOpcode.FLOAT_ABSOLUTE
+                    | UnaryOpcode.FLOAT_SQUARE_ROOT
+                    | UnaryOpcode.FLOAT_CEILING
+                    | UnaryOpcode.FLOAT_FLOOR
+                    | UnaryOpcode.FLOAT_ROUND
+                ):
+                    if operand.width not in FLOAT_WIDTHS or output.width != operand.width:
+                        problems.append(f"{opcode} must preserve a modeled float width")
         case Subpiece(output=output, operand=operand, low_bit=low_bit):
             if low_bit < 0 or low_bit + output.width > operand.width:
                 problems.append(

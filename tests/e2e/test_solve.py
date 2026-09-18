@@ -38,12 +38,14 @@ SUCCESS = {
     "vm_check": b"Granted",
     "simple_vm": b"Accepted",
     "format_goal": b"Welcome back, 0pen!",
+    "float_check": b"Correct!",
 }
 STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
 SHORTEST = {
     "format_goal": b"0pen",
     "xor_check": b"rev_is_easy",
     "atoi_check": b"12345",
+    "float_check": b"42",
     "recursive_check": b"recursive",
     "vm_check": b"Vm_0k!",
     "simple_vm": b"vM_l1ft!",

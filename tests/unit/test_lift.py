@@ -234,7 +234,10 @@ def test_unmodeled_operations_are_explicit() -> None:
     after = program.code(
         0x1000,
         [
-            op("FLOAT_ADD", [reg("RAX"), reg("RCX")], reg("RDX")),
+            # x87's 80-bit format has no model; binary32 and binary64 do.
+            op("COPY", [const(0, 10)], tmp(0, 10)),
+            op("COPY", [const(0, 10)], tmp(16, 10)),
+            op("FLOAT_ADD", [tmp(0, 10), tmp(16, 10)], tmp(32, 10)),
             op("CALLOTHER", [const(5, 4), reg("RAX")], reg("RCX"), user_op="syscall"),
             op("LOAD", [reg("RAX")], reg("RDX"), memory_space="register"),
         ],
@@ -243,9 +246,9 @@ def test_unmodeled_operations_are_explicit() -> None:
     program.function("f", 0x1000)
     result = _lift(program)
     operations = _function(result.module, "f").blocks[0].operations
-    assert isinstance(operations[0], Unsupported) and operations[0].pcode_opcode == "FLOAT_ADD"
-    assert isinstance(operations[1], UserOp) and operations[1].name == "syscall"
-    assert isinstance(operations[2], Unsupported) and operations[2].pcode_opcode == "LOAD"
+    unsupported = [item for item in operations if isinstance(item, Unsupported)]
+    assert [item.pcode_opcode for item in unsupported] == ["FLOAT_ADD", "LOAD"]
+    assert any(isinstance(item, UserOp) and item.name == "syscall" for item in operations)
     codes = [(d.code, d.severity) for d in result.diagnostics]
     assert codes == [
         (DiagnosticCode.UNSUPPORTED_FLOAT_OPERATION, Severity.ERROR),

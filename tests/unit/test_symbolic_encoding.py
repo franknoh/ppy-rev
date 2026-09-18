@@ -9,7 +9,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from ppy_rev.ir import semantics
-from ppy_rev.ir.model import DIVISION_OPCODES, BinaryOpcode, UnaryOpcode, mask
+from ppy_rev.ir.model import (
+    DIVISION_OPCODES,
+    FLOAT_BINARY_OPCODES,
+    FLOAT_UNARY_OPCODES,
+    BinaryOpcode,
+    UnaryOpcode,
+    mask,
+)
 from ppy_rev.solver.backend import Status
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.symbolic import encode
@@ -20,7 +27,9 @@ BINARY = [
     opcode
     for opcode in BinaryOpcode
     if opcode not in (BinaryOpcode.POINTER_ADD, BinaryOpcode.POINTER_SUB)
+    and opcode not in FLOAT_BINARY_OPCODES
 ]
+"""The integer operations, at every width; the float ones live in `test_float.py`."""
 COMPARISONS = {
     BinaryOpcode.EQUAL,
     BinaryOpcode.NOT_EQUAL,
@@ -82,7 +91,9 @@ def test_binary_encoding_matches_semantics(
 
 @st.composite
 def unary_cases(draw: st.DrawFn) -> tuple[UnaryOpcode, int, int, int]:
-    opcode = draw(st.sampled_from(list(UnaryOpcode)))
+    opcode = draw(
+        st.sampled_from([item for item in UnaryOpcode if item not in FLOAT_UNARY_OPCODES])
+    )
     width = draw(st.sampled_from([8, 16, 32, 64]))
     value = draw(_values(width))
     match opcode:

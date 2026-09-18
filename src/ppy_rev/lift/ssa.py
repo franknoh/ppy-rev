@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from ppy_rev.diagnostics import Diagnostic, DiagnosticCode, Location, Severity
 from ppy_rev.ghidra.schema import Instruction, PcodeOp, Varnode
 from ppy_rev.ir.model import (
+    FLOAT_WIDTHS,
     BinaryOp,
     BinaryOpcode,
     Block,
@@ -106,6 +107,44 @@ UNARY_OPCODES: dict[str, UnaryOpcode] = {
     "POPCOUNT": UnaryOpcode.POPCOUNT,
     "LZCOUNT": UnaryOpcode.COUNT_LEADING_ZEROS,
 }
+
+FLOAT_BINARY: dict[str, BinaryOpcode] = {
+    "FLOAT_ADD": BinaryOpcode.FLOAT_ADD,
+    "FLOAT_SUB": BinaryOpcode.FLOAT_SUB,
+    "FLOAT_MULT": BinaryOpcode.FLOAT_MUL,
+    "FLOAT_DIV": BinaryOpcode.FLOAT_DIV,
+    "FLOAT_EQUAL": BinaryOpcode.FLOAT_EQUAL,
+    "FLOAT_NOTEQUAL": BinaryOpcode.FLOAT_NOT_EQUAL,
+    "FLOAT_LESS": BinaryOpcode.FLOAT_LESS,
+    "FLOAT_LESSEQUAL": BinaryOpcode.FLOAT_LESS_EQUAL,
+}
+
+FLOAT_UNARY: dict[str, UnaryOpcode] = {
+    "FLOAT_NEG": UnaryOpcode.FLOAT_NEGATE,
+    "FLOAT_ABS": UnaryOpcode.FLOAT_ABSOLUTE,
+    "FLOAT_SQRT": UnaryOpcode.FLOAT_SQUARE_ROOT,
+    "FLOAT_NAN": UnaryOpcode.FLOAT_IS_NAN,
+    "CEIL": UnaryOpcode.FLOAT_CEILING,
+    "FLOOR": UnaryOpcode.FLOAT_FLOOR,
+    "ROUND": UnaryOpcode.FLOAT_ROUND,
+    "INT2FLOAT": UnaryOpcode.FLOAT_FROM_SIGNED,
+    "FLOAT2FLOAT": UnaryOpcode.FLOAT_TO_FLOAT,
+    "TRUNC": UnaryOpcode.FLOAT_TO_SIGNED,
+}
+
+_FLOAT_OPERANDS: dict[str, tuple[bool, bool]] = {
+    "FLOAT_NEG": (True, True),
+    "FLOAT_ABS": (True, True),
+    "FLOAT_SQRT": (True, True),
+    "FLOAT_NAN": (True, False),
+    "CEIL": (True, True),
+    "FLOOR": (True, True),
+    "ROUND": (True, True),
+    "INT2FLOAT": (False, True),
+    "FLOAT2FLOAT": (True, True),
+    "TRUNC": (True, False),
+}
+"""Whether each float p-code operation's input and output are IEEE-754 numbers."""
 
 FLOAT_PREFIX = "FLOAT_"
 
@@ -446,6 +485,17 @@ class FunctionBuilder:
         inputs = op.inputs
         if opcode == "COPY":
             self._write_output(block, op, self.read_varnode(block, inputs[0], origin), origin)
+        elif opcode in FLOAT_BINARY and self._float_widths(op, True, False):
+            left = self.read_varnode(block, inputs[0], origin)
+            right = self.read_varnode(block, inputs[1], origin)
+            output = self._output_var(op)
+            self._emit(block, BinaryOp(FLOAT_BINARY[opcode], output, left, right, origin))
+            self._write_output(block, op, output, origin)
+        elif opcode in FLOAT_UNARY and self._float_widths(op, *_FLOAT_OPERANDS[opcode]):
+            operand = self.read_varnode(block, inputs[0], origin)
+            output = self._output_var(op)
+            self._emit(block, UnaryOp(FLOAT_UNARY[opcode], output, operand, origin))
+            self._write_output(block, op, output, origin)
         elif opcode in BINARY_OPCODES:
             left = self.read_varnode(block, inputs[0], origin)
             right = self.read_varnode(block, inputs[1], origin)
@@ -491,6 +541,13 @@ class FunctionBuilder:
                 self._write_output(block, op, output, origin)
         else:
             self._unsupported(block, op, origin)
+
+    def _float_widths(self, op: PcodeOp, inputs: bool, output: bool) -> bool:
+        """Whether the formats this operation works in are ones RevIR models."""
+        sizes = [item.size * 8 for item in op.inputs] if inputs else []
+        if output and op.output is not None:
+            sizes.append(op.output.size * 8)
+        return all(size in FLOAT_WIDTHS for size in sizes)
 
     def _output_var(self, op: PcodeOp) -> Var:
         if op.output is None:

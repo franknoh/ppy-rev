@@ -17,6 +17,9 @@ it rather than guessing.
   length is discovered, not assumed; the shortest answer that works is preferred.
 - **Arithmetic, xor, table lookups, ctype, `strlen`/`strcmp`/`memcmp`, `atoi`/`strtol`,
   `rand`/`srand`** (glibc's generator is modeled exactly), and the printing functions.
+- **Floating point**: `float` and `double` arithmetic, comparisons and conversions go to
+  the solver as IEEE-754, so a check like `(double)n * 1.5 + 0.25 > 63.0` is solved rather
+  than refused. Emitting such a program as PPy is still refused, since PPy stays integral.
 - **Loops and per-character checks**, including ones with several hundred constraints:
   [csaw_beleaf](../examples/csaw_beleaf/README.md) takes about three minutes,
   [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
@@ -39,7 +42,7 @@ length, or a goal address).
 | Input from a file (`fopen`, `fread`) or a socket | `unsupported semantics: no model for imported function fopen`, at the first call |
 | `sleep`/`signal`/`alarm`/`setjmp`, `time`-dependent behaviour | `unsupported semantics`; nondeterminism is not modeled |
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |
-| Floating point | lifted as explicit unsupported operations, never approximated |
+| x87 80-bit long double | `unsupported semantics`; binary32 and binary64 are modeled exactly |
 | Programs that only print (no check) | `no likely success output found`: there is no input to recover |
 | Anti-debug or environment checks *before* `main` | reported as `runs before main`, and not modeled — see [crewctf_ez_rev](../examples/crewctf_ez_rev/README.md) |
 

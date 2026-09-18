@@ -9,8 +9,32 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ppy_rev.ir import semantics
-from ppy_rev.ir.model import BinaryOpcode, mask
-from ppy_rev.symbolic.expr import Expr, Op, walk
+from ppy_rev.ir.model import BinaryOpcode, UnaryOpcode, mask
+from ppy_rev.symbolic.expr import Expr, Op, Rounding, walk
+
+_FLOAT_BINARY = {
+    Op.FLOAT_ADD: BinaryOpcode.FLOAT_ADD,
+    Op.FLOAT_SUB: BinaryOpcode.FLOAT_SUB,
+    Op.FLOAT_MUL: BinaryOpcode.FLOAT_MUL,
+    Op.FLOAT_DIV: BinaryOpcode.FLOAT_DIV,
+    Op.FLOAT_EQ: BinaryOpcode.FLOAT_EQUAL,
+    Op.FLOAT_LT: BinaryOpcode.FLOAT_LESS,
+    Op.FLOAT_LE: BinaryOpcode.FLOAT_LESS_EQUAL,
+}
+_FLOAT_UNARY = {
+    Op.FLOAT_NEG: UnaryOpcode.FLOAT_NEGATE,
+    Op.FLOAT_ABS: UnaryOpcode.FLOAT_ABSOLUTE,
+    Op.FLOAT_SQRT: UnaryOpcode.FLOAT_SQUARE_ROOT,
+    Op.FLOAT_IS_NAN: UnaryOpcode.FLOAT_IS_NAN,
+    Op.FLOAT_FROM_SIGNED: UnaryOpcode.FLOAT_FROM_SIGNED,
+    Op.FLOAT_TO_FLOAT: UnaryOpcode.FLOAT_TO_FLOAT,
+    Op.FLOAT_TO_SIGNED: UnaryOpcode.FLOAT_TO_SIGNED,
+}
+_INTEGRAL = {
+    Rounding.CEILING: UnaryOpcode.FLOAT_CEILING,
+    Rounding.FLOOR: UnaryOpcode.FLOAT_FLOOR,
+    Rounding.NEAREST: UnaryOpcode.FLOAT_ROUND,
+}
 
 
 class UnassignedSymbolError(KeyError):
@@ -105,3 +129,27 @@ def _evaluate_node(node: Expr, args: list[int], assignment: Mapping[str, int]) -
             return 1 - args[0]
         case Op.BOOL_XOR:
             return args[0] ^ args[1]
+        case (
+            Op.FLOAT_ADD
+            | Op.FLOAT_SUB
+            | Op.FLOAT_MUL
+            | Op.FLOAT_DIV
+            | Op.FLOAT_EQ
+            | Op.FLOAT_LT
+            | Op.FLOAT_LE
+        ):
+            operand_width = node.args[0].width
+            return semantics.binary(_FLOAT_BINARY[node.op], args[0], args[1], operand_width)
+        case Op.FLOAT_INTEGRAL:
+            rounding = _INTEGRAL[Rounding(node.value)]
+            return semantics.unary(rounding, args[0], node.args[0].width, width)
+        case (
+            Op.FLOAT_NEG
+            | Op.FLOAT_ABS
+            | Op.FLOAT_SQRT
+            | Op.FLOAT_IS_NAN
+            | Op.FLOAT_FROM_SIGNED
+            | Op.FLOAT_TO_FLOAT
+            | Op.FLOAT_TO_SIGNED
+        ):
+            return semantics.unary(_FLOAT_UNARY[node.op], args[0], node.args[0].width, width)

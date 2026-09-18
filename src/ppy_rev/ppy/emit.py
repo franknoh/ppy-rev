@@ -37,6 +37,8 @@ from ppy_rev.execution.program import (
     LIBC_DATA_START,
 )
 from ppy_rev.ir.model import (
+    FLOAT_BINARY_OPCODES,
+    FLOAT_UNARY_OPCODES,
     BinaryOp,
     BinaryOpcode,
     Block,
@@ -476,6 +478,10 @@ class _FunctionEmitter:
 
     def operation(self, operation: Operation) -> list[str]:
         match operation:
+            case BinaryOp(opcode=opcode) if opcode in FLOAT_BINARY_OPCODES:
+                return [f"raise NotImplementedError({self._float_message(operation)!r})"]
+            case UnaryOp(opcode=opcode) if opcode in FLOAT_UNARY_OPCODES:
+                return [f"raise NotImplementedError({self._float_message(operation)!r})"]
             case BinaryOp():
                 return [f"{self.target(operation.output)} = {self.binary(operation)}"]
             case UnaryOp():
@@ -508,11 +514,30 @@ class _FunctionEmitter:
             return f"m.memory.load_{_FIXED_WIDTHS[width]}({self.operand(address)})"
         return f"m.memory.load({self.operand(address)}, {width // 8})"
 
+    @staticmethod
+    def _float_message(operation: BinaryOp | UnaryOp) -> str:
+        """PPy emission stays integer-only; solving models these, running the PPy does not."""
+        return (
+            f"{operation.opcode} at {operation.origin.address:#x}: "
+            "PPy emission does not model floating point"
+        )
+
     def binary(self, op: BinaryOp) -> str:
         left, right = self.operand(op.left), self.operand(op.right)
         width = op.left.width
         m = _mask(width)
         match op.opcode:
+            case (
+                BinaryOpcode.FLOAT_ADD
+                | BinaryOpcode.FLOAT_SUB
+                | BinaryOpcode.FLOAT_MUL
+                | BinaryOpcode.FLOAT_DIV
+                | BinaryOpcode.FLOAT_EQUAL
+                | BinaryOpcode.FLOAT_NOT_EQUAL
+                | BinaryOpcode.FLOAT_LESS
+                | BinaryOpcode.FLOAT_LESS_EQUAL
+            ):
+                raise AssertionError(f"{op.opcode} is refused before it reaches here")
             case BinaryOpcode.ADD | BinaryOpcode.POINTER_ADD:
                 if isinstance(op.right, Const) and op.right.value > mask(width) - 0x10000:
                     # Adding a small negative constant reads better as a subtraction.
@@ -566,6 +591,19 @@ class _FunctionEmitter:
         value = self.operand(op.operand)
         source, width = op.operand.width, op.output.width
         match op.opcode:
+            case (
+                UnaryOpcode.FLOAT_NEGATE
+                | UnaryOpcode.FLOAT_ABSOLUTE
+                | UnaryOpcode.FLOAT_SQUARE_ROOT
+                | UnaryOpcode.FLOAT_IS_NAN
+                | UnaryOpcode.FLOAT_CEILING
+                | UnaryOpcode.FLOAT_FLOOR
+                | UnaryOpcode.FLOAT_ROUND
+                | UnaryOpcode.FLOAT_FROM_SIGNED
+                | UnaryOpcode.FLOAT_TO_FLOAT
+                | UnaryOpcode.FLOAT_TO_SIGNED
+            ):
+                raise AssertionError(f"{op.opcode} is refused before it reaches here")
             case UnaryOpcode.COPY | UnaryOpcode.ZERO_EXTEND:
                 return value
             case UnaryOpcode.BITWISE_NOT:

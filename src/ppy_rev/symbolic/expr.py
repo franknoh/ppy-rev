@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import weakref
 from collections.abc import Iterator
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 from ppy_rev.ir import semantics
-from ppy_rev.ir.model import BinaryOpcode, mask
+from ppy_rev.ir.model import FLOAT_WIDTHS, BinaryOpcode, UnaryOpcode, mask
 
 BOOL = 0
 
@@ -55,6 +55,29 @@ class Op(StrEnum):
     BOOL_OR = "or"
     BOOL_NOT = "not"
     BOOL_XOR = "xor"
+    FLOAT_ADD = "fp.add"
+    FLOAT_SUB = "fp.sub"
+    FLOAT_MUL = "fp.mul"
+    FLOAT_DIV = "fp.div"
+    FLOAT_NEG = "fp.neg"
+    FLOAT_ABS = "fp.abs"
+    FLOAT_SQRT = "fp.sqrt"
+    FLOAT_INTEGRAL = "fp.roundToIntegral"
+    FLOAT_EQ = "fp.eq"
+    FLOAT_LT = "fp.lt"
+    FLOAT_LE = "fp.leq"
+    FLOAT_IS_NAN = "fp.isNaN"
+    FLOAT_FROM_SIGNED = "fp.from_sbv"
+    FLOAT_TO_FLOAT = "fp.to_fp"
+    FLOAT_TO_SIGNED = "fp.to_sbv"
+
+
+class Rounding(IntEnum):
+    """How `fp.roundToIntegral` rounds, matching p-code's CEIL, FLOOR and ROUND."""
+
+    CEILING = 0
+    FLOOR = 1
+    NEAREST = 2
 
 
 type _Key = tuple[Op, int, tuple[Expr, ...], int, str]
@@ -683,3 +706,136 @@ def _render(node: Expr, budget: int) -> str:
                 _render(child, budget // max(1, len(node.args))) for child in node.args
             )
             return f"{node.op}({inner})"
+
+
+# -- floating point ----------------------------------------------------------------------
+#
+# IEEE-754 numbers travel as their bit patterns, so registers, memory and every other part
+# of the system stay bit vectors; only these operations read them as numbers.
+
+
+def _float_width(*operands: Expr) -> int:
+    width = _same_width(*operands)
+    if width not in FLOAT_WIDTHS:
+        raise ValueError(f"{width}-bit floating point is not modeled")
+    return width
+
+
+def _fold_binary(opcode: BinaryOpcode, left: Expr, right: Expr, width: int) -> Expr | None:
+    if not (left.is_const and right.is_const):
+        return None
+    value = semantics.binary(opcode, left.value, right.value, left.width)
+    return boolean(bool(value)) if width == BOOL else const(value, width)
+
+
+def _fold_unary(opcode: UnaryOpcode, operand: Expr, width: int) -> Expr | None:
+    if not operand.is_const:
+        return None
+    value = semantics.unary(opcode, operand.value, operand.width, max(width, 1))
+    return boolean(bool(value)) if width == BOOL else const(value, width)
+
+
+def float_add(left: Expr, right: Expr) -> Expr:
+    width = _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_ADD, left, right, width)
+    return folded if folded is not None else _make(Op.FLOAT_ADD, width, (left, right))
+
+
+def float_sub(left: Expr, right: Expr) -> Expr:
+    width = _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_SUB, left, right, width)
+    return folded if folded is not None else _make(Op.FLOAT_SUB, width, (left, right))
+
+
+def float_mul(left: Expr, right: Expr) -> Expr:
+    width = _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_MUL, left, right, width)
+    return folded if folded is not None else _make(Op.FLOAT_MUL, width, (left, right))
+
+
+def float_div(left: Expr, right: Expr) -> Expr:
+    width = _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_DIV, left, right, width)
+    return folded if folded is not None else _make(Op.FLOAT_DIV, width, (left, right))
+
+
+def float_negate(operand: Expr) -> Expr:
+    width = _float_width(operand)
+    folded = _fold_unary(UnaryOpcode.FLOAT_NEGATE, operand, width)
+    return folded if folded is not None else _make(Op.FLOAT_NEG, width, (operand,))
+
+
+def float_absolute(operand: Expr) -> Expr:
+    width = _float_width(operand)
+    folded = _fold_unary(UnaryOpcode.FLOAT_ABSOLUTE, operand, width)
+    return folded if folded is not None else _make(Op.FLOAT_ABS, width, (operand,))
+
+
+def float_square_root(operand: Expr) -> Expr:
+    width = _float_width(operand)
+    folded = _fold_unary(UnaryOpcode.FLOAT_SQUARE_ROOT, operand, width)
+    return folded if folded is not None else _make(Op.FLOAT_SQRT, width, (operand,))
+
+
+_INTEGRAL_OPCODES = {
+    Rounding.CEILING: UnaryOpcode.FLOAT_CEILING,
+    Rounding.FLOOR: UnaryOpcode.FLOAT_FLOOR,
+    Rounding.NEAREST: UnaryOpcode.FLOAT_ROUND,
+}
+
+
+def float_integral(operand: Expr, rounding: Rounding) -> Expr:
+    width = _float_width(operand)
+    folded = _fold_unary(_INTEGRAL_OPCODES[rounding], operand, width)
+    if folded is not None:
+        return folded
+    return _make(Op.FLOAT_INTEGRAL, width, (operand,), value=int(rounding))
+
+
+def float_equal(left: Expr, right: Expr) -> Expr:
+    _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_EQUAL, left, right, BOOL)
+    return folded if folded is not None else _make(Op.FLOAT_EQ, BOOL, (left, right))
+
+
+def float_less(left: Expr, right: Expr) -> Expr:
+    _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_LESS, left, right, BOOL)
+    return folded if folded is not None else _make(Op.FLOAT_LT, BOOL, (left, right))
+
+
+def float_less_equal(left: Expr, right: Expr) -> Expr:
+    _float_width(left, right)
+    folded = _fold_binary(BinaryOpcode.FLOAT_LESS_EQUAL, left, right, BOOL)
+    return folded if folded is not None else _make(Op.FLOAT_LE, BOOL, (left, right))
+
+
+def float_is_nan(operand: Expr) -> Expr:
+    _float_width(operand)
+    folded = _fold_unary(UnaryOpcode.FLOAT_IS_NAN, operand, BOOL)
+    return folded if folded is not None else _make(Op.FLOAT_IS_NAN, BOOL, (operand,))
+
+
+def float_from_signed(operand: Expr, width: int) -> Expr:
+    """A signed integer as an IEEE-754 number of `width` bits."""
+    if width not in FLOAT_WIDTHS:
+        raise ValueError(f"{width}-bit floating point is not modeled")
+    folded = _fold_unary(UnaryOpcode.FLOAT_FROM_SIGNED, operand, width)
+    return folded if folded is not None else _make(Op.FLOAT_FROM_SIGNED, width, (operand,))
+
+
+def float_to_float(operand: Expr, width: int) -> Expr:
+    _float_width(operand)
+    if width not in FLOAT_WIDTHS:
+        raise ValueError(f"{width}-bit floating point is not modeled")
+    if width == operand.width:
+        return operand
+    folded = _fold_unary(UnaryOpcode.FLOAT_TO_FLOAT, operand, width)
+    return folded if folded is not None else _make(Op.FLOAT_TO_FLOAT, width, (operand,))
+
+
+def float_to_signed(operand: Expr, width: int) -> Expr:
+    """An IEEE-754 number truncated toward zero into a `width`-bit signed integer."""
+    _float_width(operand)
+    folded = _fold_unary(UnaryOpcode.FLOAT_TO_SIGNED, operand, width)
+    return folded if folded is not None else _make(Op.FLOAT_TO_SIGNED, width, (operand,))

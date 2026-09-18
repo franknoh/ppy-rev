@@ -7,9 +7,9 @@ over Z3.
 
 ## Supported targets
 
-Linux ELF, x86-64, little-endian. Floating-point p-code and processor-specific
-user operations are lifted as explicit unsupported operations rather than
-approximated. [What it can and cannot solve](docs/scope.md) describes the kinds of
+Linux ELF, x86-64, little-endian. 32- and 64-bit floating point is modeled exactly, in the
+solver and in the interpreter; x87's 80-bit format and processor-specific user operations
+are lifted as explicit unsupported operations rather than approximated. [What it can and cannot solve](docs/scope.md) describes the kinds of
 challenge this covers, measured on 1,796 binaries from past CTFs.
 
 ## Installation

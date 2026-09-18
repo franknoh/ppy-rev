@@ -82,6 +82,14 @@ class BinaryOpcode(StrEnum):
     BOOLEAN_XOR = "boolean_xor"
     POINTER_ADD = "pointer_add"
     POINTER_SUB = "pointer_sub"
+    FLOAT_ADD = "float_add"
+    FLOAT_SUB = "float_sub"
+    FLOAT_MUL = "float_mul"
+    FLOAT_DIV = "float_div"
+    FLOAT_EQUAL = "float_equal"
+    FLOAT_NOT_EQUAL = "float_not_equal"
+    FLOAT_LESS = "float_less"
+    FLOAT_LESS_EQUAL = "float_less_equal"
 
 
 SHIFT_OPCODES = frozenset(
@@ -115,6 +123,21 @@ DIVISION_OPCODES = frozenset(
         BinaryOpcode.SIGNED_REM,
     }
 )
+FLOAT_BINARY_OPCODES = frozenset(
+    {
+        BinaryOpcode.FLOAT_ADD,
+        BinaryOpcode.FLOAT_SUB,
+        BinaryOpcode.FLOAT_MUL,
+        BinaryOpcode.FLOAT_DIV,
+        BinaryOpcode.FLOAT_EQUAL,
+        BinaryOpcode.FLOAT_NOT_EQUAL,
+        BinaryOpcode.FLOAT_LESS,
+        BinaryOpcode.FLOAT_LESS_EQUAL,
+    }
+)
+"""Operations reading their operands as IEEE-754 numbers rather than as integers."""
+FLOAT_WIDTHS = frozenset({32, 64})
+"""The formats RevIR models: binary32 and binary64. x87's 80-bit format stays unsupported."""
 
 
 class UnaryOpcode(StrEnum):
@@ -127,6 +150,33 @@ class UnaryOpcode(StrEnum):
     TRUNCATE = "truncate"
     POPCOUNT = "popcount"
     COUNT_LEADING_ZEROS = "count_leading_zeros"
+    FLOAT_NEGATE = "float_negate"
+    FLOAT_ABSOLUTE = "float_absolute"
+    FLOAT_SQUARE_ROOT = "float_square_root"
+    FLOAT_IS_NAN = "float_is_nan"
+    FLOAT_CEILING = "float_ceiling"
+    FLOAT_FLOOR = "float_floor"
+    FLOAT_ROUND = "float_round"
+    FLOAT_FROM_SIGNED = "float_from_signed"
+    FLOAT_TO_FLOAT = "float_to_float"
+    FLOAT_TO_SIGNED = "float_to_signed"
+
+
+FLOAT_UNARY_OPCODES = frozenset(
+    {
+        UnaryOpcode.FLOAT_NEGATE,
+        UnaryOpcode.FLOAT_ABSOLUTE,
+        UnaryOpcode.FLOAT_SQUARE_ROOT,
+        UnaryOpcode.FLOAT_IS_NAN,
+        UnaryOpcode.FLOAT_CEILING,
+        UnaryOpcode.FLOAT_FLOOR,
+        UnaryOpcode.FLOAT_ROUND,
+        UnaryOpcode.FLOAT_FROM_SIGNED,
+        UnaryOpcode.FLOAT_TO_FLOAT,
+        UnaryOpcode.FLOAT_TO_SIGNED,
+    }
+)
+"""Operations whose operand or result is an IEEE-754 number."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,6 +26,22 @@ def _flag_of(value: Expr) -> Expr | None:
 
 def binary(opcode: BinaryOpcode, left: Expr, right: Expr, output_width: int) -> Expr:
     match opcode:
+        case BinaryOpcode.FLOAT_ADD:
+            return sx.float_add(left, right)
+        case BinaryOpcode.FLOAT_SUB:
+            return sx.float_sub(left, right)
+        case BinaryOpcode.FLOAT_MUL:
+            return sx.float_mul(left, right)
+        case BinaryOpcode.FLOAT_DIV:
+            return sx.float_div(left, right)
+        case BinaryOpcode.FLOAT_EQUAL:
+            return sx.flag(sx.float_equal(left, right), output_width)
+        case BinaryOpcode.FLOAT_NOT_EQUAL:
+            return sx.flag(sx.bool_not(sx.float_equal(left, right)), output_width)
+        case BinaryOpcode.FLOAT_LESS:
+            return sx.flag(sx.float_less(left, right), output_width)
+        case BinaryOpcode.FLOAT_LESS_EQUAL:
+            return sx.flag(sx.float_less_equal(left, right), output_width)
         case BinaryOpcode.ADD | BinaryOpcode.POINTER_ADD:
             return sx.add(left, right)
         case BinaryOpcode.SUB | BinaryOpcode.POINTER_SUB:
@@ -102,6 +118,26 @@ def _boolean(opcode: BinaryOpcode, left: Expr, right: Expr) -> Expr:
 
 def unary(opcode: UnaryOpcode, operand: Expr, output_width: int) -> Expr:
     match opcode:
+        case UnaryOpcode.FLOAT_NEGATE:
+            return sx.float_negate(operand)
+        case UnaryOpcode.FLOAT_ABSOLUTE:
+            return sx.float_absolute(operand)
+        case UnaryOpcode.FLOAT_SQUARE_ROOT:
+            return sx.float_square_root(operand)
+        case UnaryOpcode.FLOAT_IS_NAN:
+            return sx.flag(sx.float_is_nan(operand), output_width)
+        case UnaryOpcode.FLOAT_CEILING:
+            return sx.float_integral(operand, sx.Rounding.CEILING)
+        case UnaryOpcode.FLOAT_FLOOR:
+            return sx.float_integral(operand, sx.Rounding.FLOOR)
+        case UnaryOpcode.FLOAT_ROUND:
+            return sx.float_integral(operand, sx.Rounding.NEAREST)
+        case UnaryOpcode.FLOAT_FROM_SIGNED:
+            return sx.float_from_signed(operand, output_width)
+        case UnaryOpcode.FLOAT_TO_FLOAT:
+            return sx.float_to_float(operand, output_width)
+        case UnaryOpcode.FLOAT_TO_SIGNED:
+            return sx.float_to_signed(operand, output_width)
         case UnaryOpcode.COPY:
             return operand
         case UnaryOpcode.BITWISE_NOT:

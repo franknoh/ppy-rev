@@ -8,7 +8,7 @@ from ppy_rev.execution.process import RETURN_SENTINEL, enter_call, standard_memo
 from ppy_rev.ghidra.schema import PcodeOp
 from ppy_rev.ir.model import Endianness, Module
 from ppy_rev.lift.lifter import lift_export
-from support.exports import ProgramBuilder, call, const, op, ram, reg, ret
+from support.exports import ProgramBuilder, call, const, op, ram, reg, ret, tmp
 
 
 def _run(
@@ -133,7 +133,7 @@ def test_outermost_return_reaches_the_sentinel() -> None:
     [
         ([op("INT_DIV", [reg("RDI"), reg("RSI")], reg("RAX"))], FaultKind.DIVISION_BY_ZERO),
         ([op("LOAD", [const(0x10, 8)], reg("RAX"))], FaultKind.MEMORY_FAULT),
-        ([op("FLOAT_ADD", [reg("RDI"), reg("RSI")], reg("RAX"))], FaultKind.UNSUPPORTED),
+        ([op("FLOAT_ADD", [tmp(0, 10), tmp(16, 10)], tmp(32, 10))], FaultKind.UNSUPPORTED),
         ([op("CALLOTHER", [const(0, 4)], None, user_op="syscall")], FaultKind.UNSUPPORTED),
         ([op("BRANCHIND", [reg("RDI")])], FaultKind.UNRESOLVED_INDIRECT_JUMP),
         (call(0x9000, 0x1004), FaultKind.UNKNOWN_CALL_TARGET),
