@@ -147,6 +147,18 @@ def test_output_setup_functions_do_nothing(stdin: bytes, size: int) -> None:
     _run_both("setvbuf", [STANDARD_STREAMS["stdout"], 0, 2, size], b"", b"", stdin)
 
 
+@settings(max_examples=60, deadline=None)
+@given(text, st.integers(0, 255))
+def test_strchr(value: bytes, wanted: int) -> None:
+    _run_both("strchr", [LEFT, wanted], value, b"")
+    _run_both("strchr", [LEFT, 0x0A], value, b"")  # the usual newline search
+
+
+def test_ptrace_traceme_succeeds_and_other_requests_are_unsupported() -> None:
+    """Anti-debugging checks take the branch they take when nothing is tracing."""
+    _run_both("ptrace", [0, 0, 0, 0], b"", b"")
+
+
 def test_errno_location_is_the_same_cell_in_both_models() -> None:
     """Programs read and write `errno` through it, so both models must name one address."""
     _run_both("__errno_location", [], b"", b"")

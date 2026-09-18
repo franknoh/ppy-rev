@@ -60,6 +60,8 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("scanf", 1, variadic=True),
         LibraryFunction("toupper", 1),
         LibraryFunction("tolower", 1),
+        LibraryFunction("strchr", 2),
+        LibraryFunction("ptrace", 4, variadic=True),
         LibraryFunction("__errno_location", 0),
         LibraryFunction("__ctype_b_loc", 0),
         LibraryFunction("__ctype_toupper_loc", 0),

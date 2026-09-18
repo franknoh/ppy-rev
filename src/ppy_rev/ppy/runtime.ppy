@@ -224,6 +224,18 @@ class Machine:
             result = first
         elif name == "strcspn":
             result = self.span(first, second)
+        elif name == "strchr":
+            haystack: list[int] = self.string_at(first)
+            needle: int = second & 0xFF
+            result = 0
+            if needle == 0:
+                result = first + len(haystack)
+            else:
+                for offset in range(len(haystack)):
+                    if haystack[offset] == needle and result == 0:
+                        result = first + offset
+        elif name == "ptrace":
+            result = 0
         elif name == "fgets":
             taken: list[int] = self.take_line(second - 1 if second > 0 else 0)
             if not taken:

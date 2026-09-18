@@ -39,6 +39,7 @@ from ppy_rev.symbolic.state import ConstraintKind, State
 
 _NEWLINE = sx.const(0x0A, 8)
 _ZERO_BYTE = sx.const(0, 8)
+_PTRACE_TRACEME = 0
 
 
 class _Unsupported(Exception):  # noqa: N818 - internal control flow
@@ -79,6 +80,7 @@ class SymbolicLibc:
             "strcpy": self._strcpy,
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
+            "strchr": self._strchr,
             "read": self._read,
             "fgets": self._fgets,
             "gets": self._gets,
@@ -100,6 +102,7 @@ class SymbolicLibc:
             "__stack_chk_fail": self._abort,
             "malloc": self._malloc,
             "__errno_location": lambda call: self._returns(call, sx.const(ERRNO_ADDRESS, 64)),
+            "ptrace": self._ptrace,
             "calloc": self._calloc,
             "atoi": self._atoi,
             "atol": self._atol,
@@ -305,6 +308,28 @@ class SymbolicLibc:
             self._write(call, destination + index, sx.ite(copying, byte, _ZERO_BYTE))
             copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
         return self._returns(call, sx.const(destination, 64))
+
+    def _strchr(self, call: _Call) -> list[ExternalOutcome]:
+        """`strchr(s, c)`: the first `c` in `s`, NULL if there is none.
+
+        A zero byte ends the string, so the scan stops there — and `strchr(s, 0)` returns
+        that terminator rather than NULL.
+        """
+        address = self._concrete(call, call.arguments[0], "string")
+        wanted = sx.extract(call.arguments[1], 0, 8)
+        text = self._string_bytes(call, address)
+        terminator = sx.equal(wanted, _ZERO_BYTE)
+        result = sx.ite(terminator, sx.const(address + len(text), 64), sx.const(0, 64))
+        for index in reversed(range(len(text))):
+            here = sx.const(address + index, 64)
+            ends = sx.equal(text[index], _ZERO_BYTE)
+            found = sx.equal(text[index], wanted)
+            result = sx.ite(
+                ends,
+                sx.ite(terminator, here, sx.const(0, 64)),
+                sx.ite(found, here, result),
+            )
+        return self._returns(call, result)
 
     def _strcspn(self, call: _Call) -> list[ExternalOutcome]:
         text = self._string_bytes(call, self._concrete(call, call.arguments[0], "string"))
@@ -660,6 +685,23 @@ class SymbolicLibc:
             return 0
         io.heap_next = (address + max(1, size) + 31) & ~15
         return address
+
+    def _ptrace(self, call: _Call) -> list[ExternalOutcome]:
+        """`PTRACE_TRACEME` succeeds: nothing is tracing the program.
+
+        That is the same situation `--verify` runs the binary in, and the branch an
+        anti-debugging check takes when it is not under a debugger. Other requests are a
+        debugger's own, and are left unmodeled.
+        """
+        request = self._concrete(call, call.arguments[0], "ptrace request")
+        if request != _PTRACE_TRACEME:
+            raise _Unsupported(f"ptrace request {request}")
+        call.executor.approximate(
+            call.state,
+            "ptrace(PTRACE_TRACEME) returns 0: the program is assumed not to be traced",
+            may_hide_paths=False,
+        )
+        return self._returns(call, sx.const(0, 64))
 
     def _malloc(self, call: _Call) -> list[ExternalOutcome]:
         size = self._concrete(call, call.arguments[0], "size")

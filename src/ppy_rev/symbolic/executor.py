@@ -280,6 +280,8 @@ class Executor:
         self._started = time.monotonic()
         self._exploration = Exploration([], [], self.statistics)
         self._report_at = _REPORT_EVERY_STEPS
+        self._created = time.monotonic()
+        """When this executor was made: what the reported solver share is measured against."""
 
     # -- public ----------------------------------------------------------------------------
 
@@ -382,7 +384,7 @@ class Executor:
         """Tell the progress reporter where the search is; it decides whether to say so."""
         self._report_at = self.statistics.steps + _REPORT_EVERY_STEPS
         statistics = self.statistics
-        elapsed = time.monotonic() - self._started
+        elapsed = time.monotonic() - self._created
         in_solver = f", {statistics.solver_seconds / elapsed:.0%} in the solver" if elapsed else ""
         self.progress.report(
             self.phase,
@@ -391,6 +393,19 @@ class Executor:
             f"{plural(statistics.solver_calls, 'solver call')}, "
             f"{plural(len(statistics.blocks), 'block')} reached" + in_solver,
         )
+
+    def _describe_address(self, address: int) -> str:
+        """Where an address that is not a function entry actually points."""
+        for function in self.module.functions:
+            for block in function.blocks:
+                for instruction in block.instructions:
+                    if instruction.address == address:
+                        return f"an instruction inside {function.name}, not its entry"
+        for region in self.module.memory:
+            if region.start <= address < region.end:
+                kind = "executable" if region.executable else "data"
+                return f"in {kind} {region.name}, where Ghidra recovered no function"
+        return "outside every mapped region"
 
     # -- running a state -------------------------------------------------------------------
 
@@ -841,7 +856,8 @@ class Executor:
         if name is None:
             raise _Stop(
                 StopReason.UNSUPPORTED,
-                f"call to {address:#x}, which is neither lifted nor imported",
+                f"call to {address:#x}, which is neither lifted nor imported "
+                f"({self._describe_address(address)})",
                 DiagnosticCode.UNSUPPORTED_OPERATION,
             )
         before = len(state.constraints)

@@ -25,6 +25,8 @@ from ppy_rev.summaries.formatting import FormatError, format_printf
 from ppy_rev.summaries.glibc_random import UNSEEDED, RandomState, advance, seeded
 from ppy_rev.summaries.libc import canonical_name
 
+_PTRACE_TRACEME = 0
+
 
 class ProgramExitError(Exception):
     """The program terminated through exit or a fatal library call."""
@@ -68,6 +70,8 @@ class ConcreteLibc:
             "strcpy": self._strcpy,
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
+            "strchr": self._strchr,
+            "ptrace": self._ptrace,
             "read": self._read,
             "fgets": self._fgets,
             "gets": self._gets,
@@ -177,6 +181,20 @@ class ConcreteLibc:
         source = self._string(memory, arguments[1], size)
         memory.write(arguments[0], source[:size] + b"\0" * (size - len(source[:size])))
         return arguments[0]
+
+    def _strchr(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        text = self._string(memory, arguments[0])
+        wanted = arguments[1] & 0xFF
+        if wanted == 0:
+            return arguments[0] + len(text)
+        index = text.find(wanted)
+        return 0 if index < 0 else arguments[0] + index
+
+    def _ptrace(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        if arguments[0] != _PTRACE_TRACEME:
+            raise UnsupportedLibraryCallError(f"ptrace request {arguments[0]}")
+        return 0
 
     def _strcspn(self, arguments: list[int], memory: ConcreteMemory) -> int:
         text = self._string(memory, arguments[0])
