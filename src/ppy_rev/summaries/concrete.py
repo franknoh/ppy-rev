@@ -111,6 +111,9 @@ class ConcreteLibc:
             "fclose": self._fclose,
             "feof": self._feof,
             "fread": self._fread,
+            "fseek": self._fseek,
+            "ftell": self._ftell,
+            "rewind": self._rewind,
             "gets": self._gets,
             "srand": self._srand,
             "rand": self._rand,
@@ -363,6 +366,32 @@ class ConcreteLibc:
         self._store_string(memory, arguments[1], content)
         self.io.stdin_position += len(content) + (0 if newline < 0 else 1)
         return arguments[0]
+
+    def _seek(self, stream: int, offset: int, whence: int) -> int:
+        content, position = self._stream(stream)
+        start = {0: 0, 1: position, 2: len(content)}.get(whence)
+        if start is None:
+            raise UnsupportedLibraryCallError(f"fseek with whence {whence}")
+        target = max(0, min(len(content), start + to_signed(offset & mask(64), 64)))
+        if stream == STANDARD_STREAMS["stdin"]:
+            self.io.stdin_position = target
+        else:
+            self.io.file_positions[stream] = target
+        return target
+
+    def _fseek(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self._seek(arguments[0], arguments[1], arguments[2] & 0xFFFFFFFF)
+        return 0
+
+    def _ftell(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        return self._stream(arguments[0])[1]
+
+    def _rewind(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self._seek(arguments[0], 0, 0)
+        return 0
 
     def _fread(self, arguments: list[int], memory: ConcreteMemory) -> int:
         buffer, size, count, stream = arguments[0], arguments[1], arguments[2], arguments[3]

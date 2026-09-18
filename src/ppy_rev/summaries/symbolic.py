@@ -23,6 +23,7 @@ from ppy_rev.execution.program import (
     STANDARD_STREAMS,
 )
 from ppy_rev.ir.model import Origin
+from ppy_rev.ir.semantics import to_signed
 from ppy_rev.solver.backend import Status
 from ppy_rev.summaries import ctype, cxx, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
@@ -104,6 +105,9 @@ class SymbolicLibc:
             "fclose": self._returns_zero,
             "feof": self._feof,
             "fread": self._fread,
+            "fseek": self._fseek,
+            "ftell": self._ftell,
+            "rewind": self._rewind,
             "gets": self._gets,
             "srand": self._srand,
             "rand": self._rand,
@@ -587,6 +591,36 @@ class SymbolicLibc:
         stream = self._concrete(call, call.arguments[0], "stream")
         content, position = self._stream(call, stream)
         return self._returns(call, sx.const(int(position >= len(content)), 64))
+
+    def _seek(self, call: _Call, stream: int, offset: int, whence: int) -> int:
+        """Move within a stream; the content's length is known, so this stays concrete."""
+        content, position = self._stream(call, stream)
+        start = {0: 0, 1: position, 2: len(content)}.get(whence)
+        if start is None:
+            raise _Unsupported(f"fseek with whence {whence}")
+        target = max(0, min(len(content), start + offset))
+        io = call.state.io
+        if stream == STANDARD_STREAMS["stdin"]:
+            io.stdin_position = target
+        else:
+            io.positions[stream] = target
+        return target
+
+    def _fseek(self, call: _Call) -> list[ExternalOutcome]:
+        stream = self._concrete(call, call.arguments[0], "stream")
+        offset = self._concrete(call, call.arguments[1], "offset")
+        whence = self._concrete(call, sx.extract(call.arguments[2], 0, 32), "whence")
+        self._seek(call, stream, to_signed(offset, 64), whence)
+        return self._returns_zero(call)
+
+    def _ftell(self, call: _Call) -> list[ExternalOutcome]:
+        stream = self._concrete(call, call.arguments[0], "stream")
+        return self._returns(call, sx.const(self._stream(call, stream)[1], 64))
+
+    def _rewind(self, call: _Call) -> list[ExternalOutcome]:
+        stream = self._concrete(call, call.arguments[0], "stream")
+        self._seek(call, stream, 0, 0)
+        return self._returns_zero(call)
 
     def _fread(self, call: _Call) -> list[ExternalOutcome]:
         buffer = self._concrete(call, call.arguments[0], "buffer")

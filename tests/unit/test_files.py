@@ -119,3 +119,16 @@ def test_stdin_still_reads_from_stdin() -> None:
     libc = ConcreteLibc(SYSV_X86_64, ConcreteIO(stdin=b"typed\n"))
     assert _call(libc, "fgets", memory, BUFFER, 64, STANDARD_STREAMS["stdin"]) == BUFFER
     assert memory.read_c_string(BUFFER) == b"typed\n"
+
+
+def test_seeking_measures_a_file_the_way_a_program_does() -> None:
+    """`fseek(f, 0, SEEK_END)` then `ftell` is how a program asks how long a file is."""
+    memory = _memory()
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO(files={"flag.txt": CONTENT}))
+    handle = _call(libc, "fopen", memory, PATH, 0)
+    assert _call(libc, "fseek", memory, handle, 0, 2) == 0
+    assert _call(libc, "ftell", memory, handle) == len(CONTENT)
+    assert _call(libc, "rewind", memory, handle) == 0
+    assert _call(libc, "ftell", memory, handle) == 0
+    assert _call(libc, "fread", memory, BUFFER, 1, len(CONTENT), handle) == len(CONTENT)
+    assert memory.read(BUFFER, len(CONTENT)) == CONTENT
