@@ -3,15 +3,61 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.ir.semantics import to_signed
 
 _SPECIFIER = re.compile(rb"%([-+ #0]*)(\d*)(?:\.(\d+))?(hh|h|ll|l|z|j|t)?([diouxXcsp%])")
+_WIDTHS = {b"hh": 8, b"h": 16, b"l": 64, b"ll": 64, b"z": 64, b"j": 64, b"t": 64}
 
 
 class FormatError(Exception):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class Directive:
+    """One conversion in a format string, with the flags that decide its width."""
+
+    flags: bytes
+    width: bytes
+    precision: bytes | None
+    length: bytes | None
+    conversion: bytes
+
+    @property
+    def bits(self) -> int:
+        return _WIDTHS.get(self.length or b"", 32)
+
+
+type Piece = bytes | Directive
+"""Literal text, or a conversion to apply to the next argument."""
+
+
+def parse_format(template: bytes) -> list[Piece]:
+    """Split a format string into the text it prints and the conversions it applies."""
+    pieces: list[Piece] = []
+    position = 0
+    while position < len(template):
+        percent = template.find(b"%", position)
+        if percent < 0:
+            pieces.append(template[position:])
+            break
+        if percent > position:
+            pieces.append(template[position:percent])
+        match = _SPECIFIER.match(template, percent)
+        if match is None:
+            raise FormatError(
+                f"unsupported format directive at {template[percent : percent + 8]!r}"
+            )
+        flags, width, precision, length, conversion = match.groups()
+        position = match.end()
+        if conversion == b"%":
+            pieces.append(b"%")
+            continue
+        pieces.append(Directive(flags, width, precision, length, conversion))
+    return pieces
 
 
 def format_printf(template: bytes, values: list[int], memory: ConcreteMemory) -> bytes:
@@ -42,6 +88,19 @@ def format_printf(template: bytes, values: list[int], memory: ConcreteMemory) ->
     return bytes(output)
 
 
+def format_one(directive: Directive, value: int, memory: ConcreteMemory | None = None) -> bytes:
+    """What one conversion writes for a value that is already known."""
+    return _convert(
+        directive.flags,
+        directive.width,
+        directive.precision,
+        directive.length,
+        directive.conversion,
+        value,
+        memory,
+    )
+
+
 def _convert(
     flags: bytes,
     width: bytes,
@@ -49,11 +108,9 @@ def _convert(
     length: bytes | None,
     conversion: bytes,
     value: int,
-    memory: ConcreteMemory,
+    memory: ConcreteMemory | None,
 ) -> bytes:
-    bits = {b"hh": 8, b"h": 16, b"l": 64, b"ll": 64, b"z": 64, b"j": 64, b"t": 64}.get(
-        length or b"", 32
-    )
+    bits = _WIDTHS.get(length or b"", 32)
     value &= (1 << bits) - 1
     match conversion:
         case b"d" | b"i":
@@ -71,6 +128,8 @@ def _convert(
         case b"p":
             body = f"{value:#x}".encode() if value else b"(nil)"
         case _:
+            if memory is None:
+                raise FormatError("a string conversion needs memory to read from")
             text = memory.read_c_string(value & ((1 << 64) - 1))
             body = text if precision is None else text[: int(precision)]
     if precision is not None and conversion not in (b"s", b"c"):

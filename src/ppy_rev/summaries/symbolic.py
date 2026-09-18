@@ -25,7 +25,7 @@ from ppy_rev.execution.program import (
 from ppy_rev.ir.model import Origin
 from ppy_rev.ir.semantics import to_signed
 from ppy_rev.solver.backend import Status
-from ppy_rev.summaries import ctype, cxx, glibc_random, scanning
+from ppy_rev.summaries import ctype, cxx, formatting, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.evaluate import evaluate
@@ -116,6 +116,8 @@ class SymbolicLibc:
             "putchar": self._putchar,
             "fputs": self._fputs,
             "printf": self._printf,
+            "sprintf": self._sprintf,
+            "snprintf": self._snprintf,
             "__printf_chk": self._printf,
             "fflush": self._returns_zero,
             "setbuf": self._returns_zero,
@@ -761,6 +763,121 @@ class SymbolicLibc:
         elif stream != STANDARD_STREAMS["stderr"]:
             raise _Unsupported(f"fputs to stream {stream:#x}")
         return self._returns(call, sx.const(1, 64))
+
+    def _sprintf(self, call: _Call) -> list[ExternalOutcome]:
+        return self._format_into(call, buffer_index=0, format_index=1, first=2, limit=None)
+
+    def _snprintf(self, call: _Call) -> list[ExternalOutcome]:
+        limit = self._concrete(call, call.arguments[1], "size")
+        return self._format_into(call, buffer_index=0, format_index=2, first=3, limit=limit)
+
+    def _format_into(
+        self, call: _Call, buffer_index: int, format_index: int, first: int, limit: int | None
+    ) -> list[ExternalOutcome]:
+        """`sprintf` written out exactly, for the conversions whose length is not data's.
+
+        A `%d` of a symbolic number could be one byte or twenty, and everything after it
+        would move; those are refused rather than approximated. `%02x` of a symbolic byte
+        is always two bytes, so hex encoding — what challenges usually do — works.
+        """
+        buffer = self._concrete(call, call.arguments[buffer_index], "buffer")
+        template = self._string_bytes(
+            call, self._concrete(call, call.arguments[format_index], "format")
+        )
+        if any(not byte.is_const for byte in template):
+            raise _Unsupported("the format string is symbolic")
+        try:
+            pieces = formatting.parse_format(bytes(byte.value for byte in template))
+        except formatting.FormatError as error:
+            raise _Unsupported(str(error)) from error
+        content: list[Expr] = []
+        index = first
+        for piece in pieces:
+            if isinstance(piece, bytes):
+                content.extend(sx.const(byte, 8) for byte in piece)
+                continue
+            value = self._variadic(call, index)
+            index += 1
+            content.extend(self._converted(call, piece, value))
+        if limit is not None:
+            content = content[: max(0, limit - 1)]
+        for offset, byte in enumerate(content):
+            self._write(call, buffer + offset, byte)
+        self._write(call, buffer + len(content), _ZERO_BYTE)
+        return self._returns(call, sx.const(len(content), 64))
+
+    def _fits(self, call: _Call, value: Expr, digits: int) -> bool:
+        """Whether this path allows only values that `digits` hex characters can hold."""
+        limit = sx.const(1 << (4 * digits), value.width)
+        too_large = sx.bool_not(sx.unsigned_less(value, limit))
+        return call.executor.feasible(call.state, [too_large]) is Status.UNSAT
+
+    def _hex_conversion(
+        self, call: _Call, directive: formatting.Directive, value: Expr
+    ) -> list[Expr]:
+        """`%02x` and friends: as many characters as the field is wide, whatever the value.
+
+        A hex conversion writes at least as many characters as the field is wide, and more
+        only when the value needs more digits than fit. A byte printed with `%2X` never
+        does, and the path condition is what says so, so the solver is asked.
+        """
+        width = int(directive.width or b"0")
+        digits = (directive.bits + 3) // 4
+        if b"-" in directive.flags or not width:
+            raise _Unsupported(
+                f"%{directive.flags.decode()}{directive.width.decode()}"
+                f"{directive.conversion.decode()} of a value whose length in characters "
+                "the input decides"
+            )
+        if width < digits:
+            # A wider value would write more characters and move everything after it. The
+            # program's own comparison almost always rules that out; assume it, and say so.
+            digits = width
+            limit = sx.const(1 << (4 * width), value.width)
+            if not self._fits(call, value, width):
+                call.executor.add_constraint(
+                    call.state,
+                    sx.unsigned_less(value, limit),
+                    ConstraintKind.LIBRARY,
+                    call.origin,
+                    "a hex conversion writes no more characters than its field is wide",
+                )
+                call.executor.approximate(
+                    call.state,
+                    f"values printed with %{directive.width.decode()}"
+                    f"{directive.conversion.decode()} are assumed to fit that field",
+                    may_hide_paths=True,
+                )
+        upper = directive.conversion == b"X"
+        padding = sx.const(ord("0") if b"0" in directive.flags else ord(" "), 8)
+        narrowed = sx.extract(value, 0, directive.bits) if value.width > directive.bits else value
+        characters = [padding] * (width - digits)
+        above: Expr = sx.TRUE  # every digit before this one is zero
+        for position in range(digits):
+            nibble = sx.extract(narrowed, 4 * (digits - 1 - position), 4)
+            digit = _hex_digit(nibble, upper)
+            last = position == digits - 1
+            characters.append(digit if last else sx.ite(above, padding, digit))
+            if not last:
+                above = sx.bool_and(above, sx.equal(nibble, sx.const(0, 4)))
+                characters[-1] = sx.ite(above, padding, digit)
+        return characters
+
+    def _converted(self, call: _Call, directive: formatting.Directive, value: Expr) -> list[Expr]:
+        """The bytes one conversion writes, when their number does not depend on the value."""
+        conversion = directive.conversion
+        if conversion == b"s":
+            return self._string_bytes(call, self._concrete(call, value, "string"))
+        known = call.executor.unique_value(call.state, value)
+        if known is not None:
+            return [sx.const(byte, 8) for byte in formatting.format_one(directive, known)]
+        if conversion == b"c":
+            return [sx.extract(value, 0, 8)]
+        if conversion in (b"x", b"X"):
+            return self._hex_conversion(call, directive, value)
+        raise _Unsupported(
+            f"%{conversion.decode()} of a value whose length in characters the input decides"
+        )
 
     def _printf(self, call: _Call) -> list[ExternalOutcome]:
         format_index = 1 if call.name == "__printf_chk" else 0
@@ -1427,3 +1544,14 @@ class _Scanner:
             branch.position = start + signed + count
             result.append(branch)
         return result
+
+
+def _hex_digit(nibble: Expr, upper: bool) -> Expr:
+    """One hex character of a symbolic nibble."""
+    letter = sx.const(ord("A") if upper else ord("a"), 8)
+    wide = sx.zero_extend(nibble, 8)
+    return sx.ite(
+        sx.unsigned_less(nibble, sx.const(10, 4)),
+        sx.add(wide, sx.const(ord("0"), 8)),
+        sx.add(sx.sub(wide, sx.const(10, 8)), letter),
+    )

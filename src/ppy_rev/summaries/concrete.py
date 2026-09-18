@@ -125,6 +125,8 @@ class ConcreteLibc:
             "setbuf": lambda arguments, memory: 0,
             "setvbuf": lambda arguments, memory: 0,
             "printf": self._printf,
+            "sprintf": self._sprintf,
+            "snprintf": self._snprintf,
             "__printf_chk": self._printf_chk,
             "exit": self._exit,
             "_exit": self._exit,
@@ -523,6 +525,28 @@ class ConcreteLibc:
 
     def _printf_chk(self, arguments: list[int], memory: ConcreteMemory) -> int:
         return self._format(arguments[1], arguments[2:], memory)
+
+    def _sprintf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return self._format_into(arguments[0], arguments[1], arguments[2:], memory, None)
+
+    def _snprintf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return self._format_into(arguments[0], arguments[2], arguments[3:], memory, arguments[1])
+
+    def _format_into(
+        self,
+        buffer: int,
+        template: int,
+        values: list[int],
+        memory: ConcreteMemory,
+        limit: int | None,
+    ) -> int:
+        try:
+            text = format_printf(self._string(memory, template), values, memory)
+        except FormatError as error:
+            raise UnsupportedLibraryCallError(str(error)) from error
+        written = text if limit is None else text[: max(0, limit - 1)]
+        memory.write(buffer, written + b"\0")
+        return len(text)
 
     # -- process ---------------------------------------------------------------------------
 

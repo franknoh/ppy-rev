@@ -154,6 +154,38 @@ def test_strchr(value: bytes, wanted: int) -> None:
     _run_both("strchr", [LEFT, 0x0A], value, b"")  # the usual newline search
 
 
+@settings(max_examples=80, deadline=None)
+@given(st.integers(0, 255), st.sampled_from([b"%02X", b"%02x", b"%2X", b"%c", b"[%02x]"]))
+def test_sprintf_writes_what_the_interpreter_writes(value: int, template: bytes) -> None:
+    """Hex encoding is how challenges turn bytes into text; it has to be byte-exact."""
+    _run_both("sprintf", [OUT, LEFT, value], template, b"", concrete_left=True)
+
+
+def test_a_conversion_whose_width_the_value_decides_is_refused() -> None:
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _image()
+    image.write(LEFT, b"%d\0")
+    memory = SymbolicMemory(image)
+    state = State(id=1, frames=[], memory=memory, io=SymbolicIO())
+    outcomes = SymbolicLibc(SYSV_X86_64).call(
+        executor,
+        state,
+        "sprintf",
+        dict(
+            zip(
+                SYSV_X86_64.integer_parameters,
+                [sx.const(OUT, 64), sx.const(LEFT, 64), sx.symbol("n", 64)],
+                strict=False,
+            )
+        ),
+        Origin(0, 0),
+    )
+    assert outcomes is not None
+    (outcome,) = outcomes
+    assert isinstance(outcome, Failed)
+    assert "length in characters" in outcome.detail
+
+
 def _ptrace_arguments() -> dict[str, int]:
     return dict.fromkeys(SYSV_X86_64.integer_parameters[:4], 0)
 

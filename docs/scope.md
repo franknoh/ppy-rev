@@ -28,9 +28,13 @@ it rather than guessing.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
 - **A file the program reads**: `fopen` of a path the binary spells out makes that file's
-  contents an input like any other, recovered and printed as `flag.txt: ...`. The answer is
-  checked by re-running the program against those contents; the sandboxed native run is
-  skipped, since it would need the file written for it.
+  contents an input like any other, recovered and printed as `flag.txt: ...`; `fgets`,
+  `fread`, `fseek`, `ftell` and `rewind` read it. The answer is checked by re-running the
+  program against those contents; the sandboxed native run is skipped, since it would need
+  the file written for it.
+- **Hex encoding with `sprintf`**: `%02x`-style conversions are written out byte for byte,
+  so a program that encodes its input and compares the text is solved. Conversions whose
+  length depends on the value (`%d` of an unknown number) are refused instead of guessed.
 - **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
   rather than an assumption, so a challenge that only reveals its answer under a debugger is
   solved, and the answer says it needs one.
