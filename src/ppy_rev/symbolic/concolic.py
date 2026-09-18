@@ -55,8 +55,10 @@ def concolic_search(
     while True:
         executor.seed = current
         executor.flips = []
+        executor.phase = f"concolic run {runs + 1}"
         exploration = executor.explore(start())
         runs += 1
+        executor.report_progress()
         if exploration.reached:
             executor.seed = None
             return ConcolicResult(exploration, runs, solved, exhausted=False)

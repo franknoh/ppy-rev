@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--ghidra-home", type=Path, help="Ghidra installation directory")
     common.add_argument("--cache-dir", type=Path, help="analysis cache directory")
     common.add_argument("--no-cache", action="store_true", help="always re-run Ghidra")
+    common.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="report what a long run is doing on stderr (default: only on a terminal)",
+    )
     subcommands = parser.add_subparsers(dest="command", metavar="command")
 
     info = subcommands.add_parser(

@@ -25,6 +25,7 @@ from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
 from ppy_rev.ir.model import Function, Module
+from ppy_rev.progress import Progress
 from ppy_rev.solver.backend import SolverBackend
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.summaries.symbolic import SymbolicLibc
@@ -188,7 +189,10 @@ class SolveResult:
 
 
 def solve_module(
-    module: Module, request: SolveRequest, backend: SolverBackend | None = None
+    module: Module,
+    request: SolveRequest,
+    backend: SolverBackend | None = None,
+    progress: Progress | None = None,
 ) -> SolveResult:
     started = time.monotonic()
     backend = backend or Z3Backend()
@@ -212,6 +216,7 @@ def solve_module(
             request.budget,
             reachability,
             program_slice,
+            progress,
         )
 
     search = executor()

@@ -11,9 +11,12 @@ from ppy_rev.elf import read_elf_header
 from ppy_rev.ghidra.cache import ExportCache, export_cache_key, file_sha256
 from ppy_rev.ghidra.headless import bridge_digest, locate_ghidra, run_export
 from ppy_rev.ghidra.schema import GhidraExport, load_export
+from ppy_rev.progress import Progress
 
 
-def export_binary(binary: Path, config: AnalyzerConfig) -> GhidraExport:
+def export_binary(
+    binary: Path, config: AnalyzerConfig, progress: Progress | None = None
+) -> GhidraExport:
     if not binary.is_file():
         raise UnsupportedBinaryError(f"{binary} is not a regular file")
     read_elf_header(binary)
@@ -26,7 +29,7 @@ def export_binary(binary: Path, config: AnalyzerConfig) -> GhidraExport:
         return load_export(cached)
     with tempfile.TemporaryDirectory(prefix="ppy-rev-export-") as scratch:
         output = Path(scratch) / "export.json"
-        run_export(installation, binary.resolve(), output, config.ghidra)
+        run_export(installation, binary.resolve(), output, config.ghidra, progress)
         export = load_export(output)
         if cache is not None:
             cache.store(key, output)

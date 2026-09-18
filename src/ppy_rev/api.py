@@ -15,14 +15,19 @@ from ppy_rev.ghidra.schema import GhidraExport
 from ppy_rev.info import ProgramInfo, program_info
 from ppy_rev.ir.model import Module
 from ppy_rev.lift.lifter import LiftResult, lift_export
+from ppy_rev.progress import Progress, Silent
 from ppy_rev.simplify.pipeline import simplify_module
 from ppy_rev.solve import SolveRequest, SolveResult, solve_module
 from ppy_rev.summaries.libc import modeled_reads
 
 
 class Analyzer:
-    def __init__(self, config: AnalyzerConfig | None = None) -> None:
+    def __init__(
+        self, config: AnalyzerConfig | None = None, progress: Progress | None = None
+    ) -> None:
         self.config = config if config is not None else AnalyzerConfig()
+        self.progress = progress if progress is not None else Silent()
+        """Where long phases report what they are doing; silent unless asked."""
 
     def clear_cache(self) -> int:
         """Delete every cached Ghidra export; returns how many were removed."""
@@ -30,7 +35,7 @@ class Analyzer:
 
     def export(self, binary: Path) -> GhidraExport:
         """Run (or reuse a cached) Ghidra analysis and return the validated export."""
-        return export_binary(binary, self.config)
+        return export_binary(binary, self.config, self.progress)
 
     def info(self, binary: Path) -> ProgramInfo:
         return program_info(self.export(binary), read_elf_header(binary))
@@ -55,4 +60,4 @@ class Analyzer:
 
     def solve(self, request: SolveRequest) -> SolveResult:
         """Find inputs that drive the program to its success outcome."""
-        return solve_module(self.simplified(request.binary), request)
+        return solve_module(self.simplified(request.binary), request, progress=self.progress)

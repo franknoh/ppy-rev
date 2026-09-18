@@ -23,6 +23,7 @@ from ppy_rev.diagnostics import PpyRevError, Severity
 from ppy_rev.ir.text import format_module
 from ppy_rev.ppy.check import check_ppy
 from ppy_rev.ppy.emit import emit_module
+from ppy_rev.progress import reporter
 from ppy_rev.solve import (
     SolveRequest,
     SolveResult,
@@ -50,11 +51,13 @@ def analyzer(arguments: argparse.Namespace) -> Analyzer:
     ghidra_home: Path | None = arguments.ghidra_home
     cache_dir: Path | None = arguments.cache_dir
     no_cache: bool = arguments.no_cache
+    show_progress: bool | None = getattr(arguments, "progress", None)
     return Analyzer(
         AnalyzerConfig(
             ghidra=GhidraOptions(home=ghidra_home),
             cache=CacheOptions(enabled=not no_cache, directory=cache_dir),
-        )
+        ),
+        reporter(sys.stderr, show_progress),
     )
 
 

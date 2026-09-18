@@ -9,16 +9,20 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from ppy_rev.config import GHIDRA_HOME_VARIABLE, GhidraOptions
 from ppy_rev.diagnostics import ConfigurationError, GhidraError
+from ppy_rev.progress import Progress
 
 BRIDGE_DIRECTORY = Path(__file__).with_name("bridge")
 EXPORT_SCRIPT = "PpyRevExport.java"
 _LOG_TAIL_LINES = 40
+_POLL_SECONDS = 0.5
+"""How often a running Ghidra process is checked, so progress can be reported."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +79,11 @@ def bridge_digest() -> str:
 
 
 def run_export(
-    installation: GhidraInstallation, binary: Path, output: Path, options: GhidraOptions
+    installation: GhidraInstallation,
+    binary: Path,
+    output: Path,
+    options: GhidraOptions,
+    progress: Progress | None = None,
 ) -> None:
     """Import `binary` into a throwaway project, analyze it, and write the export to `output`.
 
@@ -110,7 +118,12 @@ def run_export(
         environment["GHIDRA_HEADLESS_MAXMEM"] = options.max_memory
         with log.open("wb") as log_stream:
             returncode = _run_with_timeout(
-                command, environment, log_stream.fileno(), options.timeout_seconds
+                command,
+                environment,
+                log_stream.fileno(),
+                options.timeout_seconds,
+                progress,
+                binary.name,
             )
         log_text = log.read_text(encoding="utf-8", errors="replace")
         if returncode is None:
@@ -125,7 +138,12 @@ def run_export(
 
 
 def _run_with_timeout(
-    command: list[str], environment: dict[str, str], log_fd: int, timeout: float
+    command: list[str],
+    environment: dict[str, str],
+    log_fd: int,
+    timeout: float,
+    progress: Progress | None = None,
+    name: str = "",
 ) -> int | None:
     """Run in a new session so a timeout kills the JVM, not just the launcher script."""
     process = subprocess.Popen(
@@ -136,12 +154,18 @@ def _run_with_timeout(
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
-    try:
-        return process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-        return None
+    started = time.monotonic()
+    while True:
+        try:
+            return process.wait(timeout=_POLL_SECONDS)
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - started
+            if elapsed > timeout:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                return None
+            if progress is not None:
+                progress.report("Ghidra", f"still analyzing {name}")
 
 
 def _safe_program_name(name: str) -> str:

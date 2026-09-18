@@ -51,6 +51,7 @@ from ppy_rev.ir.model import (
     UserOp,
     Var,
 )
+from ppy_rev.progress import Progress, Silent, plural
 from ppy_rev.solver.backend import CheckResult, SolverBackend, Status
 from ppy_rev.symbolic import encode
 from ppy_rev.symbolic import expr as sx
@@ -144,6 +145,10 @@ class Stopped:
     function: str | None
     address: int | None
     code: DiagnosticCode | None = None
+
+
+_REPORT_EVERY_STEPS = 200_000
+"""How often a long-running state checks whether progress is worth reporting."""
 
 
 @dataclass(slots=True)
@@ -244,6 +249,7 @@ class Executor:
         budget: Budget | None = None,
         reachability: GoalReachability | None = None,
         program_slice: Slice | None = None,
+        progress: Progress | None = None,
     ) -> None:
         self.module = module
         self.slice = program_slice
@@ -251,6 +257,9 @@ class Executor:
         self.reachability = reachability
         self.externals = externals or NoExternals()
         self.budget = budget or Budget()
+        self.progress = progress or Silent()
+        self.phase = "symbolic search"
+        """What the progress reporter calls what the executor is doing now."""
         self.session = backend.session()
         self.statistics = Statistics()
         self._functions = {function.entry: function for function in module.functions}
@@ -270,6 +279,7 @@ class Executor:
         self.flips: list[Flip] = []
         self._started = time.monotonic()
         self._exploration = Exploration([], [], self.statistics)
+        self._report_at = _REPORT_EVERY_STEPS
 
     # -- public ----------------------------------------------------------------------------
 
@@ -348,6 +358,7 @@ class Executor:
                 exploration.budget_exhausted = f"more than {self.budget.max_seconds:g}s"
                 exploration.timed_out = True
                 break
+            self.report_progress()
             _, _, state = heapq.heappop(pending)
             successors, stopped = self._run(state)
             for successor in successors:
@@ -367,6 +378,18 @@ class Executor:
         """No states remain to explore."""
         return not self._pending
 
+    def report_progress(self) -> None:
+        """Tell the progress reporter where the search is; it decides whether to say so."""
+        self._report_at = self.statistics.steps + _REPORT_EVERY_STEPS
+        statistics = self.statistics
+        self.progress.report(
+            self.phase,
+            f"{plural(len(self._pending), 'path')} waiting, "
+            f"{plural(statistics.steps, 'operation')}, "
+            f"{plural(statistics.solver_calls, 'solver call')}, "
+            f"{plural(len(statistics.blocks), 'block')} reached",
+        )
+
     # -- running a state -------------------------------------------------------------------
 
     def _run(self, state: State) -> tuple[list[State], list[Stopped]]:
@@ -375,6 +398,8 @@ class Executor:
             while True:
                 successors = self._step(state)
                 if successors is None:
+                    if self.statistics.steps >= self._report_at:
+                        self.report_progress()
                     continue
                 return successors
         except _Stop as stop:
