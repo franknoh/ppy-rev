@@ -382,12 +382,14 @@ class Executor:
         """Tell the progress reporter where the search is; it decides whether to say so."""
         self._report_at = self.statistics.steps + _REPORT_EVERY_STEPS
         statistics = self.statistics
+        elapsed = time.monotonic() - self._started
+        in_solver = f", {statistics.solver_seconds / elapsed:.0%} in the solver" if elapsed else ""
         self.progress.report(
             self.phase,
             f"{plural(len(self._pending), 'path')} waiting, "
             f"{plural(statistics.steps, 'operation')}, "
             f"{plural(statistics.solver_calls, 'solver call')}, "
-            f"{plural(len(statistics.blocks), 'block')} reached",
+            f"{plural(len(statistics.blocks), 'block')} reached" + in_solver,
         )
 
     # -- running a state -------------------------------------------------------------------
