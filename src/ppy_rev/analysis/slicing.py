@@ -8,10 +8,12 @@ functions that only print, and the computations feeding them. Such work is skipp
 symbolic execution.
 
 The slice is conservative. A call is skipped only when its callee is a known output-only
-library function, or a lifted function that provably does nothing but output (no loops,
-no memory access outside its own stack frame, only calls of the same kind), when none of
-its results except the stack pointer are used, and when neither it nor anything it calls
-is a goal or avoid instruction.
+library function, or a lifted function that provably does nothing observable but output
+(it writes only its own stack frame and calls only functions of the same kind), when none
+of its results except the stack pointer are used, and when neither it nor anything it
+calls is a goal or avoid instruction. Such a function may read the caller's data — that is
+what printing it looks like — and may loop, in which case skipping it assumes the loop
+ends; a solution that depended on it not ending would fail the concrete re-run.
 """
 
 from __future__ import annotations
@@ -52,6 +54,8 @@ OUTPUT_FUNCTIONS = frozenset(
 )
 """Library functions whose only effect is output (formats that write memory are refused)."""
 _FRAME_EXTENT = 1 << 16
+_CYCLE = -(1 << 62)
+"""Marks an address that only leads back to the phi being resolved, so it adds nothing."""
 
 
 type OperationKey = tuple[int, int, int]
@@ -64,6 +68,8 @@ class Slice:
     """Operations whose effects cannot matter: pure computations and output-only calls."""
     output_functions: frozenset[int]
     """Lifted functions that only produce output."""
+    looping_output: frozenset[int] = frozenset()
+    """Those of them that contain a loop, so skipping them assumes the loop ends."""
 
     def skips(self, entry: int, block: int, index: int) -> bool:
         return (entry, block, index) in self.skipped
@@ -89,7 +95,12 @@ def backward_slice(
             stack_pointer,
             returns_matter=function.entry != outermost,
         ).skipped()
-    return Slice(frozenset(skipped), frozenset(output_functions))
+    looping = {
+        entry
+        for entry in output_functions
+        if (item := module.function_at(entry)) is not None and loops(item)
+    }
+    return Slice(frozenset(skipped), frozenset(output_functions), frozenset(looping))
 
 
 def _output_functions(module: Module, protected: frozenset[int], stack_pointer: str) -> set[int]:
@@ -114,39 +125,72 @@ def _output_functions(module: Module, protected: frozenset[int], stack_pointer: 
     return candidates
 
 
-def _local_only(
-    module: Module, function: Function, protected: frozenset[int], stack_pointer: str
-) -> bool:
+def loops(function: Function) -> bool:
+    """Whether control flow ever returns to a block that dominates it."""
     flow = control_flow(function)
-    if any(
+    return any(
         flow.dominates(target, source)
         for source, targets in enumerate(flow.successors)
         for target in targets
-    ):
-        return False  # a loop might not terminate
+    )
+
+
+def _local_only(
+    module: Module, function: Function, protected: frozenset[int], stack_pointer: str
+) -> bool:
     locations = Locations(function)
     frame = next(
         (item.value.id for item in function.inputs if item.register == stack_pointer), None
     )
     width = module.target.pointer_width
-    # A call returns with the stack pointer just above the return address it pushed.
+    # A call returns with the stack pointer just above the return address it pushed, and
+    # with the registers it may not clobber — the frame pointer among them — as it got them.
+    convention = calling_convention(module.target)
     popped: dict[int, Operand] = {}
+    preserved: dict[int, Operand] = {}
     for call, _ in calls(function):
         arguments = dict(zip(call.argument_registers, call.arguments, strict=True))
         for register, result in zip(call.result_registers, call.results, strict=True):
-            if register == stack_pointer and register in arguments:
+            if register not in arguments:
+                continue
+            if register == stack_pointer:
                 popped[result.id] = arguments[register]
+            elif register not in convention.clobbers:
+                preserved[result.id] = arguments[register]
 
-    def frame_offset(address: Operand) -> int | None:
+    def signed(total: int) -> int:
+        wrapped = total & ((1 << width) - 1)
+        return wrapped - (1 << width) if wrapped >> (width - 1) else wrapped
+
+    def frame_offset(address: Operand, resolving: frozenset[int] = frozenset()) -> int | None:
+        """How far below the function's own frame `address` points, if it does at all."""
         base, offset = locations.of(address)
         adjustment = 0
-        while base[0] == "value" and base[1] in popped:
-            outer_base, outer_offset = locations.of(popped[int(base[1])])
-            base, adjustment = outer_base, adjustment + outer_offset + width // 8
-        if frame is None or base != ("value", frame):
+        while base[0] == "value" and (base[1] in popped or base[1] in preserved):
+            identifier = int(base[1])
+            through = popped.get(identifier)
+            step = width // 8 if through is not None else 0
+            outer_base, outer_offset = locations.of(through or preserved[identifier])
+            base, adjustment = outer_base, adjustment + outer_offset + step
+        if frame is not None and base == ("value", frame):
+            return signed(offset + adjustment)
+        identifier = base[1]
+        if base[0] != "value" or not isinstance(identifier, int):
             return None
-        total = (offset + adjustment) & ((1 << width) - 1)
-        return total - (1 << width) if total >> (width - 1) else total
+        if identifier in resolving:
+            return _CYCLE  # a loop carrying the stack pointer back to a phi it came from
+        definition = locations.definitions.get(identifier)
+        if not isinstance(definition, Phi):
+            return None
+        # A loop header merges the stack pointer from the entry and from a balanced body,
+        # so every incoming edge that says something must say the same thing.
+        incoming = {
+            frame_offset(value, resolving | {identifier}) for _, value in definition.incoming
+        }
+        known = incoming - {_CYCLE}
+        if len(known) != 1 or (only := known.pop()) is None:
+            return None
+        return signed(only + offset + adjustment)
 
     for block in function.blocks:
         if any(start.address in protected for start in block.instructions):
@@ -155,10 +199,12 @@ def _local_only(
             return False
         for operation in block.operations:
             match operation:
-                case Load(address=address) | Store(address=address):
+                case Store(address=address):
                     offset = frame_offset(address)
                     if offset is None or not -_FRAME_EXTENT <= offset <= 0:
                         return False
+                case Load():
+                    pass  # reading is what printing a caller's data looks like
                 case BinaryOp(opcode=opcode) if opcode in DIVISION_OPCODES:
                     return False
                 case Call() | BinaryOp() | UnaryOp() | Subpiece() | Piece():

@@ -120,3 +120,40 @@ def test_a_skipped_call_does_not_evaluate_its_sliced_arguments() -> None:
     assert exploration.reached
     assert not exploration.incomplete
     assert executor.statistics.sliced >= 2
+
+
+def test_a_printing_loop_over_the_callers_data_is_still_output() -> None:
+    """A helper that prints an array reads memory it does not own, and loops doing it."""
+    printer = 0x2100
+    program = ProgramBuilder()
+    program.import_("puts", PUTS)
+    loop = program.code(printer, [op("COPY", [const(0, 8)], reg("RDX"))])
+    program.code(
+        loop,
+        [
+            op("INT_ADD", [reg("RDI"), reg("RDX")], reg("RSI")),
+            op("LOAD", [reg("RSI")], reg("RCX")),  # the caller's buffer
+            op("COPY", [reg("RCX")], reg("RDI")),
+        ],
+    )
+    after = program.code(loop + 4, call(PUTS, loop + 8))
+    program.code(
+        after,
+        [
+            op("INT_ADD", [reg("RDX"), const(1, 8)], reg("RDX")),
+            op("INT_NOTEQUAL", [reg("RDX"), const(5, 8)], reg("ZF")),
+            op("CBRANCH", [ram(loop), reg("ZF")]),
+        ],
+    )
+    program.code(after + 4, ret(), length=1)
+    program.function("print_all", printer)
+    program.code(0x1000, call(printer, 0x1004))
+    program.code(0x1004, [op("COPY", [const(0x5010, 8)], reg("RDI"))])
+    program.code(GOAL_CALL, call(PUTS, 0x101C))
+    program.code(0x101C, ret(), length=1)
+    program.function("main", 0x1000)
+    module = simplify_module(lift_export(program.build()).module, modeled_reads(SYSV_X86_64))
+    program_slice = backward_slice(module, frozenset({GOAL_CALL}), outermost=0x1000)
+    assert printer in program_slice.output_functions
+    assert printer in program_slice.looping_output
+    assert program_slice.skips(*_calls(module, "main")[0x1000])

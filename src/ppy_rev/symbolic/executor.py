@@ -758,6 +758,14 @@ class Executor:
             # Its other arguments may have been sliced away too, so they are not evaluated,
             # and the slice guarantees no result but the stack pointer is used.
             self.statistics.sliced += 1
+            if isinstance(call.target, DirectTarget) and (
+                call.target.address in self.slice.looping_output
+            ):
+                self.approximate(
+                    state,
+                    "a printing helper that loops was skipped, assuming it returns",
+                    may_hide_paths=False,
+                )
             outputs: dict[str, Expr] = {}
             for register, operand in zip(call.argument_registers, call.arguments, strict=True):
                 if register == self._stack_pointer:
