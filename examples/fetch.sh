@@ -29,6 +29,24 @@ fetch() {
     echo "fetched $target"
 }
 
+fetch_zip() {
+    local target=$1 url=$2 digest=$3 member=$4
+    if [[ -f $target ]]; then
+        echo "have    $target"
+        return
+    fi
+    mkdir -p "$(dirname "$target")"
+    curl --fail --silent --show-error --location --max-time 60 --output "$target.zip" "$url"
+    if ! echo "$digest  $target.zip" | sha256sum --check --status; then
+        rm -f "$target.zip"
+        echo "checksum mismatch: $url" >&2
+        exit 1
+    fi
+    unzip -p "$target.zip" "$member" > "$target"
+    rm -f "$target.zip"
+    echo "fetched $target"
+}
+
 fetch ais3_crackme/ais3_crackme "$ANGR_DOC/ais3_crackme/ais3_crackme" \
     12b99604d85d44adde22ed566e3a01cd474c4ce6f3e271f087162e7feb11d454
 fetch defcamp_r100/r100 "$ANGR_DOC/defcamp_r100/r100" \
@@ -138,3 +156,19 @@ fetch l3akctf_hidden/hidden "$ARCHIVE/L3akCTF/2024/rev/Hidden/hidden" \
     86d0940167bf29453256e52679a3bba8790979fb4222e9443231561b776d60be
 fetch l3akctf_angry/angry_patched_skill_issues "$ARCHIVE/L3akCTF/2024/rev/Angry/angry_patched_skill_issues" \
     8184fa1b6334197d6804644dfd7bee96b4091f6a43443a6a995382a1c978b1f8
+fetch gdgalgiers_traditions/prog "$ARCHIVE/GDGAlgiers/2022/rev/traditions/prog" \
+    819efb62207f1d305a031403f9fda5b3aa9f88286f4035baaaee84f6547a52ec
+fetch digitaloverdose_vault/vault "$ARCHIVE/DigitalOverdose/2022/rev/vault/vault" \
+    c9408672418edfeb93906f3c7d16337ac9e7b25b6d3c76f338a57a397072a624
+fetch crewctf_ez_rev/a.out "$ARCHIVE/CrewCTF/2023/rev/ez_rev/a.out" \
+    d913fef9a13986eef850d6eaf08679396ade94e15c70de47cbf4ec22e59d6af4
+fetch hackappatoi_sanity_rev/sanityrev "$ARCHIVE/Hackappatoi/2022/rev/Sanity_rev/sanityrev" \
+    e79c022e7a339335c49b8924cc3fb4e225d803a13fd123f213ee14954cd97e27
+fetch_zip cpctf_black_box/chall "$ARCHIVE/CPCTF/2024/rev/black_box/black_box.zip" \
+    ab042f7900fdbb5430297255587fe9546a2ff35371a0fcecbec97623699a5a9b files/chall
+fetch_zip cpctf_peeping/chall "$ARCHIVE/CPCTF/2024/rev/peeping/peeping.zip" \
+    af5240ba3f738c8a579d0e502640fb21fe2dfc2ba96fb279afcd341d2f5b04bd files/chall
+fetch_zip cpctf_fortune_teller/chall "$ARCHIVE/CPCTF/2025/rev/Fortune_Teller/rev-fortune_teller.zip" \
+    c6733d2fa254fa0f47b8324e537c0896b7d0c8123a1293298eaac7e248549b6c files/chall
+fetch_zip cpctf_secret_key/chall "$ARCHIVE/CPCTF/2025/rev/Secret_Key/rev-secret_key.zip" \
+    327141f5ab32f367592026d03c38f602c422f3baf21a7593390b9326f490dfe9 files/chall
