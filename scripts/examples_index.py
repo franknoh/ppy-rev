@@ -23,6 +23,9 @@ HEADER = """# Examples
 hints at all. Each directory has a walkthrough: what the binary checks, the command, the
 output, and how the answer is found.
 
+These are the kinds of challenge `ppy-rev` handles; what it does *not* handle, measured on
+1,796 binaries from past CTFs, is in [docs/scope.md](../docs/scope.md).
+
 The binaries are other people's challenges, so they are not stored here. `fetch.sh` downloads
 each one from a public archive at a pinned commit and checks its SHA-256; nothing it downloads
 is run. `check.sh` then solves every example with the command its README documents and compares
