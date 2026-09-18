@@ -111,6 +111,14 @@ class ConcreteLibc:
             "fclose": self._fclose,
             "feof": self._feof,
             "fread": self._fread,
+            "fgetc": self._fgetc,
+            "getc": self._fgetc,
+            "fputc": self._fputc,
+            "putc": self._fputc,
+            "fwrite": self._fwrite,
+            "strcat": self._strcat,
+            "strncat": self._strncat,
+            "strstr": self._strstr,
             "fseek": self._fseek,
             "ftell": self._ftell,
             "rewind": self._rewind,
@@ -394,6 +402,55 @@ class ConcreteLibc:
         del memory
         self._seek(arguments[0], 0, 0)
         return 0
+
+    def _fgetc(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        content, position = self._stream(arguments[0])
+        if position >= len(content):
+            return mask(32)  # EOF
+        self._advance(arguments[0], 1)
+        return content[position]
+
+    def _fputc(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self._write_stream(arguments[1], bytes([arguments[0] & 0xFF]))
+        return arguments[0] & 0xFF
+
+    def _fwrite(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        buffer, size, count = arguments[0], arguments[1], arguments[2]
+        self._write_stream(arguments[3], memory.read(buffer, size * count))
+        return count
+
+    def _write_stream(self, stream: int, content: bytes) -> None:
+        """Bytes the program writes: to the output it prints, or into the file it opened."""
+        if stream in (STANDARD_STREAMS["stdout"], STANDARD_STREAMS["stderr"]):
+            self.io.stdout += content
+            return
+        name = self.io.open_files.get(stream)
+        if name is None:
+            raise UnsupportedLibraryCallError(f"stream {stream:#x} was not opened here")
+        position = self.io.file_positions.get(stream, 0)
+        kept = self.io.files.get(name, b"")[:position] + content
+        self.io.files[name] = kept
+        self.io.file_positions[stream] = len(kept)
+
+    def _strcat(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        destination, source = arguments[0], arguments[1]
+        end = destination + len(self._string(memory, destination))
+        memory.write(end, self._string(memory, source) + b"\0")
+        return destination
+
+    def _strncat(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        destination, source, limit = arguments[0], arguments[1], arguments[2]
+        end = destination + len(self._string(memory, destination))
+        memory.write(end, self._string(memory, source)[:limit] + b"\0")
+        return destination
+
+    def _strstr(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        haystack = self._string(memory, arguments[0])
+        needle = self._string(memory, arguments[1])
+        found = haystack.find(needle)
+        return 0 if found < 0 else arguments[0] + found
 
     def _fread(self, arguments: list[int], memory: ConcreteMemory) -> int:
         buffer, size, count, stream = arguments[0], arguments[1], arguments[2], arguments[3]

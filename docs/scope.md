@@ -29,7 +29,8 @@ it rather than guessing.
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
 - **A file the program reads**: `fopen` of a path the binary spells out makes that file's
   contents an input like any other, recovered and printed as `flag.txt: ...`; `fgets`,
-  `fread`, `fseek`, `ftell` and `rewind` read it. The answer is checked by re-running the
+  `fread`, `fgetc`, `fseek`, `ftell` and `rewind` read it, and what the program writes to a
+  file it opened becomes that file's contents. The answer is checked by re-running the
   program against those contents; the sandboxed native run is skipped, since it would need
   the file written for it.
 - **Hex encoding with `sprintf`**: `%02x`-style conversions are written out byte for byte,

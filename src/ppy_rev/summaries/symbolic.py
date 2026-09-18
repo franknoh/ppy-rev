@@ -105,6 +105,14 @@ class SymbolicLibc:
             "fclose": self._returns_zero,
             "feof": self._feof,
             "fread": self._fread,
+            "fgetc": self._fgetc,
+            "fputc": self._fputc,
+            "fwrite": self._fwrite,
+            "strcat": lambda call: self._concatenate(call, None),
+            "strncat": lambda call: self._concatenate(
+                call, self._concrete(call, call.arguments[2], "limit")
+            ),
+            "strstr": self._strstr,
             "fseek": self._fseek,
             "ftell": self._ftell,
             "rewind": self._rewind,
@@ -623,6 +631,91 @@ class SymbolicLibc:
         stream = self._concrete(call, call.arguments[0], "stream")
         self._seek(call, stream, 0, 0)
         return self._returns_zero(call)
+
+    def _fgetc(self, call: _Call) -> list[ExternalOutcome]:
+        stream = self._concrete(call, call.arguments[0], "stream")
+        content, position = self._stream(call, stream)
+        if position >= len(content):
+            return self._returns(call, sx.const(0xFFFF_FFFF, 64))  # EOF
+        self._advance(call, stream, 1)
+        return self._returns(call, sx.zero_extend(content[position], 64))
+
+    def _fputc(self, call: _Call) -> list[ExternalOutcome]:
+        stream = self._concrete(call, call.arguments[0 + 1], "stream")
+        byte = sx.extract(call.arguments[0], 0, 8)
+        self._written(call, stream, [byte])
+        return self._returns(call, sx.zero_extend(byte, 64))
+
+    def _written(self, call: _Call, stream: int, content: list[Expr]) -> None:
+        """Bytes the program writes: to the output it prints, or into the file it opened."""
+        io = call.state.io
+        if stream in (STANDARD_STREAMS["stdout"], STANDARD_STREAMS["stderr"]):
+            io.stdout.extend(content)
+            return
+        item = io.files.get(stream)
+        if item is None:
+            raise _Unsupported(f"writing to stream {stream:#x}, which was not opened here")
+        position = io.positions.get(stream, 0)
+        kept = list(item.content[:position]) + content
+        io.files[stream] = OpenFile(item.name, tuple(kept))
+        io.contents[item.name] = tuple(kept)
+        io.positions[stream] = len(kept)
+
+    def _fwrite(self, call: _Call) -> list[ExternalOutcome]:
+        buffer = self._concrete(call, call.arguments[0], "buffer")
+        size = self._concrete(call, call.arguments[1], "size")
+        count = self._concrete(call, call.arguments[2], "count")
+        stream = self._concrete(call, call.arguments[3], "stream")
+        self._written(call, stream, [self._byte(call, buffer + n) for n in range(size * count)])
+        return self._returns(call, sx.const(count, 64))
+
+    def _concatenate(self, call: _Call, limit: int | None) -> list[ExternalOutcome]:
+        """`strcat` and `strncat`: the source written where the destination ends.
+
+        Either string may end at a byte the input decides, so each write keeps what was
+        there unless this position is really part of the result.
+        """
+        destination = self._concrete(call, call.arguments[0], "destination")
+        source = self._concrete(call, call.arguments[1], "source")
+        existing = self._string_bytes(call, destination)
+        appended = self._string_bytes(call, source)
+        if limit is not None:
+            appended = appended[:limit]
+        terminated = limit is not None and len(appended) == limit
+        for start, _ in enumerate([*existing, _ZERO_BYTE]):
+            # The destination ends at `start` when every byte before it is non-zero.
+            ends_here = sx.bool_and(
+                *(sx.bool_not(sx.equal(byte, _ZERO_BYTE)) for byte in existing[:start]),
+                *([sx.equal(existing[start], _ZERO_BYTE)] if start < len(existing) else []),
+            )
+            if ends_here is sx.FALSE:
+                continue
+            copying = ends_here
+            tail: list[Expr] = [] if terminated else [_ZERO_BYTE]
+            for offset, byte in enumerate([*appended, *tail]):
+                old = self._byte(call, destination + start + offset)
+                self._write(call, destination + start + offset, sx.ite(copying, byte, old))
+                copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
+            if terminated:
+                end = destination + start + len(appended)
+                self._write(call, end, sx.ite(ends_here, _ZERO_BYTE, self._byte(call, end)))
+        return self._returns(call, sx.const(destination, 64))
+
+    def _strstr(self, call: _Call) -> list[ExternalOutcome]:
+        """`strstr`: the address where the needle starts, or NULL — one of a few places."""
+        haystack = self._concrete(call, call.arguments[0], "string")
+        needle_at = self._concrete(call, call.arguments[1], "needle")
+        text = self._string_bytes(call, haystack)
+        needle = self._string_bytes(call, needle_at)
+        if not needle:
+            return self._returns(call, sx.const(haystack, 64))
+        result = sx.const(0, 64)
+        for start in reversed(range(len(text) - len(needle) + 1)):
+            matches = sx.bool_and(
+                *(sx.equal(text[start + offset], byte) for offset, byte in enumerate(needle))
+            )
+            result = sx.ite(matches, sx.const(haystack + start, 64), result)
+        return self._returns(call, result)
 
     def _fread(self, call: _Call) -> list[ExternalOutcome]:
         buffer = self._concrete(call, call.arguments[0], "buffer")

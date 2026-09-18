@@ -154,6 +154,22 @@ def test_strchr(value: bytes, wanted: int) -> None:
     _run_both("strchr", [LEFT, 0x0A], value, b"")  # the usual newline search
 
 
+@settings(max_examples=60, deadline=None)
+@given(text, text)
+def test_string_concatenation_and_search(left: bytes, right: bytes) -> None:
+    _run_both("strcat", [LEFT, RIGHT], left, right)
+    for limit in (0, 2, 9):
+        _run_both("strncat", [LEFT, RIGHT, limit], left, right)
+    _run_both("strstr", [LEFT, RIGHT], left, right, concrete_right=True)
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.binary(min_size=0, max_size=8))
+def test_reading_and_writing_one_byte_at_a_time(stdin: bytes) -> None:
+    _run_both("fgetc", [STANDARD_STREAMS["stdin"]], b"", b"", stdin)
+    _run_both("fputc", [0x41, STANDARD_STREAMS["stdout"]], b"", b"", stdin)
+
+
 @settings(max_examples=80, deadline=None)
 @given(st.integers(0, 255), st.sampled_from([b"%02X", b"%02x", b"%2X", b"%c", b"[%02x]"]))
 def test_sprintf_writes_what_the_interpreter_writes(value: int, template: bytes) -> None:

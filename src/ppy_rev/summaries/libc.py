@@ -80,6 +80,12 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("fseek", 3),
         LibraryFunction("ftell", 1),
         LibraryFunction("rewind", 1),
+        LibraryFunction("fgetc", 1),
+        LibraryFunction("fputc", 2),
+        LibraryFunction("fwrite", 4),
+        LibraryFunction("strcat", 2),
+        LibraryFunction("strncat", 3),
+        LibraryFunction("strstr", 2),
         LibraryFunction("std::string::begin", 1),
         LibraryFunction("std::string::end", 1),
         LibraryFunction("ptrace", 4, variadic=True),
@@ -92,6 +98,8 @@ FUNCTIONS: dict[str, LibraryFunction] = {
 }
 
 ALIASES = {
+    "getc": "fgetc",
+    "putc": "fputc",
     "__memcpy_chk": "memcpy",
     "__memmove_chk": "memmove",
     "__memset_chk": "memset",
