@@ -22,8 +22,8 @@ it rather than guessing.
   [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
-- **Stripped binaries**, statically linked ones, and any optimization level: `main` is found
-  through `__libc_start_main` when there is no symbol.
+- **Stripped binaries** at any optimization level: `main` is found through
+  `__libc_start_main` when there is no symbol.
 
 The 60 challenges in [`examples/`](../examples/README.md) are all of this kind; 55 of them
 are solved with no options at all, and the other five need one hint each (a flag format, a
@@ -33,9 +33,10 @@ length, or a goal address).
 
 | Not solved | What you see |
 |---|---|
-| C++ with `std::string`/iostreams | `no likely success output found` — the message never reaches a call the ranker can read |
-| Go, Rust | usually the same; their runtimes also bury `main` |
-| Input from a file (`fopen`, `fread`) or a socket | `unsupported semantics` at the first call — there is no model for either |
+| C++ with `std::string`/iostreams | `no likely success output found` — the message never reaches a call the ranker can read; naming the goal by hand only gets to `no model for imported function string` |
+| Rust | the same: ten in the survey below, none solved |
+| Go | not represented in the survey; its runtime does not reach `main` the way this expects |
+| Input from a file (`fopen`, `fread`) or a socket | `unsupported semantics: no model for imported function fopen`, at the first call |
 | `sleep`/`signal`/`alarm`/`setjmp`, `time`-dependent behaviour | `unsupported semantics`; nondeterminism is not modeled |
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |
 | Floating point | lifted as explicit unsupported operations, never approximated |
@@ -97,8 +98,9 @@ Ghidra, which is cached afterwards.
 1. `ppy-rev analyze ./chall` first: it shows the inputs, the ranked strings, whether code
    runs before `main`, and whether there is a VM.
 2. No success candidate? Name one: `--goal-string 'Correct'` or `--goal-address 0x…`. This
-   is the single most useful override — four out of five failures above are a goal the tool
-   would not guess, not a search it cannot do.
+   is the single most useful override: four out of five failures above are a goal the tool
+   could not name. For plain C that is usually the whole problem; for C++ it is only the
+   first one — a `std::string` comparison stops the search right after.
 3. No input found? `--stdin LENGTH` or `--argv 1`.
 4. Know the flag shape? `--flag-format 'ctf{*}'`, or `--prefix`/`--suffix`/`--length`.
 5. Slow? Watch it work with `--progress`, raise `--timeout`, or try `--strategy concolic`.
