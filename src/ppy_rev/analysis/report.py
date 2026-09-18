@@ -17,6 +17,7 @@ from ppy_rev.analysis.program import (
 )
 from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import backward_slice
+from ppy_rev.analysis.strings import printed_messages
 from ppy_rev.diagnostics import Diagnostic, PpyRevError
 from ppy_rev.ir.model import Module
 from ppy_rev.vm.detect import LIKELY_DISPATCHER, Dispatcher, detect_dispatchers
@@ -47,6 +48,8 @@ class AnalysisReport:
     sliced_operations: int
     flag_formats: tuple[str, ...]
     """Flag shapes the program's own data mentions, such as `actf{`."""
+    printed: tuple[tuple[int, str], ...]
+    """(instruction, message) for what the program prints, when nothing ranked as success."""
     initializers: tuple[Initializer, ...]
     """Constructors that run before main and are not modeled."""
     dispatchers: tuple[Dispatcher, ...]
@@ -94,6 +97,7 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
             1 for entry, _, _ in program_slice.skipped if entry in reachable_entries
         ),
         flag_formats=tuple(flag_prefixes(module)),
+        printed=() if successes else printed_messages(module, reachable),
         initializers=initializers(module),
         dispatchers=tuple(
             item for item in detect_dispatchers(module) if item.confidence >= LIKELY_DISPATCHER

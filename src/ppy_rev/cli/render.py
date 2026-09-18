@@ -7,6 +7,7 @@ from typing import TextIO
 
 from ppy_rev.analysis.goals import GoalCandidate
 from ppy_rev.analysis.report import AnalysisReport
+from ppy_rev.analysis.strings import LISTED
 from ppy_rev.info import ProgramInfo
 from ppy_rev.solve import Solution, SolveResult, SolveStatus
 from ppy_rev.vm.detect import Dispatcher
@@ -238,6 +239,12 @@ def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
         out.write(_outcome(candidate))
     if not report.successes:
         out.write("  none (pass --goal-address or --goal-string to solve)\n")
+        if report.printed:
+            out.write("  what the program prints:\n")
+        for address, text in report.printed[:LISTED]:
+            out.write(f"    {address:#x}  {text!r}\n")
+        if len(report.printed) > LISTED:
+            out.write(f"    ... and {len(report.printed) - LISTED} more\n")
     if report.flag_formats:
         shapes = ", ".join(f"{prefix}*}}" for prefix in report.flag_formats)
         out.write(f"  flag format in the program's data: {shapes}\n")

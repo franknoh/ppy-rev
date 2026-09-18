@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ppy_rev.analysis.goals import Outcome, rank_goals
 from ppy_rev.analysis.program import StringReference
+from ppy_rev.analysis.strings import describe_messages, printed_messages_from
 
 
 def _reference(text: bytes, address: int, call: str | None = "puts") -> StringReference:
@@ -87,3 +88,16 @@ def test_prompts_and_negations_are_not_success() -> None:
         "Hash matched!": Outcome.SUCCESS,
         "Congratulations! Here is your flag:\n": Outcome.SUCCESS,
     }
+
+
+def test_what_a_program_prints_is_listed_for_a_manual_goal() -> None:
+    """With nothing ranked, the messages and their addresses are what the user needs."""
+    references = [
+        StringReference(b"Enter the code: ", 0x5000, "main", 0x1100, "puts", "RDI"),
+        StringReference(b"The joker settles the pack.", 0x5020, "main", 0x1200, "puts", "RDI"),
+        StringReference(b"/etc/passwd", 0x5040, "main", 0x1300, "fopen", "RDI", external=True),
+    ]
+    assert not [item for item in rank_goals(references) if item.outcome is Outcome.SUCCESS]
+    listed = printed_messages_from(references)
+    assert listed == ((0x1100, "Enter the code: "), (0x1200, "The joker settles the pack."))
+    assert "0x1200" in describe_messages(listed)
