@@ -46,6 +46,16 @@ def solution_bytes(solution: Solution) -> bytes:
     return solution.argv if solution.argv is not None else solution.stdin or b""
 
 
+def _content(data: bytes, indent: str = "  ") -> str:
+    """Input bytes as the user should type them, or as bytes when they are not typeable."""
+    trimmed = data.rstrip(b"\n")
+    if not trimmed:
+        return f"{indent}(empty)\n" if not data else f"{indent}(empty line)\n"
+    if all(byte in _PRINTABLE for byte in trimmed):
+        return f"{indent}{trimmed.decode('ascii')}\n"
+    return f"{indent}ASCII: {_escaped(data)}\n{indent}Hex:   {data.hex(' ')}\n"
+
+
 def _escaped(data: bytes) -> str:
     parts: list[str] = []
     for byte in data:
@@ -110,12 +120,10 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
         heading = "Solution" if len(result.solutions) == 1 else f"Solution {index + 1}"
         data = solution_bytes(solution)
         out.write(f"\n{heading}:\n")
-        if not data.rstrip(b"\n"):
-            out.write("  (empty)\n" if not data else "  (empty line)\n")
-        elif all(byte in _PRINTABLE for byte in data.rstrip(b"\n")):
-            out.write(f"  {data.rstrip(b'\n').decode('ascii')}\n")
-        else:
-            out.write(f"  ASCII: {_escaped(data)}\n  Hex:   {data.hex(' ')}\n")
+        if data or not solution.files:
+            out.write(_content(data))
+        for name, content in solution.files:
+            out.write(f"  {name}:\n" + _content(content, indent="    "))
         verdict = "passed" if solution.verified else "failed"
         if solution.traced:
             out.write("  needs a debugger: ptrace(PTRACE_TRACEME) must fail\n")
@@ -230,7 +238,7 @@ def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
     if not report.inputs:
         out.write("  none discovered\n")
     for item in report.inputs:
-        label = f"argv[{item.index}]" if item.index is not None else "stdin"
+        label = f"argv[{item.index}]" if item.index is not None else item.name or "stdin"
         out.write(f"  {label}\n")
         for evidence in item.evidence if verbose else item.evidence[:1]:
             out.write(f"    evidence: {evidence}\n")

@@ -27,6 +27,10 @@ it rather than guessing.
   [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
+- **A file the program reads**: `fopen` of a path the binary spells out makes that file's
+  contents an input like any other, recovered and printed as `flag.txt: ...`. The answer is
+  checked by re-running the program against those contents; the sandboxed native run is
+  skipped, since it would need the file written for it.
 - **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
   rather than an assumption, so a challenge that only reveals its answer under a debugger is
   solved, and the answer says it needs one.
@@ -51,7 +55,7 @@ length, or a goal address).
 | C++ built with optimization | the inlined iostream internals dereference objects with no model, reported as `unsupported semantics` — unoptimized C++ that calls the library is solved (see above) |
 | Rust | the same: ten in the survey below, none solved |
 | Go | not represented in the survey; its runtime does not reach `main` the way this expects |
-| Input from a file (`fopen`, `fread`) or a socket | `unsupported semantics: no model for imported function fopen`, at the first call |
+| Input from a socket | `unsupported semantics` at the first call — there is no model |
 | `sleep`/`signal`/`alarm`/`setjmp`, `time`-dependent behaviour | `unsupported semantics`; nondeterminism is not modeled |
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |
 | x87 80-bit long double | `unsupported semantics`; binary32 and binary64 are modeled exactly |
@@ -73,7 +77,7 @@ thousand variants between them:
 |---|---|
 | 4.5% (81) | an answer (11.7% counting each challenge once) |
 | 80% | no success string could be ranked — 71% of those are C++ iostreams (which today's `std::ostream` model would rank), 20% print nothing recognizable |
-| 6.3% | unsupported semantics — mostly `fopen` (28), signals and timing (15), `time`/`rand` (14) |
+| 6.3% | unsupported semantics — mostly `fopen` (28, modeled since), signals and timing (15), `time`/`rand` (14) |
 | 3.0% | ran out of budget — 29 to path explosion, 4 to genuinely hard constraint systems |
 | 1.9% | `main` not found |
 | 1.8% | no input source found |
@@ -110,7 +114,7 @@ had been solved were not solved again.
 - `unknown`, `timeout`, `budget exhausted`, `analysis incomplete` and `unsupported
   semantics` are never reported as `unsat`.
 - Any approximation that could hide a path is printed as a `note:` and turns `unsat` into
-  `analysis incomplete`. The most common one is *stdin after a symbolic-length `fgets` line
+  `analysis incomplete`. The most common one is *input after a symbolic-length `fgets` line
   is treated as empty*.
 - A solution is re-run on the RevIR interpreter before it is reported; `--verify` also runs
   it on the real binary in a locked-down container. RevIR agreeing and the binary disagreeing

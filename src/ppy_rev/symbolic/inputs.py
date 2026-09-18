@@ -8,6 +8,7 @@ assumed unless the user asks for one.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from ppy_rev.symbolic import expr as sx
@@ -53,6 +54,12 @@ def argv_symbols(index: int, length: int) -> tuple[Expr, ...]:
 
 def stdin_symbols(length: int) -> tuple[Expr, ...]:
     return tuple(sx.symbol(f"stdin_{position:04}", 8) for position in range(length))
+
+
+def file_symbols(name: str, length: int) -> tuple[Expr, ...]:
+    """Bytes of a file the program reads; its name keeps them apart from other inputs."""
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    return tuple(sx.symbol(f"file_{safe}_{position:04}", 8) for position in range(length))
 
 
 def _is(byte: Expr, value: int) -> Expr:

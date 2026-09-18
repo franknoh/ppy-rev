@@ -16,6 +16,8 @@ from ppy_rev.execution.memory import MemoryFaultError
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
     ERRNO_ADDRESS,
+    FILE_HANDLE_STEP,
+    FILE_HANDLES,
     HEAP_SIZE,
     HEAP_START,
     STANDARD_STREAMS,
@@ -35,7 +37,7 @@ from ppy_rev.symbolic.executor import (
     StopReason,
 )
 from ppy_rev.symbolic.expr import Expr
-from ppy_rev.symbolic.state import ConstraintKind, State
+from ppy_rev.symbolic.state import ConstraintKind, OpenFile, State
 
 _NEWLINE = sx.const(0x0A, 8)
 _ZERO_BYTE = sx.const(0, 8)
@@ -98,6 +100,10 @@ class SymbolicLibc:
             "std::string::end": self._string_end,
             "read": self._read,
             "fgets": self._fgets,
+            "fopen": self._fopen,
+            "fclose": self._returns_zero,
+            "feof": self._feof,
+            "fread": self._fread,
             "gets": self._gets,
             "srand": self._srand,
             "rand": self._rand,
@@ -538,14 +544,69 @@ class SymbolicLibc:
         io.stdin_position += len(available)
         return self._returns(call, sx.const(len(available), 64))
 
+    # -- files -----------------------------------------------------------------------------
+
+    def _fopen(self, call: _Call) -> list[ExternalOutcome]:
+        """The file's contents are an input, so its name has to be one the analysis planned."""
+        name = bytes(
+            byte.value
+            for byte in self._string_bytes(call, self._concrete(call, call.arguments[0], "path"))
+            if byte.is_const
+        ).decode("latin-1")
+        io = call.state.io
+        content = io.contents.get(name)
+        if content is None:
+            raise _Unsupported(f"fopen of {name!r}, which no input was planned for")
+        for handle, item in io.files.items():
+            if item.name == name:
+                io.positions[handle] = 0
+                return self._returns(call, sx.const(handle, 64))
+        handle = FILE_HANDLES + FILE_HANDLE_STEP * len(io.files)
+        io.files[handle] = OpenFile(name, content)
+        io.positions[handle] = 0
+        return self._returns(call, sx.const(handle, 64))
+
+    def _stream(self, call: _Call, stream: int) -> tuple[tuple[Expr, ...], int]:
+        """What a stream still holds, and how far it has been read."""
+        io = call.state.io
+        if stream == STANDARD_STREAMS["stdin"]:
+            return io.stdin, io.stdin_position
+        item = io.files.get(stream)
+        if item is None:
+            raise _Unsupported(f"stream {stream:#x} was not opened here")
+        return item.content, io.positions.get(stream, 0)
+
+    def _advance(self, call: _Call, stream: int, count: int) -> None:
+        io = call.state.io
+        if stream == STANDARD_STREAMS["stdin"]:
+            io.stdin_position += count
+        else:
+            io.positions[stream] = io.positions.get(stream, 0) + count
+
+    def _feof(self, call: _Call) -> list[ExternalOutcome]:
+        stream = self._concrete(call, call.arguments[0], "stream")
+        content, position = self._stream(call, stream)
+        return self._returns(call, sx.const(int(position >= len(content)), 64))
+
+    def _fread(self, call: _Call) -> list[ExternalOutcome]:
+        buffer = self._concrete(call, call.arguments[0], "buffer")
+        size = self._concrete(call, call.arguments[1], "size")
+        count = self._concrete(call, call.arguments[2], "count")
+        stream = self._concrete(call, call.arguments[3], "stream")
+        content, position = self._stream(call, stream)
+        taken = content[position : position + size * count]
+        for index, byte in enumerate(taken):
+            self._write(call, buffer + index, byte)
+        self._advance(call, stream, len(taken))
+        return self._returns(call, sx.const(len(taken) // size if size else 0, 64))
+
     def _fgets(self, call: _Call) -> list[ExternalOutcome]:
         buffer = self._concrete(call, call.arguments[0], "buffer")
         size = self._concrete(call, sx.extract(call.arguments[1], 0, 32), "size")
         stream = self._concrete(call, call.arguments[2], "stream")
-        if stream != STANDARD_STREAMS["stdin"]:
-            raise _Unsupported(f"fgets from stream {stream:#x}")
+        content, position = self._stream(call, stream)
         io = call.state.io
-        remaining = io.stdin[io.stdin_position :]
+        remaining = content[position:]
         if size <= 0 or size > 0x7FFFFFFF or not remaining:
             return self._returns(call, sx.const(0, 64))
         taken = remaining[: size - 1]
@@ -553,28 +614,38 @@ class SymbolicLibc:
         for index in reversed(range(len(taken))):
             count = sx.ite(sx.equal(taken[index], _NEWLINE), sx.const(index + 1, 64), count)
         for index, byte in enumerate(taken):
-            position = sx.const(index, 64)
+            offset = sx.const(index, 64)
             old = self._byte(call, buffer + index)
-            terminator = sx.ite(sx.equal(position, count), _ZERO_BYTE, old)
+            terminator = sx.ite(sx.equal(offset, count), _ZERO_BYTE, old)
             self._write(
-                call, buffer + index, sx.ite(sx.unsigned_less(position, count), byte, terminator)
+                call, buffer + index, sx.ite(sx.unsigned_less(offset, count), byte, terminator)
             )
         end = buffer + len(taken)
         old = self._byte(call, end)
         self._write(call, end, sx.ite(sx.equal(count, sx.const(len(taken), 64)), _ZERO_BYTE, old))
-        io.stdin_reads.append((io.stdin_position, io.stdin_position + len(taken), True))
+        if stream == STANDARD_STREAMS["stdin"]:
+            io.stdin_reads.append((position, position + len(taken), True))
         consumed = call.executor.unique_value(call.state, count)
         if consumed is None:
-            # The rest of stdin is only meaningful once the line length is known.
-            io.stdin = io.stdin[: io.stdin_position]
+            # What follows is only meaningful once the line's length is known.
+            self._truncate(call, stream, position)
             call.executor.approximate(
                 call.state,
-                "stdin after a symbolic-length fgets line is treated as empty",
+                "input after a symbolic-length fgets line is treated as empty",
                 may_hide_paths=True,
             )
         else:
-            io.stdin_position += consumed
+            self._advance(call, stream, consumed)
         return self._returns(call, sx.const(buffer, 64))
+
+    def _truncate(self, call: _Call, stream: int, position: int) -> None:
+        """Forget what a stream holds past `position`, where the model cannot follow it."""
+        io = call.state.io
+        if stream == STANDARD_STREAMS["stdin"]:
+            io.stdin = io.stdin[:position]
+            return
+        item = io.files[stream]
+        io.files[stream] = OpenFile(item.name, item.content[:position])
 
     def _srand(self, call: _Call) -> list[ExternalOutcome]:
         seed = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "srand seed")

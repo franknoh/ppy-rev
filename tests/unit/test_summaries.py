@@ -292,7 +292,7 @@ def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:
     assert outcomes is not None
     assert state.io.stdin == ()
     assert executor.statistics.hiding_approximations == {
-        "stdin after a symbolic-length fgets line is treated as empty"
+        "input after a symbolic-length fgets line is treated as empty"
     }
 
 

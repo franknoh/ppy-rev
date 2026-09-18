@@ -14,6 +14,8 @@ from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
     ERRNO_ADDRESS,
+    FILE_HANDLE_STEP,
+    FILE_HANDLES,
     HEAP_SIZE,
     HEAP_START,
     STANDARD_STREAMS,
@@ -50,6 +52,10 @@ class ConcreteIO:
     random: RandomState = UNSEEDED
     traced: bool = False
     """Whether a debugger traces the program, so `ptrace(PTRACE_TRACEME)` fails."""
+    files: dict[str, bytes] = field(default_factory=dict[str, bytes])
+    """What each file the program opens contains."""
+    open_files: dict[int, str] = field(default_factory=dict[int, str])
+    file_positions: dict[int, int] = field(default_factory=dict[int, int])
 
 
 type _Handler = Callable[[list[int], ConcreteMemory], int]
@@ -101,6 +107,10 @@ class ConcreteLibc:
             "ptrace": self._ptrace,
             "read": self._read,
             "fgets": self._fgets,
+            "fopen": self._fopen,
+            "fclose": self._fclose,
+            "feof": self._feof,
+            "fread": self._fread,
             "gets": self._gets,
             "srand": self._srand,
             "rand": self._rand,
@@ -246,12 +256,46 @@ class ConcreteLibc:
         if stream != STANDARD_STREAMS[name]:
             raise UnsupportedLibraryCallError(f"stream {stream:#x} is not {name}")
 
+    # -- files -----------------------------------------------------------------------------
+
+    def _fopen(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        name = self._string(memory, arguments[0]).decode("latin-1")
+        handle = FILE_HANDLES + FILE_HANDLE_STEP * len(self.io.open_files)
+        self.io.open_files[handle] = name
+        self.io.file_positions[handle] = 0
+        return handle
+
+    def _fclose(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self.io.file_positions.pop(arguments[0], None)
+        return 0
+
+    def _feof(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        content, position = self._stream(arguments[0])
+        return int(position >= len(content))
+
+    def _stream(self, stream: int) -> tuple[bytes, int]:
+        """What a stream still holds, and how far it has been read."""
+        if stream == STANDARD_STREAMS["stdin"]:
+            return self.io.stdin, self.io.stdin_position
+        name = self.io.open_files.get(stream)
+        if name is None:
+            raise UnsupportedLibraryCallError(f"stream {stream:#x} was not opened here")
+        return self.io.files.get(name, b""), self.io.file_positions.get(stream, 0)
+
+    def _advance(self, stream: int, count: int) -> None:
+        if stream == STANDARD_STREAMS["stdin"]:
+            self.io.stdin_position += count
+        else:
+            self.io.file_positions[stream] = self.io.file_positions.get(stream, 0) + count
+
     def _fgets(self, arguments: list[int], memory: ConcreteMemory) -> int:
         buffer, size, stream = arguments[0], arguments[1] & 0xFFFFFFFF, arguments[2]
-        self._require_stream(stream, "stdin")
         if size <= 0 or size > 0x7FFFFFFF:
             return 0
-        remaining = self.io.stdin[self.io.stdin_position :]
+        content, position = self._stream(stream)
+        remaining = content[position:]
         if not remaining:
             return 0
         taken = remaining[: size - 1]
@@ -259,7 +303,7 @@ class ConcreteLibc:
         if newline >= 0:
             taken = taken[: newline + 1]
         memory.write(buffer, taken + b"\0")
-        self.io.stdin_position += len(taken)
+        self._advance(stream, len(taken))
         return buffer
 
     # -- the C++ standard library ----------------------------------------------------------
@@ -319,6 +363,15 @@ class ConcreteLibc:
         self._store_string(memory, arguments[1], content)
         self.io.stdin_position += len(content) + (0 if newline < 0 else 1)
         return arguments[0]
+
+    def _fread(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        buffer, size, count, stream = arguments[0], arguments[1], arguments[2], arguments[3]
+        wanted = size * count
+        content, position = self._stream(stream)
+        taken = content[position : position + wanted]
+        memory.write(buffer, taken)
+        self._advance(stream, len(taken))
+        return len(taken) // size if size else 0
 
     def _srand(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory

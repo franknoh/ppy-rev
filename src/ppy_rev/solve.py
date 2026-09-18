@@ -50,6 +50,7 @@ from ppy_rev.symbolic.inputs import (
     argv_constraints,
     argv_solution,
     argv_symbols,
+    file_symbols,
     in_charset,
     stdin_constraints,
     stdin_solution,
@@ -60,6 +61,8 @@ from ppy_rev.symbolic.state import ConstraintKind, Frame, State, SymbolicIO
 from ppy_rev.verify.sandbox import SandboxOptions, run_sandboxed
 
 DEFAULT_STDIN_LENGTH = 256
+DEFAULT_FILE_LENGTH = 64
+"""Bytes offered for a file the program reads: a flag, typically."""
 PREFERENCE_PATHS = 8
 """Goal paths examined for a printable solution before accepting any bytes."""
 
@@ -120,9 +123,13 @@ class InputDescription:
     """Symbolic bytes available to the solver."""
     discovered: bool
     evidence: tuple[str, ...]
+    name: str = ""
+    """The path, for a file the program reads."""
 
     def label(self) -> str:
-        return f"argv[{self.index}]" if self.kind is InputKind.ARGV else "stdin"
+        if self.kind is InputKind.ARGV:
+            return f"argv[{self.index}]"
+        return self.name if self.kind is InputKind.FILE else "stdin"
 
     @property
     def max_bytes(self) -> int:
@@ -148,6 +155,8 @@ class Solution:
     """The sandboxed native run, when one was requested."""
     traced: bool = False
     """The answer only works while a debugger traces the program."""
+    files: tuple[tuple[str, bytes], ...] = ()
+    """What each file the program reads has to contain."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,6 +484,15 @@ def _describe(candidate: InputCandidate, request: SolveRequest) -> InputDescript
         return InputDescription(
             InputKind.ARGV, candidate.index, _argv_capacity(request), True, candidate.evidence
         )
+    if candidate.kind is InputKind.FILE:
+        return InputDescription(
+            InputKind.FILE,
+            None,
+            DEFAULT_FILE_LENGTH,
+            True,
+            candidate.evidence,
+            candidate.name,
+        )
     return InputDescription(InputKind.STDIN, None, DEFAULT_STDIN_LENGTH, True, candidate.evidence)
 
 
@@ -482,9 +500,14 @@ def _describe(candidate: InputCandidate, request: SolveRequest) -> InputDescript
 class _Symbols:
     argv: dict[int, tuple[Expr, ...]]
     stdin: tuple[Expr, ...]
+    files: dict[str, tuple[Expr, ...]] = field(default_factory=dict[str, tuple[Expr, ...]])
 
     def all(self) -> list[Expr]:
-        return [symbol for symbols in self.argv.values() for symbol in symbols] + list(self.stdin)
+        return [
+            *(symbol for symbols in self.argv.values() for symbol in symbols),
+            *self.stdin,
+            *(symbol for symbols in self.files.values() for symbol in symbols),
+        ]
 
 
 def _initial_state(
@@ -507,14 +530,22 @@ def _initial_state(
         {index: item.capacity for index, item in argv_inputs.items()},
     )
     memory = SymbolicMemory(image)
-    symbols = _Symbols({}, ())
+    symbols = _Symbols({}, (), {})
     stdin_length = next((item.capacity for item in inputs if item.kind is InputKind.STDIN), 0)
     state = State(
         id=executor.new_state_id(),
         frames=[],
         memory=memory,
-        io=SymbolicIO(stdin=stdin_symbols(stdin_length)),
+        io=SymbolicIO(
+            stdin=stdin_symbols(stdin_length),
+            contents={
+                item.name: file_symbols(item.name, item.capacity)
+                for item in inputs
+                if item.kind is InputKind.FILE
+            },
+        ),
     )
+    symbols.files.update(state.io.contents)
     for index, item in sorted(argv_inputs.items()):
         content = argv_symbols(index, item.capacity)
         symbols.argv[index] = content
@@ -525,7 +556,7 @@ def _initial_state(
         ):
             executor.add_constraint(state, condition, ConstraintKind.INPUT, None, f"argv[{index}]")
     if stdin_length:
-        symbols = _Symbols(symbols.argv, state.io.stdin)
+        symbols = _Symbols(symbols.argv, state.io.stdin, symbols.files)
         line_length = None if argv_inputs else request.length
         prefix = b"" if argv_inputs else request.prefix
         suffix = b"" if argv_inputs else request.suffix
@@ -611,11 +642,17 @@ def _solutions(
                 stdin_solution(symbols.stdin, model, state.io.stdin_reads) if has_stdin else None
             )
             traced = traced_symbol is not None and model.get(TRACED_SYMBOL, 0) != 0
+            files = tuple(
+                (name, bytes(model.get(symbol.name, 0) for symbol in content).split(b"\0")[0])
+                for name, content in sorted(symbols.files.items())
+            )
             blocking.append(_block(symbols, argv, stdin))
             if (argv, stdin) not in seen:
                 seen.add((argv, stdin))
                 solutions.append(
-                    _verify(module, main, request, goal, symbols, argv, stdin, watches, traced)
+                    _verify(
+                        module, main, request, goal, symbols, argv, stdin, watches, traced, files
+                    )
                 )
         return found
 
@@ -708,19 +745,23 @@ def _verify(
     stdin: bytes | None,
     watches: tuple[Watch, ...],
     traced: bool = False,
+    files: tuple[tuple[str, bytes], ...] = (),
 ) -> Solution:
     reserve = {index: len(content) for index, content in symbols.argv.items()}
     arguments = _arguments(module, reserve, argv)
     verified, verification = _run_verification(
-        module, main, arguments, stdin, watches, reserve, traced
+        module, main, arguments, stdin, watches, reserve, traced, dict(files)
     )
     if request.native is None:
         native = None
     elif traced:
         native = NativeVerification(None, "not run: this answer needs a debugger attached")
+    elif files:
+        named = ", ".join(name for name, _ in files)
+        native = NativeVerification(None, f"not run: the answer is the contents of {named}")
     else:
         native = _run_native(request, arguments, stdin, goal)
-    return Solution(argv, stdin, verified, verification, native, traced)
+    return Solution(argv, stdin, verified, verification, native, traced, files)
 
 
 def _arguments(module: Module, reserve: dict[int, int], argv: bytes | None) -> list[bytes]:
@@ -739,9 +780,17 @@ def _run_verification(
     watches: tuple[Watch, ...],
     reserve: dict[int, int],
     traced: bool = False,
+    files: dict[str, bytes] | None = None,
 ) -> tuple[bool, str]:
     run = run_program(
-        module, main, arguments, stdin or b"", watches, reserve=reserve, traced=traced
+        module,
+        main,
+        arguments,
+        stdin or b"",
+        watches,
+        reserve=reserve,
+        traced=traced,
+        files=files,
     )
     verified = run.first_watch is not None and run.first_watch.name == "goal"
     return verified, "reaches the goal" if verified else run.outcome

@@ -29,6 +29,9 @@ STANDARD_STREAMS = {
     "stderr": LIBC_DATA_START + 0x300,
 }
 """Addresses standing in for glibc's FILE objects; summaries recognise them by value."""
+FILE_HANDLES = LIBC_DATA_START + 0x400
+"""Where `fopen` hands out stand-ins for FILE objects, one 0x40 bytes after another."""
+FILE_HANDLE_STEP = 0x40
 ERRNO_ADDRESS = LIBC_DATA_START + 0x900
 """What `__errno_location` returns: a zeroed cell, since no modeled call ever fails."""
 CTYPE_POINTERS = {

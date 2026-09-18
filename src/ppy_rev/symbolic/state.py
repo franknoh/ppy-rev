@@ -33,6 +33,14 @@ class Constraint:
     note: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class OpenFile:
+    """A file the program opened, whose contents are an input like any other."""
+
+    name: str
+    content: tuple[Expr, ...]
+
+
 @dataclass(slots=True)
 class SymbolicIO:
     """Process I/O visible to library models."""
@@ -48,6 +56,12 @@ class SymbolicIO:
     """glibc's rand state, which only a concrete srand seed changes."""
     approximations: list[str] = field(default_factory=list[str])
     """Places where a library model over-approximated a result."""
+    contents: dict[str, tuple[Expr, ...]] = field(default_factory=dict[str, tuple[Expr, ...]])
+    """What each file the program may open contains: an input, like stdin."""
+    files: dict[int, OpenFile] = field(default_factory=dict[int, OpenFile])
+    """Streams `fopen` returned, by the handle the program holds."""
+    positions: dict[int, int] = field(default_factory=dict[int, int])
+    """How far each open file has been read."""
     traced: Expr | None = None
     """`ptrace(PTRACE_TRACEME)`'s result: 0, or -1 when a debugger already traces us.
 
@@ -64,6 +78,9 @@ class SymbolicIO:
             heap_next=self.heap_next,
             random=self.random,
             approximations=list(self.approximations),
+            contents=dict(self.contents),
+            files=dict(self.files),
+            positions=dict(self.positions),
             traced=self.traced,
         )
 

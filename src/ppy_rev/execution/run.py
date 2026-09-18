@@ -51,6 +51,7 @@ def run_program(
     limits: Limits | None = None,
     reserve: dict[int, int] | None = None,
     traced: bool = False,
+    files: dict[str, bytes] | None = None,
 ) -> ProgramRun:
     """Execute main until it returns, exits, fails, or triggers a watch.
 
@@ -59,7 +60,7 @@ def run_program(
     """
     memory = program_memory(module)
     entry = enter_main(module, memory, arguments, reserve)
-    io = ConcreteIO(stdin=stdin, traced=traced)
+    io = ConcreteIO(stdin=stdin, traced=traced, files=dict(files or {}))
     libc = ConcreteLibc(calling_convention(module.target), io)
     at_instruction = {watch.address: watch for watch in watches if watch.register is None}
     at_call = [watch for watch in watches if watch.register is not None]

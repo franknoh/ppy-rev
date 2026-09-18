@@ -12,7 +12,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ppy_rev.abi import calling_convention
-from ppy_rev.analysis.program import calls, external_name, reachable_functions
+from ppy_rev.analysis.program import (
+    calls,
+    external_name,
+    reachable_functions,
+    read_c_string,
+)
 from ppy_rev.ir.model import (
     BinaryOp,
     BinaryOpcode,
@@ -51,6 +56,7 @@ STDIN_READERS = frozenset(
 class InputKind(StrEnum):
     ARGV = "argv"
     STDIN = "stdin"
+    FILE = "file"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +64,8 @@ class InputCandidate:
     kind: InputKind
     index: int | None
     evidence: tuple[str, ...]
+    name: str = ""
+    """The path, for a file the program opens."""
 
 
 type _Tag = tuple[str, int]
@@ -78,7 +86,31 @@ def discover_inputs(module: Module, main: Function) -> list[InputCandidate]:
                 stdin_evidence.append(f"{function.name} calls {name} at {call.origin.address:#x}")
     if stdin_evidence:
         candidates.append(InputCandidate(InputKind.STDIN, None, tuple(stdin_evidence)))
+    candidates.extend(_opened_files(module, main))
     return candidates
+
+
+def _opened_files(module: Module, main: Function) -> list[InputCandidate]:
+    """Files the program opens by a name it spells out: their contents are an input."""
+    found: dict[str, list[str]] = {}
+    pointer = calling_convention(module.target).integer_parameters[0]
+    for function in reachable_functions(module, main):
+        for call, _ in calls(function):
+            if external_name(module, call) != "fopen":
+                continue
+            arguments = dict(zip(call.argument_registers, call.arguments, strict=True))
+            path = arguments.get(pointer)
+            text = read_c_string(module, path.value) if isinstance(path, Const) else None
+            if text is None:
+                continue
+            name = text.decode("latin-1")
+            found.setdefault(name, []).append(
+                f"{function.name} opens {name!r} at {call.origin.address:#x}"
+            )
+    return [
+        InputCandidate(InputKind.FILE, None, tuple(sorted(evidence)), name)
+        for name, evidence in sorted(found.items())
+    ]
 
 
 def _argv_uses(module: Module, main: Function) -> dict[int, set[str]]:
