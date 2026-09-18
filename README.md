@@ -165,7 +165,9 @@ Library calls use models of the C functions crackmes typically use (`strlen`, `s
 `strchr`, `memcmp`, `read`, `fgets`, `scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the
 ctype tables, `puts`, `printf`, `exit`, ...), checked against glibc by differential tests.
 `ptrace(PTRACE_TRACEME)` is left to the solver rather than assumed, so anti-debugging
-checks are searched both ways and an answer that needs a debugger says so. Where
+checks are searched both ways and an answer that needs a debugger says so. Unoptimized C++
+is modeled as far as a `std::string` read with `std::getline` or `std::cin >>`, indexed and
+compared, and printed through `std::cout`. Where
 a model approximates, the result says so, and an approximation that could hide paths
 turns `unsat` into `analysis incomplete`. Every solution is re-run on the concrete RevIR
 interpreter before it is reported, and the shortest argv string is preferred.
