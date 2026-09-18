@@ -28,6 +28,10 @@ NAMES = {
     "data": "std::string::data",
     "c_str": "std::string::data",
     "empty": "std::string::empty",
+    "operator[]": "std::string::at",
+    "at": "std::string::at",
+    "begin": "std::string::begin",
+    "end": "std::string::end",
 }
 """Demangled names Ghidra gives libstdc++ imports, mapped to what the models call them."""
 

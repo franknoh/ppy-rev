@@ -131,6 +131,21 @@ def test_a_long_line_goes_to_the_heap() -> None:
     assert memory.load(OBJECT + cxx.CAPACITY, 64) == len(line)
 
 
+def test_indexing_and_iterators_point_into_the_string() -> None:
+    _, memory, _ = _concrete("getline<char>", [STREAM, OBJECT], b"sesame\n")
+    io = ConcreteIO()
+    libc = ConcreteLibc(SYSV_X86_64, io)
+
+    def call(name: str, *arguments: int) -> int:
+        registers = dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False))
+        return libc(name, registers, memory)["RAX"]
+
+    start = call("std::string::begin", OBJECT)
+    assert start == OBJECT + cxx.BUFFER
+    assert call("std::string::end", OBJECT) == start + len(b"sesame")
+    assert memory.read(call("std::string::at", OBJECT, 2), 1) == b"s"
+
+
 def test_demangled_names_map_to_the_models() -> None:
     assert canonical_name("getline<char,std::char_traits<char>,std::allocator<char>>") == (
         "std::getline"

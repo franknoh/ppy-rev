@@ -86,6 +86,16 @@ class ConcreteLibc:
                 self._string_field(memory, arguments[0], cxx.SIZE) == 0
             ),
             "std::ostream::operator<<": self._ostream_write,
+            "std::string::at": lambda arguments, memory: (
+                (self._string_field(memory, arguments[0], cxx.DATA) + arguments[1]) & mask(64)
+            ),
+            "std::string::begin": lambda arguments, memory: self._string_field(
+                memory, arguments[0], cxx.DATA
+            ),
+            "std::string::end": lambda arguments, memory: (
+                self._string_field(memory, arguments[0], cxx.DATA)
+                + self._string_field(memory, arguments[0], cxx.SIZE)
+            ),
             "ptrace": self._ptrace,
             "read": self._read,
             "fgets": self._fgets,

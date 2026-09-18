@@ -91,6 +91,9 @@ class SymbolicLibc:
             "std::string::data": self._string_data,
             "std::string::empty": self._string_empty,
             "std::ostream::operator<<": self._ostream_write,
+            "std::string::at": self._string_at,
+            "std::string::begin": self._string_data,
+            "std::string::end": self._string_end,
             "read": self._read,
             "fgets": self._fgets,
             "gets": self._gets,
@@ -388,6 +391,16 @@ class SymbolicLibc:
 
     def _string_data(self, call: _Call) -> list[ExternalOutcome]:
         return self._returns(call, self._string_field(call, cxx.DATA))
+
+    def _string_at(self, call: _Call) -> list[ExternalOutcome]:
+        """`s[i]` and `s.at(i)`: the address of a character, which the caller then reads."""
+        data = self._string_field(call, cxx.DATA)
+        index = call.arguments[1]
+        return self._returns(call, sx.add(data, index))
+
+    def _string_end(self, call: _Call) -> list[ExternalOutcome]:
+        data = self._string_field(call, cxx.DATA)
+        return self._returns(call, sx.add(data, self._string_field(call, cxx.SIZE)))
 
     def _string_empty(self, call: _Call) -> list[ExternalOutcome]:
         size = self._string_field(call, cxx.SIZE)
