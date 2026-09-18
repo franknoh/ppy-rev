@@ -13,7 +13,13 @@ from dataclasses import dataclass
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import MemoryFaultError
-from ppy_rev.execution.program import CTYPE_POINTERS, HEAP_SIZE, HEAP_START, STANDARD_STREAMS
+from ppy_rev.execution.program import (
+    CTYPE_POINTERS,
+    ERRNO_ADDRESS,
+    HEAP_SIZE,
+    HEAP_START,
+    STANDARD_STREAMS,
+)
 from ppy_rev.ir.model import Origin
 from ppy_rev.solver.backend import Status
 from ppy_rev.summaries import ctype, glibc_random, scanning
@@ -93,6 +99,7 @@ class SymbolicLibc:
             "abort": self._abort,
             "__stack_chk_fail": self._abort,
             "malloc": self._malloc,
+            "__errno_location": lambda call: self._returns(call, sx.const(ERRNO_ADDRESS, 64)),
             "calloc": self._calloc,
             "atoi": self._atoi,
             "atol": self._atol,

@@ -147,6 +147,11 @@ def test_output_setup_functions_do_nothing(stdin: bytes, size: int) -> None:
     _run_both("setvbuf", [STANDARD_STREAMS["stdout"], 0, 2, size], b"", b"", stdin)
 
 
+def test_errno_location_is_the_same_cell_in_both_models() -> None:
+    """Programs read and write `errno` through it, so both models must name one address."""
+    _run_both("__errno_location", [], b"", b"")
+
+
 @settings(max_examples=60, deadline=None)
 @given(st.binary(min_size=1, max_size=20), st.integers(1, 24))
 def test_read_and_fgets(stdin: bytes, size: int) -> None:

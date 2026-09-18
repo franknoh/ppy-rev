@@ -29,6 +29,8 @@ STANDARD_STREAMS = {
     "stderr": LIBC_DATA_START + 0x300,
 }
 """Addresses standing in for glibc's FILE objects; summaries recognise them by value."""
+ERRNO_ADDRESS = LIBC_DATA_START + 0x900
+"""What `__errno_location` returns: a zeroed cell, since no modeled call ever fails."""
 CTYPE_POINTERS = {
     "__ctype_b_loc": LIBC_DATA_START + 0x800,
     "__ctype_toupper_loc": LIBC_DATA_START + 0x808,

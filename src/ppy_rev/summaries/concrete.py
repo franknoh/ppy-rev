@@ -11,7 +11,13 @@ from dataclasses import dataclass, field
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import ConcreteMemory
-from ppy_rev.execution.program import CTYPE_POINTERS, HEAP_SIZE, HEAP_START, STANDARD_STREAMS
+from ppy_rev.execution.program import (
+    CTYPE_POINTERS,
+    ERRNO_ADDRESS,
+    HEAP_SIZE,
+    HEAP_START,
+    STANDARD_STREAMS,
+)
 from ppy_rev.ir.model import mask
 from ppy_rev.ir.semantics import to_signed
 from ppy_rev.summaries import ctype, scanning
@@ -89,6 +95,7 @@ class ConcreteLibc:
             "strtol": self._strtol,
             "strtoll": self._strtol,
             "scanf": self._scanf,
+            "__errno_location": lambda arguments, memory: ERRNO_ADDRESS,
             "toupper": lambda arguments, memory: self._case(ctype.to_upper, arguments),
             "tolower": lambda arguments, memory: self._case(ctype.to_lower, arguments),
             **{

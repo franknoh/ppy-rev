@@ -78,6 +78,7 @@ class Exited(Exception):
 
 ARGUMENTS = 0x7FFFFFFF1000
 STREAMS = 0x7FFFF7E00100
+ERRNO = 0x7FFFF7E00900
 HEAP = 0x5555A0000000
 POINTER_BYTES = 8
 
@@ -261,6 +262,8 @@ class Machine:
                 self.write_at(result, [0 for _ in range(size)])
         elif name == "free" or name == "fflush" or name == "setbuf" or name == "setvbuf":
             result = 0
+        elif name == "__errno_location":
+            result = ERRNO
         elif name == "exit" or name == "_exit":
             raise Exited(first & 0xFF)
         elif name == "abort" or name == "__stack_chk_fail":
