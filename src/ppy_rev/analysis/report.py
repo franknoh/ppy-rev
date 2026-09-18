@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from ppy_rev.analysis.flags import flag_prefixes
 from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, discover_inputs
-from ppy_rev.analysis.program import find_main, reachable_functions, string_references
+from ppy_rev.analysis.program import (
+    Initializer,
+    find_main,
+    initializers,
+    reachable_functions,
+    string_references,
+)
 from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.diagnostics import Diagnostic, PpyRevError
@@ -41,6 +47,8 @@ class AnalysisReport:
     sliced_operations: int
     flag_formats: tuple[str, ...]
     """Flag shapes the program's own data mentions, such as `actf{`."""
+    initializers: tuple[Initializer, ...]
+    """Constructors that run before main and are not modeled."""
     dispatchers: tuple[Dispatcher, ...]
     diagnostics: tuple[tuple[str, int], ...]
     """Lifting diagnostic codes in functions reachable from main, with their counts."""
@@ -86,6 +94,7 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
             1 for entry, _, _ in program_slice.skipped if entry in reachable_entries
         ),
         flag_formats=tuple(flag_prefixes(module)),
+        initializers=initializers(module),
         dispatchers=tuple(
             item for item in detect_dispatchers(module) if item.confidence >= LIKELY_DISPATCHER
         ),

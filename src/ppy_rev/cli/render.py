@@ -13,6 +13,8 @@ from ppy_rev.vm.detect import Dispatcher
 from ppy_rev.vm.lift import LiftedVm
 
 _PRINTABLE = frozenset(range(0x20, 0x7F))
+_ALWAYS_SHOWN = ("the program mentions", "code runs before main")
+"""Notes worth printing even when an answer was found."""
 
 
 def render_info(info: ProgramInfo, out: TextIO) -> None:
@@ -96,7 +98,7 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
             f"  seconds: {statistics.seconds:.2f}\n"
         )
     out.write(f"\nSolver:\n  backend: {result.backend}\n  result: {result.status}\n")
-    hints = [note for note in result.notes if note.startswith("the program mentions")]
+    hints = [note for note in result.notes if note.startswith(_ALWAYS_SHOWN)]
     if result.status is not SolveStatus.SAT or verbose:
         for note in result.notes:
             out.write(f"  note: {note}\n")
@@ -254,6 +256,12 @@ def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
     if output_only:
         out.write(f"  only print, skipped when solving: {', '.join(output_only)}\n")
     out.write(f"  operations sliced away: {report.sliced_operations}\n")
+    for item in report.initializers:
+        calls = ", ".join(item.library_calls)
+        out.write(
+            f"\nRuns before main:\n  {item.name} at {item.address:#x} calls {calls}\n"
+            "  not modeled: solving starts at main\n"
+        )
     if verbose:
         for item in reachable:
             out.write(

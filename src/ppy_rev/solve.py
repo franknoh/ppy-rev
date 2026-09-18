@@ -13,7 +13,12 @@ from ppy_rev.abi import calling_convention
 from ppy_rev.analysis.flags import flag_prefixes
 from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
-from ppy_rev.analysis.program import find_main, reachable_functions, string_references
+from ppy_rev.analysis.program import (
+    find_main,
+    initializers,
+    reachable_functions,
+    string_references,
+)
 from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.diagnostics import PpyRevError
@@ -279,7 +284,10 @@ def solve_module(
         ),
         notes=tuple(
             dict.fromkeys(
-                notes + _unsat_notes(status, inputs) + _flag_format_note(module, request, solutions)
+                notes
+                + _unsat_notes(status, inputs)
+                + _flag_format_note(module, request, solutions)
+                + _initializer_note(module)
             )
         ),
         smt2=smt2,
@@ -808,6 +816,14 @@ def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
         for constraint in state.constraints
         if constraint.kind is not ConstraintKind.INPUT
     )
+
+
+def _initializer_note(module: Module) -> list[str]:
+    """Say when a constructor runs before main, since solving does not model it."""
+    return [
+        f"code runs before main: {item.name} calls {', '.join(item.library_calls)} (not modeled)"
+        for item in initializers(module)
+    ]
 
 
 def _flag_format_note(

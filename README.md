@@ -169,6 +169,10 @@ capabilities, an unprivileged user, and memory, process, CPU, time, and output l
 The image (`--sandbox-image`, default `ubuntu:24.04`) must already exist locally; it is
 never pulled.
 
+Solving starts at `main`, so a constructor in `.init_array` that reads the input itself,
+looks for a debugger, or exits is not modeled; when a binary has one, `solve` and `analyze`
+say which library functions it reaches, because it can decide the outcome before `main` runs.
+
 The result is `sat`, `unsat` (every path was explored within the input bounds),
 `unknown`, `timeout`, `budget exhausted`, `analysis incomplete`, or `unsupported
 semantics`; only `sat` exits with status 0. Unknown solver results and unmodeled

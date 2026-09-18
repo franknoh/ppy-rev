@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Literal
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.diagnostics import PpyRevError
@@ -86,6 +87,74 @@ def reachable_functions(module: Module, root: Function) -> list[Function]:
                     seen.add(callee.entry)
                     order.append(callee)
     return order
+
+
+_BEFORE_MAIN = frozenset(
+    {
+        "abort",
+        "alarm",
+        "exit",
+        "fgets",
+        "fgetc",
+        "fork",
+        "fread",
+        "fscanf",
+        "getchar",
+        "getline",
+        "gets",
+        "kill",
+        "mprotect",
+        "personality",
+        "prctl",
+        "ptrace",
+        "read",
+        "scanf",
+        "signal",
+        "sigaction",
+        "system",
+    }
+)
+"""Library calls that make an initializer able to change, or decide, what main sees."""
+
+
+@dataclass(frozen=True, slots=True)
+class Initializer:
+    """A function the loader runs before main, and the notable library calls it reaches."""
+
+    name: str
+    address: int
+    library_calls: tuple[str, ...]
+
+
+def initializers(module: Module) -> tuple[Initializer, ...]:
+    """Constructors in `.init_array` that could decide the outcome before main runs.
+
+    Solving starts at main, so anything these do — reading the input themselves, checking for a
+    debugger, exiting — is not modeled. Only initializers that reach such a call are reported;
+    the ones every compiler emits reach none.
+    """
+    width = module.target.pointer_width // 8
+    order: Literal["little", "big"] = module.target.endianness.value
+    found: list[Initializer] = []
+    for region in module.memory:
+        if region.name not in (".init_array", ".preinit_array") or region.data is None:
+            continue
+        for offset in range(0, len(region.data) - width + 1, width):
+            address = int.from_bytes(region.data[offset : offset + width], order)
+            function = module.function_at(address)
+            if function is None or any(item.address == function.entry for item in found):
+                continue
+            names = sorted(
+                {
+                    name
+                    for reached in reachable_functions(module, function)
+                    for call, _ in calls(reached)
+                    if (name := external_name(module, call)) is not None and name in _BEFORE_MAIN
+                }
+            )
+            if names:
+                found.append(Initializer(function.name, function.entry, tuple(names)))
+    return tuple(found)
 
 
 @dataclass(frozen=True, slots=True)
