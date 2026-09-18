@@ -48,10 +48,11 @@ beginner challenge in the survey below stops only because `getegid` has no model
 
 ## Measured on 1,796 binaries
 
-Every x86-64 Linux ELF in the reversing categories of the
-[ctf-archives](https://github.com/sajjadium/ctf-archives) mirror was solved with a 60–90 s
-budget and no hints, during development. Of 1,796 distinct binaries — 692 distinct
-challenges, since two of them ship a thousand variants between them:
+x86-64 Linux ELF challenges were harvested from the reversing categories of the
+[ctf-archives](https://github.com/sajjadium/ctf-archives) mirror over eight crawls during
+development, and each was run through `ppy-rev solve` with a 60–90 s budget and no options
+at all. Of 1,796 distinct binaries — only 692 distinct challenges, since two of them ship a
+thousand variants between them:
 
 | share | outcome |
 |---|---|
@@ -76,6 +77,13 @@ socket.
 Time, wall clock including Ghidra: median 14 s, 90th percentile 37 s, longest 170 s. The
 tool's own analysis is a fraction of that — median 0.8 s — so most of a short solve is
 Ghidra, which is cached afterwards.
+
+Two caveats on the method. None of these binaries was executed, so a `sat` result here means
+only that the answer re-runs to the goal on the RevIR interpreter; of the 60 examples, which
+*were* checked against the real binaries in a container, 58 pass and one is the documented
+divergence above. And the outcome is not perfectly stable across versions: of 200 binaries
+re-attempted after changes to the tool, 38 changed category — 4 became solvable, and 9 that
+had been solved were not solved again.
 
 ## What a failure is worth
 
