@@ -16,16 +16,42 @@ approximated.
 Requires Python 3.12, [uv](https://docs.astral.sh/uv/), a JDK 21, and
 [Ghidra](https://github.com/NationalSecurityAgency/ghidra) 12.1.3.
 
+Install the command from GitHub:
+
 ```bash
-uv sync --frozen
+uv tool install git+https://github.com/franknoh/ppy-rev
+ppy-rev --version
+```
+
+`uv tool upgrade ppy-rev` updates it, `uv tool uninstall ppy-rev` removes it. To work on
+the code instead, clone the repository and use its environment — `uv run ppy-rev ...`, or
+plain `ppy-rev` with `.venv` activated:
+
+```bash
+git clone https://github.com/franknoh/ppy-rev
+cd ppy-rev && uv sync --frozen
+```
+
+Either way, point `ppy-rev` at Ghidra:
+
+```bash
 export PPY_REV_GHIDRA_HOME=/path/to/ghidra_12.1.3_PUBLIC
 ```
 
-`ppy-rev` never downloads Ghidra itself. The Docker image (`docker compose build`)
-contains a checksum-verified Ghidra and every tool the test suite needs.
+On Linux, an installation already on the machine can be found by its headless launcher,
+`support/analyzeHeadless`:
 
-Run the CLI inside the project environment: `uv run ppy-rev ...`, or plain `ppy-rev`
-with `.venv` activated.
+```bash
+ls -d /opt/ghidra* ~/ghidra* ~/.local/opt/ghidra* 2>/dev/null          # the usual places
+launcher=$(find /opt /usr/share /usr/local "$HOME" -name analyzeHeadless -type f \
+    -not -path '*/docker/*' 2>/dev/null | head -1)                    # or search for it
+export PPY_REV_GHIDRA_HOME=$(dirname "$(dirname "$launcher")")
+echo "$PPY_REV_GHIDRA_HOME"                                           # .../ghidra_12.1.3_PUBLIC
+```
+
+`--ghidra-home PATH` sets it for a single run instead. `ppy-rev` never downloads Ghidra
+itself. The Docker image (`docker compose build`) contains a checksum-verified Ghidra and
+every tool the test suite needs.
 
 ## Usage
 
