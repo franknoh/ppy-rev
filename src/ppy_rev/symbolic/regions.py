@@ -17,6 +17,7 @@ from ppy_rev.ir.cfg import ControlFlow, control_flow, immediate_post_dominators
 from ppy_rev.ir.model import (
     Branch,
     Call,
+    DirectTarget,
     ExternalTarget,
     Function,
     IndirectJump,
@@ -25,6 +26,7 @@ from ppy_rev.ir.model import (
     Load,
     Operand,
     Phi,
+    Return,
     Store,
     TailCall,
     Var,
@@ -45,8 +47,14 @@ class MergeRegion:
 
 
 class RegionFinder:
-    def __init__(self, max_blocks: int = MAX_REGION_BLOCKS) -> None:
+    def __init__(
+        self,
+        max_blocks: int = MAX_REGION_BLOCKS,
+        helpers: Callable[[int], bool] | None = None,
+    ) -> None:
         self.max_blocks = max_blocks
+        self.helpers = helpers if helpers is not None else _no_helpers
+        """Whether a call to this address may sit inside a region; by default none may."""
         self._post_dominators: dict[int, tuple[int | None, ...]] = {}
         self._flows: dict[int, ControlFlow] = {}
         self._regions: dict[tuple[int, int], MergeRegion | None] = {}
@@ -100,6 +108,20 @@ class RegionFinder:
 
         return usable
 
+    def _callable(self, call: Call) -> bool:
+        """Calls a region may contain: library output, and small helpers that always return.
+
+        Everything the callee writes is merged with the rest of memory, and the values it
+        computed are gone by the join, so what matters is only that both paths come back.
+        """
+        match call.target:
+            case ExternalTarget():
+                return True
+            case DirectTarget(address=address):
+                return self.helpers(address)
+            case _:
+                return False
+
     def region(self, function: Function, branch: int) -> MergeRegion | None:
         key = (function.entry, branch)
         if key not in self._regions:
@@ -140,9 +162,10 @@ class RegionFinder:
             if block_id == branch or len(blocks) >= self.max_blocks:
                 return None
             block = function.blocks[block_id]
-            if not isinstance(block.terminator, Jump | Branch | IndirectJump) or any(
-                isinstance(operation, Call) and not isinstance(operation.target, ExternalTarget)
+            if not isinstance(block.terminator, Jump | Branch | IndirectJump) or not all(
+                self._callable(operation)
                 for operation in block.operations
+                if isinstance(operation, Call)
             ):
                 return None
             blocks.add(block_id)
@@ -315,3 +338,24 @@ class _Addressing:
                     work.append(value)
                     changed = True
         return frozenset(marked), frozenset(slots)
+
+
+def _no_helpers(address: int) -> bool:
+    del address
+    return False
+
+
+def mergeable_helper(function: Function, max_blocks: int = 24) -> bool:
+    """A small function that cannot loop and calls nothing itself: it always returns."""
+    if len(function.blocks) > max_blocks:
+        return False
+    flow = control_flow(function)
+    if any(
+        flow.dominates(target, source)
+        for source, targets in enumerate(flow.successors)
+        for target in targets
+    ):
+        return False
+    return not any(
+        isinstance(operation, Call) for block in function.blocks for operation in block.operations
+    ) and all(isinstance(block.terminator, Jump | Branch | Return) for block in function.blocks)

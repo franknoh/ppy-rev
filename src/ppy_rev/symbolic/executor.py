@@ -58,7 +58,7 @@ from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.bounds import unsigned_bounds
 from ppy_rev.symbolic.evaluate import UnassignedSymbolError, evaluate
 from ppy_rev.symbolic.expr import Expr, Op
-from ppy_rev.symbolic.regions import MergeRegion, RegionFinder
+from ppy_rev.symbolic.regions import MergeRegion, RegionFinder, mergeable_helper
 from ppy_rev.symbolic.state import Constraint, ConstraintKind, Frame, State
 
 
@@ -275,13 +275,14 @@ class Executor:
         self._next_state = 0
         self._auxiliary = 0
         self._pending: list[tuple[int, int, State]] = []
-        self._regions = RegionFinder()
+        self._regions = RegionFinder(helpers=self._is_helper)
         self.seed: Mapping[str, int] | None = None
         """When set, runs follow this input instead of forking, recording `flips`."""
         self.flips: list[Flip] = []
         self._started = time.monotonic()
         self._exploration = Exploration([], [], self.statistics)
         self._report_at = _REPORT_EVERY_STEPS
+        self._helpers: dict[int, bool] = {}
         self._created = time.monotonic()
         """When this executor was made: what the reported solver share is measured against."""
 
@@ -381,6 +382,15 @@ class Executor:
     def exhausted(self) -> bool:
         """No states remain to explore."""
         return not self._pending
+
+    def _is_helper(self, address: int) -> bool:
+        """Whether a call to `address` may sit inside a merged branch region."""
+        known = self._helpers.get(address)
+        if known is None:
+            function = self._functions.get(address)
+            known = function is not None and mergeable_helper(function)
+            self._helpers[address] = known
+        return known
 
     def report_progress(self) -> None:
         """Tell the progress reporter where the search is; it decides whether to say so."""

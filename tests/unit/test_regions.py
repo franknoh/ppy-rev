@@ -12,7 +12,7 @@ from ppy_rev.ir.model import (
     Return,
     Terminator,
 )
-from ppy_rev.symbolic.regions import MergeRegion, RegionFinder
+from ppy_rev.symbolic.regions import MergeRegion, RegionFinder, mergeable_helper
 from support.revir import ORIGIN, FunctionBuilder
 
 
@@ -84,3 +84,18 @@ def test_addressing_follows_values_through_memory() -> None:
     addressing = RegionFinder().addressing(builder.finish(()))
     assert pointer.id in addressing and builder.input("RDI").id in addressing
     assert data.id not in addressing and builder.input("RSI").id not in addressing
+
+
+def test_only_helpers_that_always_return_are_mergeable() -> None:
+    assert mergeable_helper(_function(DIAMOND))
+    assert not mergeable_helper(_function(LOOP))  # might not reach the join
+    assert not mergeable_helper(_function(DIAMOND, calls=frozenset({2})))  # may call anything
+    assert not mergeable_helper(_function(DIAMOND), max_blocks=2)
+
+
+def test_a_small_leaf_helper_may_sit_inside_a_region() -> None:
+    """Per-character loops often call a tiny helper; refusing those loses every merge."""
+    calling = _function(DIAMOND, calls=frozenset({2}))
+    assert RegionFinder().region(calling, 0) is None
+    allowed = RegionFinder(helpers=lambda address: True)
+    assert allowed.region(calling, 0) == MergeRegion(0, 3, frozenset({1, 2}))

@@ -25,6 +25,9 @@ it rather than guessing.
   [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
+- **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
+  rather than an assumption, so a challenge that only reveals its answer under a debugger is
+  solved, and the answer says it needs one.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 

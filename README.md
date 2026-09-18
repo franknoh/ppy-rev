@@ -162,8 +162,10 @@ loop continue on their own). A backward slice from the goal skips work that cann
 messages printed along the way, and helper functions that only print.
 
 Library calls use models of the C functions crackmes typically use (`strlen`, `strcmp`,
-`memcmp`, `read`, `fgets`, `scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the ctype
-tables, `puts`, `printf`, `exit`, ...), checked against glibc by differential tests. Where
+`strchr`, `memcmp`, `read`, `fgets`, `scanf`, `atoi`/`strtol`, `isalpha`/`toupper` and the
+ctype tables, `puts`, `printf`, `exit`, ...), checked against glibc by differential tests.
+`ptrace(PTRACE_TRACEME)` is left to the solver rather than assumed, so anti-debugging
+checks are searched both ways and an answer that needs a debugger says so. Where
 a model approximates, the result says so, and an approximation that could hide paths
 turns `unsat` into `analysis incomplete`. Every solution is re-run on the concrete RevIR
 interpreter before it is reported, and the shortest argv string is preferred.
