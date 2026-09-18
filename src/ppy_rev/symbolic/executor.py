@@ -53,6 +53,7 @@ from ppy_rev.ir.model import (
 )
 from ppy_rev.progress import Progress, Silent, plural
 from ppy_rev.solver.backend import CheckResult, SolverBackend, Status
+from ppy_rev.summaries.libc import model_name
 from ppy_rev.symbolic import encode
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.bounds import unsigned_bounds
@@ -268,7 +269,7 @@ class Executor:
         self.statistics = Statistics()
         self._functions = {function.entry: function for function in module.functions}
         self._imports = {
-            address: external.name
+            address: model_name(external)
             for external in module.externals
             for address in external.addresses
         }

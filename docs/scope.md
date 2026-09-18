@@ -30,11 +30,13 @@ it rather than guessing.
 - **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
   rather than an assumption, so a challenge that only reveals its answer under a debugger is
   solved, and the answer says it needs one.
-- **Simple C++**: a line read with `std::getline` into a `std::string`, compared and printed
-  through `std::cout`, is modeled — `std::string` uses libstdc++'s own layout, so code that
-  reads the object directly agrees with code that calls `size()` and `data()`. This covers
-  C++ compiled without optimization; `-O2` inlines the iostream machinery, which is not
-  modeled and is reported as unsupported rather than guessed.
+- **Simple C++**: input read with `std::getline` or `std::cin >>` into a `std::string`,
+  indexed, sized, compared, and printed through `std::cout`. `std::string` uses libstdc++'s
+  own layout, so code that reads the object directly agrees with code that calls `size()`
+  and `data()`, and which overload an import is comes from its mangled symbol rather than
+  from a demangled name a C program could share. This covers C++ compiled without
+  optimization; `-O2` inlines the iostream machinery, which is not modeled and is reported
+  as unsupported rather than guessed.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 

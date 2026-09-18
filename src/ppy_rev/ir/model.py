@@ -414,6 +414,8 @@ class ExternalFunction:
     addresses: tuple[int, ...]
     """Addresses that resolve to this import (PLT thunks and placeholder entries)."""
     no_return: bool
+    symbol: str = ""
+    """The name the linker sees, which for C++ says which overload this is."""
 
 
 @dataclass(frozen=True, slots=True)

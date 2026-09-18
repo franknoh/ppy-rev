@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ppy_rev.abi import CallingConvention
+from ppy_rev.ir.model import ExternalFunction
 from ppy_rev.summaries import cxx
 from ppy_rev.summaries.ctype import CLASSIFIERS
 
@@ -70,6 +71,8 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("std::string::data", 1),
         LibraryFunction("std::string::empty", 1),
         LibraryFunction("std::string::at", 2),
+        LibraryFunction("std::istream::operator>>", 2),
+        LibraryFunction("std::endl", 1),
         LibraryFunction("std::string::begin", 1),
         LibraryFunction("std::string::end", 1),
         LibraryFunction("ptrace", 4, variadic=True),
@@ -116,7 +119,12 @@ def modeled_reads(convention: CallingConvention) -> Callable[[str], frozenset[st
 
 def canonical_name(name: str) -> str:
     base = name.split("@", 1)[0]
-    return ALIASES.get(base) or cxx.canonical(base) or base
+    return ALIASES.get(base, base)
+
+
+def model_name(external: ExternalFunction) -> str:
+    """What the models call an import: C++ by its mangled symbol, C by its name."""
+    return cxx.from_symbol(external.symbol) or canonical_name(external.name)
 
 
 def library_function(name: str) -> LibraryFunction | None:

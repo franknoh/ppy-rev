@@ -7,6 +7,10 @@ code reads the fields itself instead of calling `size()` and `data()`.
     struct string { char *data; size_t size; union { char buffer[16]; size_t capacity; }; }
 
 A string shorter than 16 bytes lives in `buffer` and `data` points at it.
+
+Which function an import is comes from the name the linker sees, not from Ghidra's
+demangling: `size` and `data` are ordinary C names too, while `_ZNKSt7__cxx1112basic_...`
+can only be one thing.
 """
 
 from __future__ import annotations
@@ -19,34 +23,47 @@ SMALL = 15
 """Longest string the object holds without allocating."""
 SIZE_OF = 32
 
-NAMES = {
-    "operator<<": "std::ostream::operator<<",
-    "~string": "std::string::~string",
-    "string": "std::string::string",
-    "size": "std::string::size",
-    "length": "std::string::size",
-    "data": "std::string::data",
-    "c_str": "std::string::data",
-    "empty": "std::string::empty",
-    "operator[]": "std::string::at",
-    "at": "std::string::at",
-    "begin": "std::string::begin",
-    "end": "std::string::end",
+_STRING = "basic_string"
+_ISTREAM = "basic_istream"
+_OSTREAM = "basic_ostream"
+
+
+def from_symbol(symbol: str) -> str | None:
+    """The model name for a mangled libstdc++ symbol, or None when it is not one we know."""
+    if not symbol.startswith("_Z"):
+        return None
+    if "7getline" in symbol and _STRING in symbol:
+        return "std::getline"
+    if symbol.startswith("_ZSt") and "rs" in symbol and _ISTREAM in symbol and _STRING in symbol:
+        return "std::istream::operator>>"
+    if symbol.startswith("_ZSt4endl"):
+        return "std::endl"
+    if _OSTREAM in symbol or symbol.startswith("_ZNSols"):
+        return "std::ostream::operator<<"
+    if _STRING not in symbol:
+        return None
+    for suffix, name in _STRING_MEMBERS.items():
+        if symbol.endswith(suffix):
+            return name
+    return None
+
+
+_STRING_MEMBERS = {
+    "4sizeEv": "std::string::size",
+    "6lengthEv": "std::string::size",
+    "4dataEv": "std::string::data",
+    "5c_strEv": "std::string::data",
+    "5emptyEv": "std::string::empty",
+    "ixEm": "std::string::at",
+    "2atEm": "std::string::at",
+    "5beginEv": "std::string::begin",
+    "3endEv": "std::string::end",
+    "C1Ev": "std::string::string",
+    "C2Ev": "std::string::string",
+    "C1EPKcRKS3_": "std::string::string",
+    "C1EPKc": "std::string::string",
+    "D1Ev": "std::string::~string",
+    "D2Ev": "std::string::~string",
+    "10_M_disposeEv": "std::string::~string",
 }
-"""Demangled names Ghidra gives libstdc++ imports, mapped to what the models call them."""
-
-PREFIXED = {
-    "getline<": "std::getline",
-    "endl<": "std::endl",
-    "operator<<": "std::ostream::operator<<",
-    "operator==": "std::string::operator==",
-}
-"""Templates, whose demangled names carry their arguments."""
-
-
-def canonical(name: str) -> str | None:
-    """The model name for a demangled C++ symbol, or None when it is not one we know."""
-    for prefix, canonical_name in PREFIXED.items():
-        if name.startswith(prefix):
-            return canonical_name
-    return NAMES.get(name)
+"""Mangled endings of the `std::string` members a challenge is likely to call."""

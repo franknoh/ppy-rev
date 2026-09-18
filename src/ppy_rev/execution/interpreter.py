@@ -45,6 +45,7 @@ from ppy_rev.ir.model import (
     UserOp,
     mask,
 )
+from ppy_rev.summaries.libc import model_name
 
 
 class FaultKind(StrEnum):
@@ -117,7 +118,7 @@ class Interpreter:
         self._pointer_width = module.target.pointer_width
         self._functions = {function.entry: function for function in module.functions}
         self._externals = {
-            address: external.name
+            address: model_name(external)
             for external in module.externals
             for address in external.addresses
         }

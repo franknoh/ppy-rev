@@ -71,6 +71,7 @@ from ppy_rev.ir.model import (
     mask,
     operation_output,
 )
+from ppy_rev.summaries.libc import model_name
 
 RUNTIME_NAME = "runtime.ppy"
 MODULE_NAME = "module.ppy"
@@ -332,7 +333,7 @@ class _FunctionEmitter:
         self.function = function
         self.functions = functions
         self.externals = {
-            address: external.name
+            address: model_name(external)
             for external in module.externals
             for address in external.addresses
         }

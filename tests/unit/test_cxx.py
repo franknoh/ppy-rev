@@ -11,6 +11,7 @@ from ppy_rev.ir.model import Endianness, Origin
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.summaries import cxx
 from ppy_rev.summaries.concrete import ConcreteIO, ConcreteLibc
+from ppy_rev.summaries.cxx import from_symbol
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.summaries.symbolic import SymbolicLibc
 from ppy_rev.symbolic import expr as sx
@@ -80,14 +81,14 @@ def _stored(state: State, assignment: dict[str, int], address: int, width: int =
 @given(lines)
 def test_getline_stores_the_line_the_same_way_in_both_models(line: bytes) -> None:
     stdin = line + b"\nrest"
-    result, memory, _ = _concrete("getline<char>", [STREAM, OBJECT], stdin)
+    result, memory, _ = _concrete("std::getline", [STREAM, OBJECT], stdin)
     assert result == STREAM
     assert memory.load(OBJECT + cxx.SIZE, 64) == len(line)
     pointer = memory.load(OBJECT + cxx.DATA, 64)
     assert memory.read(pointer, len(line)) == line
     assert (pointer == OBJECT + cxx.BUFFER) == (len(line) <= cxx.SMALL)
 
-    state, assignment, outcome = _symbolic("getline<char>", [STREAM, OBJECT], stdin)
+    state, assignment, outcome = _symbolic("std::getline", [STREAM, OBJECT], stdin)
     assert evaluate(outcome.outputs["RAX"], assignment) == STREAM
     assert _stored(state, assignment, OBJECT + cxx.SIZE) == len(line)
     symbolic_pointer = _stored(state, assignment, OBJECT + cxx.DATA)
@@ -99,7 +100,7 @@ def test_getline_stores_the_line_the_same_way_in_both_models(line: bytes) -> Non
 
 def test_size_and_data_read_back_what_getline_wrote() -> None:
     stdin = b"open sesame\n"
-    _, memory, _ = _concrete("getline<char>", [STREAM, OBJECT], stdin)
+    _, memory, _ = _concrete("std::getline", [STREAM, OBJECT], stdin)
     io = ConcreteIO()
     libc = ConcreteLibc(SYSV_X86_64, io)
     registers = dict(zip(SYSV_X86_64.integer_parameters, [OBJECT], strict=False))
@@ -117,14 +118,14 @@ def test_stream_output_is_what_the_program_printed() -> None:
     assert result["RAX"] == STREAM
     assert bytes(io.stdout) == b"Correct!"
 
-    state, assignment, outcome = _symbolic("operator<<", [STREAM, TEXT], b"")
+    state, assignment, outcome = _symbolic("std::ostream::operator<<", [STREAM, TEXT], b"")
     state.memory.write_byte(TEXT, sx.const(0x43, 8))
     assert evaluate(outcome.outputs["RAX"], assignment) == STREAM
 
 
 def test_a_long_line_goes_to_the_heap() -> None:
     line = b"x" * 30
-    _, memory, _ = _concrete("getline<char>", [STREAM, OBJECT], line + b"\n")
+    _, memory, _ = _concrete("std::getline", [STREAM, OBJECT], line + b"\n")
     pointer = memory.load(OBJECT + cxx.DATA, 64)
     assert pointer != OBJECT + cxx.BUFFER
     assert memory.read(pointer, len(line)) == line
@@ -132,7 +133,7 @@ def test_a_long_line_goes_to_the_heap() -> None:
 
 
 def test_indexing_and_iterators_point_into_the_string() -> None:
-    _, memory, _ = _concrete("getline<char>", [STREAM, OBJECT], b"sesame\n")
+    _, memory, _ = _concrete("std::getline", [STREAM, OBJECT], b"sesame\n")
     io = ConcreteIO()
     libc = ConcreteLibc(SYSV_X86_64, io)
 
@@ -146,10 +147,27 @@ def test_indexing_and_iterators_point_into_the_string() -> None:
     assert memory.read(call("std::string::at", OBJECT, 2), 1) == b"s"
 
 
-def test_demangled_names_map_to_the_models() -> None:
-    assert canonical_name("getline<char,std::char_traits<char>,std::allocator<char>>") == (
-        "std::getline"
+def test_models_are_chosen_by_the_linker_symbol_not_the_demangled_name() -> None:
+    """`size` and `data` are ordinary C names; only the mangled symbol is unambiguous."""
+    string = "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE"
+    assert from_symbol("_ZSt7getlineIcSt11char_traitsIcESaIcEERSt13basic_istream") is None
+    assert from_symbol(
+        f"_ZSt7getlineIcSt11char_traitsIcESaIcEERSt13basic_istreamIT_T0_ES7_RN{string[3:]}"
+    ) == ("std::getline")
+    assert from_symbol(f"{string}4sizeEv") == "std::string::size"
+    assert from_symbol(f"{string}ixEm") == "std::string::at"
+    assert from_symbol("_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_PKc") == (
+        "std::ostream::operator<<"
     )
-    assert canonical_name("operator<<") == "std::ostream::operator<<"
-    assert canonical_name("~string") == "std::string::~string"
-    assert canonical_name("strlen") == "strlen"  # a C name stays itself
+    assert from_symbol("_ZSt4endlIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_") == "std::endl"
+    assert from_symbol("size") is None  # a C function keeps its own meaning
+    assert canonical_name("strlen") == "strlen"
+
+
+def test_a_token_is_read_up_to_whitespace() -> None:
+    _, memory, _ = _concrete("std::istream::operator>>", [STREAM, OBJECT], b"  hunter2 rest\n")
+    assert memory.load(OBJECT + cxx.SIZE, 64) == len(b"hunter2")
+    assert memory.read(memory.load(OBJECT + cxx.DATA, 64), 7) == b"hunter2"
+
+    state, assignment, _ = _symbolic("std::istream::operator>>", [STREAM, OBJECT], b"hi there\n")
+    assert _stored(state, assignment, OBJECT + cxx.SIZE) == 2

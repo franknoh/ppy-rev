@@ -92,6 +92,8 @@ class SymbolicLibc:
             "std::string::empty": self._string_empty,
             "std::ostream::operator<<": self._ostream_write,
             "std::string::at": self._string_at,
+            "std::istream::operator>>": self._istream_read,
+            "std::endl": self._endl,
             "std::string::begin": self._string_data,
             "std::string::end": self._string_end,
             "read": self._read,
@@ -413,6 +415,41 @@ class SymbolicLibc:
         if text is not None and call.state.memory.accessible(text, 1, write=False):
             call.state.io.stdout.extend(self._string_bytes(call, text))
         return self._returns(call, stream)
+
+    def _endl(self, call: _Call) -> list[ExternalOutcome]:
+        """`out << std::endl`: a newline, and a flush that changes nothing here."""
+        call.state.io.stdout.append(_NEWLINE)
+        return self._returns(call, call.arguments[0])
+
+    def _istream_read(self, call: _Call) -> list[ExternalOutcome]:
+        """`in >> s`: the next whitespace-delimited token, into a std::string."""
+        object_at = self._concrete(call, call.arguments[1], "string")
+        io = call.state.io
+        window = list(io.stdin[io.stdin_position :])
+        if not window:
+            return self._returns(call, call.arguments[0])
+        options: list[tuple[Expr, tuple[int, int]]] = []
+        for skipped in (0, 1):
+            if skipped >= len(window):
+                break
+            lead = sx.TRUE if not skipped else _is_space(window[0])
+            token = sx.TRUE
+            for length in range(1, len(window) - skipped + 1):
+                token = sx.bool_and(token, sx.bool_not(_is_space(window[skipped + length - 1])))
+                after = window[skipped + length] if skipped + length < len(window) else None
+                ends = sx.TRUE if after is None else _is_space(after)
+                options.append((sx.bool_and(lead, sx.bool_and(token, ends)), (skipped, length)))
+        options.sort(key=lambda option: option[1])
+        outcomes: list[ExternalOutcome] = []
+        note = "a token ends at whitespace"
+        for state, (skipped, length) in _split(call, call.state, options, note):
+            start = state.io.stdin_position + skipped
+            content = list(state.io.stdin[start : start + length])
+            self._store_string(call, state, object_at, content)
+            state.io.stdin_reads.append((start, start + length, False))
+            state.io.stdin_position = start + length
+            outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
+        return outcomes
 
     def _getline(self, call: _Call) -> list[ExternalOutcome]:
         """`std::getline(in, s)`: a line without its newline, into a std::string."""

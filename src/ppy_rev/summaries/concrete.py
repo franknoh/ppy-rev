@@ -86,6 +86,8 @@ class ConcreteLibc:
                 self._string_field(memory, arguments[0], cxx.SIZE) == 0
             ),
             "std::ostream::operator<<": self._ostream_write,
+            "std::istream::operator>>": self._istream_read,
+            "std::endl": self._endl,
             "std::string::at": lambda arguments, memory: (
                 (self._string_field(memory, arguments[0], cxx.DATA) + arguments[1]) & mask(64)
             ),
@@ -288,6 +290,24 @@ class ConcreteLibc:
         text = arguments[1]
         if text:
             self.io.stdout.extend(self._string(memory, text))
+        return arguments[0]
+
+    def _endl(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self.io.stdout.append(0x0A)
+        return arguments[0]
+
+    def _istream_read(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        remaining = self.io.stdin[self.io.stdin_position :]
+        token = remaining.lstrip(b" \t\n\r\f\v")
+        skipped = len(remaining) - len(token)
+        end = len(token)
+        for index, byte in enumerate(token):
+            if byte in b" \t\n\r\f\v":
+                end = index
+                break
+        self._store_string(memory, arguments[1], token[:end])
+        self.io.stdin_position += skipped + end
         return arguments[0]
 
     def _getline(self, arguments: list[int], memory: ConcreteMemory) -> int:

@@ -55,6 +55,9 @@ def lift_export(export: GhidraExport, functions: frozenset[str] | None = None) -
     callable_entries = {function.entry for function in export.functions}
     thunks = {f.entry: f.thunk_target for f in export.functions if f.thunk_target is not None}
     external_no_return = {f.name: f.no_return for f in export.external_functions}
+    external_symbols = {
+        f.name: f.original_name for f in export.external_functions if f.original_name
+    }
 
     def resolve_call(address: int) -> CallTarget:
         thunk = thunks.get(address)
@@ -122,7 +125,12 @@ def lift_export(export: GhidraExport, functions: frozenset[str] | None = None) -
             if block.loaded and not block.artificial and block.space == "ram"
         ),
         externals=tuple(
-            ExternalFunction(name, tuple(sorted(addresses)), external_no_return.get(name, False))
+            ExternalFunction(
+                name,
+                tuple(sorted(addresses)),
+                external_no_return.get(name, False),
+                external_symbols.get(name, ""),
+            )
             for name, addresses in sorted(externals.items())
         ),
         functions=tuple(lifted),

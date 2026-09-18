@@ -21,7 +21,7 @@ from ppy_rev.ir.model import (
     operation_inputs,
     terminator_inputs,
 )
-from ppy_rev.summaries.libc import canonical_name
+from ppy_rev.summaries.libc import canonical_name, model_name
 
 _PRINTABLE = frozenset(range(0x20, 0x7F)) | {0x09, 0x0A, 0x0D}
 
@@ -39,8 +39,8 @@ def calls(function: Function) -> Iterator[tuple[Call, int]]:
 def external_name(module: Module, call: Call) -> str | None:
     """The library function a call reaches: directly, or through a resolved GOT entry."""
     match call.target:
-        case ExternalTarget(name=name):
-            return canonical_name(name)
+        case ExternalTarget(name=name, address=address):
+            return _external_at(module, address) or canonical_name(name)
         case DirectTarget(address=address):
             return _external_at(module, address)
         case IndirectTarget(candidates=candidates) if candidates:
@@ -53,7 +53,7 @@ def external_name(module: Module, call: Call) -> str | None:
 def _external_at(module: Module, address: int) -> str | None:
     for external in module.externals:
         if address in external.addresses:
-            return canonical_name(external.name)
+            return model_name(external)
     return None
 
 
