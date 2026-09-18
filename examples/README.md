@@ -1,18 +1,19 @@
 # Examples
 
-60 reversing challenges from past CTFs that `ppy-rev solve` answers, most of them
-with no hints at all. Each directory has a walkthrough: what the binary checks, the
-command, the output, and how the answer is found.
+60 reversing challenges from past CTFs that `ppy-rev solve` answers, most of them with no
+hints at all. Each directory has a walkthrough: what the binary checks, the command, the
+output, and how the answer is found.
 
-The binaries are other people's challenges, so they are not stored here. `fetch.sh`
-downloads each one from a public archive at a pinned commit and checks its SHA-256;
-nothing it downloads is run. `check.sh` then solves every example with the command its
-README documents and compares the answer.
+The binaries are other people's challenges, so they are not stored here. `fetch.sh` downloads
+each one from a public archive at a pinned commit and checks its SHA-256; nothing it downloads
+is run. `check.sh` then solves every example with the command its README documents and compares
+the answer. With `VERIFY=1` it also runs each answer on the real binary, in the sandbox.
 
 ```bash
 examples/fetch.sh
 uv run ppy-rev solve examples/ais3_crackme/ais3_crackme
 examples/check.sh                     # all of them, about ten minutes
+VERIFY=1 examples/check.sh            # and check each answer against the binary itself
 ```
 
 | Example | Event | Input | Hints | Answer | Time |
@@ -77,10 +78,11 @@ examples/check.sh                     # all of them, about ten minutes
 | [foobarctf_cipher_maze](foobarctf_cipher_maze/README.md) | FooBarCTF 2025 | stdin | none | `x0r_and_l0g1c@l_sh1ft_e@sy_r1gh8??` | 48 s |
 | [crewctf_ez_rev](crewctf_ez_rev/README.md) | CrewCTF 2023 | stdin | none | `flag{ez_rev_goes_brrrrr....but_wait_a_seccond_the_format_flag_looks_weird}` | 52 s |
 | [csaw_beleaf](csaw_beleaf/README.md) | CSAW CTF Qualification Round 2019 | stdin | `--length 33` | `flag{we_beleaf_in_your_re_future}` | 179 s |
-
 Any of them can also be lifted to PPy and run again from there, as
 [ais3_crackme](ais3_crackme/README.md) shows.
 
-Times are with the Ghidra analysis already cached; the first run of a binary adds about
-five seconds for it. Answers that are not flags are passwords the program turns into one,
-or the number it asks for.
+Times are with the Ghidra analysis already cached; the first run of a binary adds about five
+seconds for it. Answers that are not flags are passwords the program turns into one, or the
+number it asks for. This table is generated from the example READMEs by
+`scripts/examples_index.py`. One binary, [crewctf_ez_rev](crewctf_ez_rev/README.md), rejects
+every input on any glibc but the author's, and its README says so.

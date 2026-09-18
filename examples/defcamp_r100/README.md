@@ -46,6 +46,7 @@ Goal:
 Solver:
   backend: z3
   result: sat
+  note: code runs before main: _INIT_1 calls ptrace (not modeled)
 
 Solution:
   Code_Talkers
@@ -60,7 +61,9 @@ shortest line that works.
   read consumes.
 - **Goal:** `"Nice!"` is picked as success (`nice`), `"Incorrect password!"` as failure.
 - **Anti-debugging:** solving starts at `main`, so the constructor never runs and the
-  `ptrace` trick plays no part. Nothing is ever executed natively unless you ask for
-  `--verify`.
+  `ptrace` trick plays no part — `solve` names it in the `note:` line rather than leaving it
+  unsaid, since a constructor can decide the outcome on its own (as in
+  [crewctf_ez_rev](../crewctf_ez_rev/README.md)). Nothing is ever executed natively unless
+  you ask for `--verify`.
 - **Search:** twelve comparisons, each with one side that leads to failure, then one solver
   call for the answer.

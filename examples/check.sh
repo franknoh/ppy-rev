@@ -16,6 +16,8 @@ for readme in examples/*/README.md; do
     [[ -n $filter && $name != *$filter* ]] && continue
     command=$(sed -n 's/^uv run ppy-rev solve //p' "$readme" | head -1)
     answer=$(sed -n 's/^| Answer | `\(.*\)` |$/\1/p' "$readme" | head -1)
+    # A README may state that the original binary rejects every input on this machine.
+    expected_native=$(sed -n 's/^| Native run | \(fails\).* |$/\1/p' "$readme" | head -1)
     [[ -z $command || -z $answer ]] && { echo "skip  $name (no command or answer)"; continue; }
     binary=${command%% *}
     if [[ ! -f $binary ]]; then
@@ -26,6 +28,7 @@ for readme in examples/*/README.md; do
     output=$(eval "uv run ppy-rev solve $command ${verify:-}" 2>&1)
     seconds=$(($(date +%s) - started))
     native=$(sed -n 's/.*native (sandboxed): \([a-z]*\).*/ \1 natively/p' <<<"$output" | head -1)
+    [[ $native == " failed natively" && -n $expected_native ]] && native=" failed natively (documented)"
     if grep -qF -- "$answer" <<<"$output" && [[ -z $verify || $native != " failed natively" ]]; then
         printf 'ok    %-28s %3ds%s\n' "$name" "$seconds" "$native"
     else
