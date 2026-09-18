@@ -9,7 +9,8 @@ over Z3.
 
 Linux ELF, x86-64, little-endian. Floating-point p-code and processor-specific
 user operations are lifted as explicit unsupported operations rather than
-approximated.
+approximated. [What it can and cannot solve](docs/scope.md) describes the kinds of
+challenge this covers, measured on 1,796 binaries from past CTFs.
 
 ## Installation
 
@@ -180,6 +181,10 @@ writes the first one's raw bytes, `--emit-smt2 [FILE]` the goal path's constrain
 SMT-LIB, and `-v`/`-vv` show evidence, statistics, and path constraints. Limits:
 `--timeout` (seconds), `--max-states`, `--max-steps`, `--max-call-depth`,
 `--max-loop-iterations`, and `--solver-timeout`; running out of one is reported as such.
+A long run does not go quiet: after ten seconds it writes a line to stderr every few
+seconds — the phase, paths waiting, operations, solver calls, blocks reached — and Ghidra
+says it is still analyzing. That is on when stderr is a terminal; `--progress` and
+`--no-progress` decide it explicitly, and nothing on stdout changes either way.
 
 When symbolic search ends without an answer (a budget, or a symbolic pointer too wide to
 model), `solve` falls back to concolic search (`--strategy auto`, the default; `symbolic`
