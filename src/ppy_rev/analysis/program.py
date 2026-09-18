@@ -157,6 +157,27 @@ def initializers(module: Module) -> tuple[Initializer, ...]:
     return tuple(found)
 
 
+def executable_address(module: Module, address: int) -> int:
+    """`address` if an instruction was lifted there, else the next one in the same function.
+
+    A function's first instruction is often `endbr64`, which describes no operation and so
+    has nothing to reach: a goal on a function entry would otherwise be unreachable by
+    construction. Raises when the address is not inside a lifted function at all.
+    """
+    for function in module.functions:
+        starts = sorted(
+            instruction.address for block in function.blocks for instruction in block.instructions
+        )
+        if not starts or not starts[0] - 16 <= address <= starts[-1]:
+            continue
+        if address in starts:
+            return address
+        later = [start for start in starts if start > address]
+        if later and (function.entry <= address or address >= starts[0]):
+            return later[0]
+    raise PpyRevError(f"no lifted instruction at {address:#x}")
+
+
 @dataclass(frozen=True, slots=True)
 class StringReference:
     text: bytes

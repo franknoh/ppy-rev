@@ -116,6 +116,8 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
         else:
             out.write(f"  ASCII: {_escaped(data)}\n  Hex:   {data.hex(' ')}\n")
         verdict = "passed" if solution.verified else "failed"
+        if solution.traced:
+            out.write("  needs a debugger: ptrace(PTRACE_TRACEME) must fail\n")
         out.write(f"\nVerification:\n  RevIR execution: {verdict} ({solution.verification})\n")
         if solution.native is not None:
             passed = solution.native.passed

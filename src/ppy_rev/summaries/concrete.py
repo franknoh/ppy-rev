@@ -48,6 +48,8 @@ class ConcreteIO:
     stdout: bytearray = field(default_factory=bytearray)
     heap_next: int = HEAP_START
     random: RandomState = UNSEEDED
+    traced: bool = False
+    """Whether a debugger traces the program, so `ptrace(PTRACE_TRACEME)` fails."""
 
 
 type _Handler = Callable[[list[int], ConcreteMemory], int]
@@ -194,7 +196,7 @@ class ConcreteLibc:
         del memory
         if arguments[0] != _PTRACE_TRACEME:
             raise UnsupportedLibraryCallError(f"ptrace request {arguments[0]}")
-        return 0
+        return mask(64) if self.io.traced else 0
 
     def _strcspn(self, arguments: list[int], memory: ConcreteMemory) -> int:
         text = self._string(memory, arguments[0])

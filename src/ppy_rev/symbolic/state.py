@@ -18,6 +18,7 @@ class ConstraintKind(StrEnum):
     RETURN_ADDRESS = "return-address"
     INPUT = "input"
     LIBRARY = "library"
+    ENVIRONMENT = "environment"
     GOAL = "goal"
 
 
@@ -47,6 +48,12 @@ class SymbolicIO:
     """glibc's rand state, which only a concrete srand seed changes."""
     approximations: list[str] = field(default_factory=list[str])
     """Places where a library model over-approximated a result."""
+    traced: Expr | None = None
+    """`ptrace(PTRACE_TRACEME)`'s result: 0, or -1 when a debugger already traces us.
+
+    One value per run, chosen by the solver rather than assumed, because challenges exist
+    that only reveal their answer under a debugger.
+    """
 
     def copy(self) -> SymbolicIO:
         return SymbolicIO(
@@ -57,6 +64,7 @@ class SymbolicIO:
             heap_next=self.heap_next,
             random=self.random,
             approximations=list(self.approximations),
+            traced=self.traced,
         )
 
 

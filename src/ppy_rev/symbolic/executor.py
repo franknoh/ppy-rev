@@ -57,7 +57,7 @@ from ppy_rev.symbolic import encode
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.bounds import unsigned_bounds
 from ppy_rev.symbolic.evaluate import UnassignedSymbolError, evaluate
-from ppy_rev.symbolic.expr import Expr
+from ppy_rev.symbolic.expr import Expr, Op
 from ppy_rev.symbolic.regions import MergeRegion, RegionFinder
 from ppy_rev.symbolic.state import Constraint, ConstraintKind, Frame, State
 
@@ -77,6 +77,8 @@ class StopReason(StrEnum):
 
 
 _ENUMERATED_ADDRESSES = 8
+_CHOSEN_ADDRESSES = 64
+"""How many constants a pointer may choose between before the solver is asked instead."""
 """Addresses a pointer may take before enumerating them costs more than bounding them."""
 INCOMPLETE_REASONS = frozenset(
     {
@@ -571,8 +573,19 @@ class Executor:
     ) -> list[int]:
         low, high = unsigned_bounds(address)
         if high - low + 1 > limit:
-            # Most symbolic pointers have one value, or a handful: asking the solver for
-            # them one at a time costs two calls, bounding a 64-bit range costs 128.
+            # A pointer chosen among constants — what `strchr` or a jump table returns —
+            # says which values it can take, so no solver call is needed to list them.
+            chosen = constant_choices(address, _CHOSEN_ADDRESSES)
+            if chosen is not None:
+                usable = [
+                    candidate
+                    for candidate in chosen
+                    if state.memory.accessible(candidate, size, write)
+                ]
+                if usable:
+                    return usable
+            # Most other symbolic pointers have one value, or a handful: asking the solver
+            # for them one at a time costs two calls, bounding a 64-bit range costs 128.
             found = self._enumerate(state, address, min(limit, _ENUMERATED_ADDRESSES))
             if found is not None:
                 return [
@@ -1349,3 +1362,24 @@ def _resize(value: Expr, width: int) -> Expr:
     if value.width < width:
         return sx.zero_extend(value, width)
     return sx.extract(value, 0, width)
+
+
+def constant_choices(value: Expr, limit: int) -> list[int] | None:
+    """The constants an if-then-else tree selects between, or None if it is anything else.
+
+    `strchr` and friends return exactly this shape: one address per position, plus NULL.
+    Reading the leaves costs nothing, where asking the solver for them costs a call each.
+    """
+    found: set[int] = set()
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if item.is_const:
+            found.add(item.value)
+        elif item.op is Op.ITE:
+            pending.extend(item.args[1:])
+        else:
+            return None
+        if len(found) > limit:
+            return None
+    return sorted(found)

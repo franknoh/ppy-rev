@@ -14,6 +14,7 @@ from ppy_rev.analysis.flags import flag_prefixes
 from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import (
+    executable_address,
     find_main,
     initializers,
     reachable_functions,
@@ -28,7 +29,7 @@ from ppy_rev.ir.model import Function, Module
 from ppy_rev.progress import Progress
 from ppy_rev.solver.backend import SolverBackend
 from ppy_rev.solver.z3_backend import Z3Backend
-from ppy_rev.summaries.symbolic import SymbolicLibc
+from ppy_rev.summaries.symbolic import TRACED_SYMBOL, SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.concolic import ConcolicResult, concolic_search
 from ppy_rev.symbolic.executor import (
@@ -144,6 +145,8 @@ class Solution:
     verification: str
     native: NativeVerification | None = None
     """The sandboxed native run, when one was requested."""
+    traced: bool = False
+    """The answer only works while a debugger traces the program."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,7 +399,9 @@ def _select_goals(
     ranked = rank_goals(string_references(module, reachable))
     goal: GoalCandidate
     if request.goal_address is not None:
-        goal = GoalCandidate(request.goal_address, Outcome.SUCCESS, "", "", 1.0, ("given",))
+        address = executable_address(module, request.goal_address)
+        evidence = ("given",) if address == request.goal_address else ("given", "first instruction")
+        goal = GoalCandidate(address, Outcome.SUCCESS, "", "", 1.0, evidence)
     elif request.goal_string is not None:
         goal = _by_string(module, reachable, request.goal_string, Outcome.SUCCESS)
     else:
@@ -407,7 +412,7 @@ def _select_goals(
             )
         goal = successes[0]
     avoid = [
-        GoalCandidate(address, Outcome.FAILURE, "", "", 1.0, ("given",))
+        GoalCandidate(executable_address(module, address), Outcome.FAILURE, "", "", 1.0, ("given",))
         for address in request.avoid_addresses
     ]
     avoid.extend(
@@ -588,7 +593,9 @@ def _solutions(
         bounds = shortest(state, extra)
         found = False
         while len(solutions) < request.solutions:
-            model = executor.solve_with(state, all_symbols, [*blocking, *extra, *bounds])
+            traced_symbol = state.io.traced
+            wanted = all_symbols if traced_symbol is None else [*all_symbols, traced_symbol]
+            model = executor.solve_with(state, wanted, [*blocking, *extra, *bounds])
             if model is None and bounds:
                 bounds = []  # other solutions may need longer strings
                 continue
@@ -601,11 +608,12 @@ def _solutions(
             stdin = (
                 stdin_solution(symbols.stdin, model, state.io.stdin_reads) if has_stdin else None
             )
+            traced = traced_symbol is not None and model.get(TRACED_SYMBOL, 0) != 0
             blocking.append(_block(symbols, argv, stdin))
             if (argv, stdin) not in seen:
                 seen.add((argv, stdin))
                 solutions.append(
-                    _verify(module, main, request, goal, symbols, argv, stdin, watches)
+                    _verify(module, main, request, goal, symbols, argv, stdin, watches, traced)
                 )
         return found
 
@@ -697,12 +705,20 @@ def _verify(
     argv: bytes | None,
     stdin: bytes | None,
     watches: tuple[Watch, ...],
+    traced: bool = False,
 ) -> Solution:
     reserve = {index: len(content) for index, content in symbols.argv.items()}
     arguments = _arguments(module, reserve, argv)
-    verified, verification = _run_verification(module, main, arguments, stdin, watches, reserve)
-    native = None if request.native is None else _run_native(request, arguments, stdin, goal)
-    return Solution(argv, stdin, verified, verification, native)
+    verified, verification = _run_verification(
+        module, main, arguments, stdin, watches, reserve, traced
+    )
+    if request.native is None:
+        native = None
+    elif traced:
+        native = NativeVerification(None, "not run: this answer needs a debugger attached")
+    else:
+        native = _run_native(request, arguments, stdin, goal)
+    return Solution(argv, stdin, verified, verification, native, traced)
 
 
 def _arguments(module: Module, reserve: dict[int, int], argv: bytes | None) -> list[bytes]:
@@ -720,8 +736,11 @@ def _run_verification(
     stdin: bytes | None,
     watches: tuple[Watch, ...],
     reserve: dict[int, int],
+    traced: bool = False,
 ) -> tuple[bool, str]:
-    run = run_program(module, main, arguments, stdin or b"", watches, reserve=reserve)
+    run = run_program(
+        module, main, arguments, stdin or b"", watches, reserve=reserve, traced=traced
+    )
     verified = run.first_watch is not None and run.first_watch.name == "goal"
     return verified, "reaches the goal" if verified else run.outcome
 

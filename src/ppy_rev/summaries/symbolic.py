@@ -40,6 +40,9 @@ from ppy_rev.symbolic.state import ConstraintKind, State
 _NEWLINE = sx.const(0x0A, 8)
 _ZERO_BYTE = sx.const(0, 8)
 _PTRACE_TRACEME = 0
+_TRACED = sx.const(0xFFFF_FFFF_FFFF_FFFF, 64)
+TRACED_SYMBOL = "__traced"
+"""The environment value `ptrace(PTRACE_TRACEME)` returns: 0, or -1 under a debugger."""
 
 
 class _Unsupported(Exception):  # noqa: N818 - internal control flow
@@ -696,12 +699,18 @@ class SymbolicLibc:
         request = self._concrete(call, call.arguments[0], "ptrace request")
         if request != _PTRACE_TRACEME:
             raise _Unsupported(f"ptrace request {request}")
-        call.executor.approximate(
-            call.state,
-            "ptrace(PTRACE_TRACEME) returns 0: the program is assumed not to be traced",
-            may_hide_paths=False,
-        )
-        return self._returns(call, sx.const(0, 64))
+        state = call.state
+        if state.io.traced is None:
+            traced = sx.symbol(TRACED_SYMBOL, 64)
+            call.executor.add_constraint(
+                state,
+                sx.bool_or(sx.equal(traced, sx.const(0, 64)), sx.equal(traced, _TRACED)),
+                ConstraintKind.ENVIRONMENT,
+                call.origin,
+                "ptrace(PTRACE_TRACEME) fails only under a debugger",
+            )
+            state.io.traced = traced
+        return self._returns(call, state.io.traced)
 
     def _malloc(self, call: _Call) -> list[ExternalOutcome]:
         size = self._concrete(call, call.arguments[0], "size")

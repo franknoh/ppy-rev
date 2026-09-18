@@ -10,7 +10,7 @@ from hypothesis import strategies as st
 from ppy_rev.abi import SYSV_X86_64
 from ppy_rev.execution.memory import ConcreteMemory, Mapping
 from ppy_rev.execution.program import STANDARD_STREAMS
-from ppy_rev.ir.model import Endianness, Origin
+from ppy_rev.ir.model import Endianness, Origin, mask
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.summaries.concrete import ConcreteIO, ConcreteLibc, UnsupportedLibraryCallError
 from ppy_rev.summaries.symbolic import SymbolicLibc
@@ -154,9 +154,36 @@ def test_strchr(value: bytes, wanted: int) -> None:
     _run_both("strchr", [LEFT, 0x0A], value, b"")  # the usual newline search
 
 
-def test_ptrace_traceme_succeeds_and_other_requests_are_unsupported() -> None:
-    """Anti-debugging checks take the branch they take when nothing is tracing."""
-    _run_both("ptrace", [0, 0, 0, 0], b"", b"")
+def _ptrace_arguments() -> dict[str, int]:
+    return dict.fromkeys(SYSV_X86_64.integer_parameters[:4], 0)
+
+
+def test_ptrace_traceme_leaves_the_environment_to_the_solver() -> None:
+    """Some challenges only reveal their answer while a debugger traces them."""
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+    arguments = {register: sx.const(0, 64) for register in _ptrace_arguments()}
+    outcomes = SymbolicLibc(SYSV_X86_64).call(executor, state, "ptrace", arguments, Origin(0, 0))
+    assert outcomes is not None
+    (outcome,) = outcomes
+    assert isinstance(outcome, Returned)
+    result = outcome.outputs["RAX"]
+    assert result is state.io.traced
+    for value, possible in ((0, True), (mask(64), True), (5, False)):
+        model = executor.solve_with(
+            outcome.state, [result], [sx.equal(result, sx.const(value, 64))]
+        )
+        assert (model is not None) is possible, value
+
+
+def test_the_concrete_model_follows_the_environment_it_is_given() -> None:
+    results = [
+        ConcreteLibc(SYSV_X86_64, ConcreteIO(traced=traced))(
+            "ptrace", _ptrace_arguments(), _image()
+        )["RAX"]
+        for traced in (False, True)
+    ]
+    assert results == [0, mask(64)]
 
 
 def test_errno_location_is_the_same_cell_in_both_models() -> None:

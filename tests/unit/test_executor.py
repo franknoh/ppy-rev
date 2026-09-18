@@ -152,6 +152,17 @@ def test_wide_symbolic_pointers_are_unsupported_not_guessed() -> None:
     assert stop.code is DiagnosticCode.SYMBOLIC_POINTER_REQUIRED
 
 
+def test_a_pointer_chosen_between_constants_is_read_without_the_solver() -> None:
+    """What `strchr` returns: one address per position, or NULL — far apart, but few."""
+    from ppy_rev.symbolic.executor import constant_choices
+
+    condition = sx.bool_not(sx.equal(sx.symbol("x", 8), sx.const(0, 8)))
+    chosen = sx.ite(condition, sx.const(0x7FFF_0000, 64), sx.const(0, 64))
+    assert constant_choices(chosen, 64) == [0, 0x7FFF_0000]
+    assert constant_choices(chosen, 1) is None
+    assert constant_choices(sx.symbol("p", 64), 64) is None
+
+
 def test_small_symbolic_pointer_reads_a_table() -> None:
     program = ProgramBuilder()
     program.data(".rodata", 0x3000, bytes(range(0x40, 0x60)))

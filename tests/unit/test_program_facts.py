@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from ppy_rev.analysis.program import external_name, find_main
+import pytest
+
+from ppy_rev.analysis.program import executable_address, external_name, find_main
+from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.ir.model import Call
 from ppy_rev.lift.lifter import lift_export
 from support.exports import ProgramBuilder, const, op, reg, ret, tmp
@@ -42,3 +45,17 @@ def test_main_is_found_through_a_got_call() -> None:
     )
     assert external_name(module, got_call) == "__libc_start_main"
     assert find_main(module).entry == 0x1100
+
+
+def test_a_goal_on_a_function_entry_lands_on_its_first_lifted_instruction() -> None:
+    """`endbr64` describes no operation, so an entry address has nothing to reach."""
+    program = ProgramBuilder()
+    program.code(0x1000, [], length=4, text="ENDBR64")  # no p-code, like a real endbr64
+    program.code(0x1004, [op("COPY", [const(7, 8)], reg("RAX"))])
+    program.code(0x1008, ret(), length=1)
+    program.function("f", 0x1000)
+    module = lift_export(program.build()).module
+    assert executable_address(module, 0x1000) == 0x1004
+    assert executable_address(module, 0x1004) == 0x1004
+    with pytest.raises(PpyRevError):
+        executable_address(module, 0x9000)
