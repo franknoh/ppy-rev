@@ -41,8 +41,8 @@ uv run ppy-rev solve examples/ais3_crackme/ais3_crackme  # prints ais3{I_tak3_g0
 A typical session with a new binary:
 
 1. `ppy-rev analyze ./chall` shows what solving will work with: where the input comes from
-   (`argv[1]`, stdin), which printed strings look like success and failure, and whether
-   there is a bytecode VM.
+   (`argv[1]`, stdin), which printed strings look like success and failure, whether code
+   runs before `main`, and whether there is a bytecode VM.
 2. `ppy-rev solve ./chall` searches for an input that reaches the success output, checks
    the answer by running the lifted program, and prints it. When the guesses from step 1
    are right, that is all.
