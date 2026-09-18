@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -747,10 +748,28 @@ def _run_native(
     status = f"exit status {run.exit_status}"
     if not goal.text:
         return NativeVerification(None, f"{status}; no goal output to look for")
-    printed = goal.text.encode("latin-1").rstrip(b"\n")
-    if printed in run.stdout:
-        return NativeVerification(True, f"{status}, prints {json.dumps(goal.text)}")
-    return NativeVerification(False, f"{status}, does not print {json.dumps(goal.text)}")
+    fragments = _printed_fragments(goal.text)
+    if not fragments:
+        return NativeVerification(None, f"{status}; the goal output is only a format")
+    position = 0
+    for fragment in fragments:
+        found = run.stdout.find(fragment, position)
+        if found < 0:
+            return NativeVerification(False, f"{status}, does not print {json.dumps(goal.text)}")
+        position = found + len(fragment)
+    return NativeVerification(True, f"{status}, prints {json.dumps(goal.text)}")
+
+
+_CONVERSION = re.compile(r"%[-+ #0-9.*hlLqjzt]*[diouxXeEfgGaAcsp%]")
+
+
+def _printed_fragments(text: str) -> list[bytes]:
+    """The parts of a message that reach the output whatever its arguments are."""
+    return [
+        part.encode("latin-1")
+        for piece in _CONVERSION.split(text)
+        if (part := piece.strip("\n")) and len(part) >= 4
+    ]
 
 
 def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:

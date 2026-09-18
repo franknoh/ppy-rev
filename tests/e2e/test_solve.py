@@ -37,9 +37,11 @@ SUCCESS = {
     "dispatch_check": b"Access granted",
     "vm_check": b"Granted",
     "simple_vm": b"Accepted",
+    "format_goal": b"Welcome back, 0pen!",
 }
 STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
 SHORTEST = {
+    "format_goal": b"0pen",
     "xor_check": b"rev_is_easy",
     "atoi_check": b"12345",
     "recursive_check": b"recursive",
@@ -177,6 +179,11 @@ def test_native_verification_is_reported(
     code, text = _solve(binary, "--verify", "--sandbox-runtime", str(runtime), capsys=capsys)
     assert code == 0, text
     assert 'native (sandboxed): passed (exit status 0, prints "Access granted")' in text
+    # A goal that is a format string: only the text around the conversions is printed.
+    formatted = compile_fixture.build("format_goal", "gcc", "O2")
+    code, text = _solve(formatted, "--verify", "--sandbox-runtime", str(runtime), capsys=capsys)
+    assert code == 0, text
+    assert "native (sandboxed): passed" in text
 
 
 def test_vm_detect_reports_evidence(
