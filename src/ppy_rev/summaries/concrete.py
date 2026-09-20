@@ -80,7 +80,9 @@ class ConcreteLibc:
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "strchr": self._strchr,
+            "memchr": self._memchr,
             "std::getline": self._getline,
+            "std::allocator": lambda arguments, memory: arguments[0],
             "std::string::string": self._string_new,
             "std::string::_M_local_data": lambda arguments, memory: arguments[0] + cxx.BUFFER,
             "std::string::_M_data=": self._string_set_data,
@@ -89,6 +91,8 @@ class ConcreteLibc:
             "std::string::_S_copy_chars": self._string_copy_chars,
             "std::string::_M_create": self._string_create,
             "std::string::operator+=": self._string_append,
+            "std::string::operator=": self._string_assign,
+            "std::string::operator=copy": self._string_assign_copy,
             "std::string::~string": lambda arguments, memory: 0,
             "std::string::size": lambda arguments, memory: self._string_field(
                 memory, arguments[0], cxx.SIZE
@@ -253,6 +257,11 @@ class ConcreteLibc:
         memory.write(arguments[0], source[:size] + b"\0" * (size - len(source[:size])))
         return arguments[0]
 
+    def _memchr(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`memchr(s, c, n)`: the first `c` in `n` bytes, NULL if there is none."""
+        found = memory.read(arguments[0], arguments[2]).find(arguments[1] & 0xFF)
+        return 0 if found < 0 else arguments[0] + found
+
     def _strchr(self, arguments: list[int], memory: ConcreteMemory) -> int:
         text = self._string(memory, arguments[0])
         wanted = arguments[1] & 0xFF
@@ -396,6 +405,19 @@ class ConcreteLibc:
         length = self._string_field(memory, object_at, cxx.SIZE)
         self._store_string(memory, object_at, memory.read(data, length) + bytes([character]))
         return object_at
+
+    def _string_assign(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`s = "text"`: the object holds what the C string holds."""
+        self._store_string(memory, arguments[0], self._string(memory, arguments[1]))
+        return arguments[0]
+
+    def _string_assign_copy(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`s = other`: the same bytes in a second object."""
+        other = arguments[1]
+        data = self._string_field(memory, other, cxx.DATA)
+        length = self._string_field(memory, other, cxx.SIZE)
+        self._store_string(memory, arguments[0], memory.read(data, length))
+        return arguments[0]
 
     def _string_new(self, arguments: list[int], memory: ConcreteMemory) -> int:
         source = arguments[1]

@@ -152,6 +152,7 @@ def test_output_setup_functions_do_nothing(stdin: bytes, size: int) -> None:
 def test_strchr(value: bytes, wanted: int) -> None:
     _run_both("strchr", [LEFT, wanted], value, b"")
     _run_both("strchr", [LEFT, 0x0A], value, b"")  # the usual newline search
+    _run_both("memchr", [LEFT, wanted, len(value)], value, b"")
 
 
 @settings(max_examples=60, deadline=None)

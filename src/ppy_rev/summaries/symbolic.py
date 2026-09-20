@@ -93,7 +93,9 @@ class SymbolicLibc:
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "strchr": self._strchr,
+            "memchr": self._memchr,
             "std::getline": self._getline,
+            "std::allocator": lambda call: self._returns(call, call.arguments[0]),
             "std::string::string": self._string_new,
             "std::string::_M_local_data": self._string_local_data,
             "std::string::_M_data=": self._string_set_data,
@@ -102,6 +104,8 @@ class SymbolicLibc:
             "std::string::_S_copy_chars": self._string_copy_chars,
             "std::string::_M_create": self._string_create,
             "std::string::operator+=": self._string_append,
+            "std::string::operator=": self._string_assign,
+            "std::string::operator=copy": self._string_assign_copy,
             "std::string::~string": self._returns_zero,
             "std::string::size": self._string_size,
             "std::string::data": self._string_data,
@@ -484,6 +488,23 @@ class SymbolicLibc:
         self._store_string(call, call.state, object_at, [*content, character])
         return self._returns(call, sx.const(object_at, 64))
 
+    def _string_assign(self, call: _Call) -> list[ExternalOutcome]:
+        """`s = "text"`: the object holds what the C string holds."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        source = self._concrete(call, call.arguments[1], "text")
+        self._store_string(call, call.state, object_at, self._string_bytes(call, source))
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_assign_copy(self, call: _Call) -> list[ExternalOutcome]:
+        """`s = other`: the same bytes in a second object."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        other = self._concrete(call, call.arguments[1], "string")
+        data = self._concrete(call, call.state.memory.load(other + cxx.DATA, 64), "string data")
+        length = self._concrete(call, call.state.memory.load(other + cxx.SIZE, 64), "string length")
+        content = [self._byte(call, data + offset) for offset in range(length)]
+        self._store_string(call, call.state, object_at, content)
+        return self._returns(call, sx.const(object_at, 64))
+
     def _string_field(self, call: _Call, offset: int) -> Expr:
         object_at = self._concrete(call, call.arguments[0], "string")
         address = object_at + offset
@@ -603,6 +624,17 @@ class SymbolicLibc:
                 state.io.stdin_position += consumed + (1 if consumed < len(taken) else 0)
             outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
         return outcomes
+
+    def _memchr(self, call: _Call) -> list[ExternalOutcome]:
+        """`memchr(s, c, n)`: the first `c` in `n` bytes, NULL if there is none."""
+        address = self._concrete(call, call.arguments[0], "buffer")
+        wanted = sx.extract(call.arguments[1], 0, 8)
+        count = self._concrete(call, call.arguments[2], "count")
+        result = sx.const(0, 64)
+        for index in reversed(range(count)):
+            found = sx.equal(self._byte(call, address + index), wanted)
+            result = sx.ite(found, sx.const(address + index, 64), result)
+        return self._returns(call, result)
 
     def _strchr(self, call: _Call) -> list[ExternalOutcome]:
         """`strchr(s, c)`: the first `c` in `s`, NULL if there is none.

@@ -59,6 +59,9 @@ def from_symbol(symbol: str) -> str | None:
         return "std::endl"
     if _OSTREAM in symbol or symbol.startswith("_ZNSols"):
         return "std::ostream::operator<<"
+    if symbol.startswith("_ZNSaI"):
+        # `std::allocator<char>`: constructing and destroying one does nothing to memory.
+        return "std::allocator"
     if _STRING not in symbol:
         return None
     for suffix, name in _STRING_MEMBERS.items():
@@ -120,6 +123,10 @@ _STRING_INTERNALS = {
     "13_S_copy_chars": "std::string::_S_copy_chars",
     "9_M_createERmm": "std::string::_M_create",
     "EEpLEc": "std::string::operator+=",
+    "9push_backEc": "std::string::operator+=",
+    "EEaSEPKc": "std::string::operator=",
+    "EEaSERKS4_": "std::string::operator=copy",
+    "EEaSEOS4_": "std::string::operator=copy",
 }
 """The members libstdc++'s own header code calls, which end up in the binary at `-O0`.
 

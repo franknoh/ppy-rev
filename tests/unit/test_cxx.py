@@ -295,3 +295,54 @@ def test_a_number_read_from_cin(value: int, before: bytes, after: bytes) -> None
     state, assignment, outcome = _symbolic(name, [STREAM, OBJECT], stdin)
     assert evaluate(outcome.outputs["RAX"], assignment) == STREAM
     assert evaluate(state.memory.load(OBJECT, 32), assignment) == value & 0xFFFFFFFF
+
+
+def test_assigning_a_string_keeps_both_engines_in_step() -> None:
+    """`s = "text"` and `s = other`, which is how a flag gets built up piece by piece."""
+    assert from_symbol("_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEaSEPKc") == (
+        "std::string::operator="
+    )
+    assert from_symbol("_ZNSaIcEC1Ev") == "std::allocator"
+
+    memory = _memory()
+    memory.write(TEXT, b"assigned\0")
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO())
+
+    def call(name: str, *arguments: int) -> int:
+        registers = dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False))
+        return libc(name, registers, memory)["RAX"]
+
+    other = OBJECT + 0x40
+    call("std::string::operator=", OBJECT, TEXT)
+    assert memory.read_c_string(call("std::string::data", OBJECT)) == b"assigned"
+    call("std::string::operator=copy", other, OBJECT)
+    assert memory.read_c_string(call("std::string::data", other)) == b"assigned"
+    assert call("std::string::size", other) == 8
+
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _memory()
+    image.write(TEXT, b"assigned\0")
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO())
+    symbolic = SymbolicLibc(SYSV_X86_64)
+
+    def call_symbolic(name: str, *arguments: int) -> int:
+        outcomes = symbolic.call(
+            executor,
+            state,
+            name,
+            {
+                register: sx.const(value, 64)
+                for register, value in zip(SYSV_X86_64.integer_parameters, arguments, strict=False)
+            },
+            Origin(0, 0),
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned), outcome
+        return evaluate(outcome.outputs["RAX"], {})
+
+    call_symbolic("std::string::operator=", OBJECT, TEXT)
+    call_symbolic("std::string::operator=copy", other, OBJECT)
+    assert call_symbolic("std::string::size", other) == 8
+    data = call_symbolic("std::string::data", other)
+    assert bytes(evaluate(state.memory.read_byte(data + i), {}) for i in range(8)) == b"assigned"
