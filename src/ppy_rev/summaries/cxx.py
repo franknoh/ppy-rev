@@ -32,6 +32,9 @@ def from_symbol(symbol: str) -> str | None:
     """The model name for a mangled libstdc++ symbol, or None when it is not one we know."""
     if not symbol.startswith("_Z"):
         return None
+    runtime = _RUNTIME.get(symbol.split("@", 1)[0])
+    if runtime is not None:
+        return runtime
     if "7getline" in symbol and _STRING in symbol:
         return "std::getline"
     if symbol.startswith("_ZSt") and "rs" in symbol and _ISTREAM in symbol and _STRING in symbol:
@@ -67,3 +70,21 @@ _STRING_MEMBERS = {
     "10_M_disposeEv": "std::string::~string",
 }
 """Mangled endings of the `std::string` members a challenge is likely to call."""
+
+
+_RUNTIME = {
+    "_Znwm": "operator new",
+    "_Znam": "operator new",
+    "_ZnwmSt11align_val_t": "operator new",
+    "_ZdlPv": "operator delete",
+    "_ZdaPv": "operator delete",
+    "_ZdlPvm": "operator delete",
+    "_ZdaPvm": "operator delete",
+    "_ZNSt8ios_base4InitC1Ev": "std::ios_base::Init::Init",
+    "_ZNSt8ios_base4InitD1Ev": "std::ios_base::Init::~Init",
+}
+"""Compiler-emitted helpers: allocation, and the iostream setup every C++ program runs.
+
+They are named by mangled symbol like everything else here, because `operator new` is a
+name a C program can export too.
+"""

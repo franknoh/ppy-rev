@@ -144,6 +144,14 @@ class SymbolicLibc:
             "__errno_location": lambda call: self._returns(call, sx.const(ERRNO_ADDRESS, 64)),
             "ptrace": self._ptrace,
             "calloc": self._calloc,
+            "operator new": self._malloc,
+            "operator delete": self._returns_zero,
+            "std::ios_base::Init::Init": self._returns_zero,
+            "std::ios_base::Init::~Init": self._returns_zero,
+            "__cxa_atexit": self._returns_zero,
+            "__cxa_guard_acquire": self._guard_acquire,
+            "__cxa_guard_release": self._guard_release,
+            "__cxa_guard_abort": self._returns_zero,
             "atoi": self._atoi,
             "atol": self._atol,
             "atoll": self._atol,
@@ -1225,6 +1233,18 @@ class SymbolicLibc:
     def _malloc(self, call: _Call) -> list[ExternalOutcome]:
         size = self._concrete(call, call.arguments[0], "size")
         return self._returns(call, sx.const(self._allocate(call, size), 64))
+
+    def _guard_acquire(self, call: _Call) -> list[ExternalOutcome]:
+        """`__cxa_guard_acquire`: whether this function-local static still needs building."""
+        guard = self._concrete(call, call.arguments[0], "guard")
+        done = sx.equal(self._byte(call, guard), _ZERO_BYTE)
+        return self._returns(call, sx.flag(done, 64))
+
+    def _guard_release(self, call: _Call) -> list[ExternalOutcome]:
+        """`__cxa_guard_release`: the static is built, so the next call skips it."""
+        guard = self._concrete(call, call.arguments[0], "guard")
+        self._write(call, guard, sx.const(1, 8))
+        return self._returns(call, sx.const(0, 64))
 
     def _calloc(self, call: _Call) -> list[ExternalOutcome]:
         count = self._concrete(call, call.arguments[0], "count")

@@ -171,3 +171,30 @@ def test_a_token_is_read_up_to_whitespace() -> None:
 
     state, assignment, _ = _symbolic("std::istream::operator>>", [STREAM, OBJECT], b"hi there\n")
     assert _stored(state, assignment, OBJECT + cxx.SIZE) == 2
+
+
+def test_the_runtime_helpers_a_constructor_calls() -> None:
+    """`operator new`, the iostream setup, and a function-local static's guard.
+
+    A C++ program runs all of these before it reaches anything a challenge is about, so
+    both engines have to agree on them or the answer is checked against a program that
+    starts differently.
+    """
+    assert from_symbol("_Znwm") == "operator new"
+    assert from_symbol("_ZdlPvm") == "operator delete"
+    assert from_symbol("_ZNSt8ios_base4InitC1Ev") == "std::ios_base::Init::Init"
+
+    guard = OBJECT + 0x80
+    allocated, memory, _ = _concrete("operator new", [32], b"")
+    assert memory.mapping_at(allocated) is not None
+    assert _concrete("std::ios_base::Init::Init", [STREAM], b"")[0] == 0
+
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO())
+    registers = dict(zip(SYSV_X86_64.integer_parameters, [guard], strict=False))
+    assert libc("__cxa_guard_acquire", dict(registers), memory)["RAX"] == 1
+    assert libc("__cxa_guard_release", dict(registers), memory)["RAX"] == 0
+    assert libc("__cxa_guard_acquire", dict(registers), memory)["RAX"] == 0
+
+    state, model, returned = _symbolic("__cxa_guard_acquire", [guard], b"")
+    assert evaluate(returned.outputs["RAX"], model) == 1
+    assert evaluate(state.memory.read_byte(guard), model) == 0

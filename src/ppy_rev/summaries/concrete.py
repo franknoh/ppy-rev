@@ -143,6 +143,14 @@ class ConcreteLibc:
             "malloc": self._malloc,
             "calloc": self._calloc,
             "free": lambda arguments, memory: 0,
+            "operator new": self._malloc,
+            "operator delete": lambda arguments, memory: 0,
+            "std::ios_base::Init::Init": lambda arguments, memory: 0,
+            "std::ios_base::Init::~Init": lambda arguments, memory: 0,
+            "__cxa_atexit": lambda arguments, memory: 0,
+            "__cxa_guard_acquire": self._guard_acquire,
+            "__cxa_guard_release": self._guard_release,
+            "__cxa_guard_abort": lambda arguments, memory: 0,
             "atoi": self._atoi,
             "atol": self._atol,
             "atoll": self._atol,
@@ -639,6 +647,15 @@ class ConcreteLibc:
     def _malloc(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory
         return self._allocate(arguments[0])
+
+    def _guard_acquire(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`__cxa_guard_acquire`: whether this function-local static still needs building."""
+        return int(memory.read(arguments[0], 1)[0] == 0)
+
+    def _guard_release(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`__cxa_guard_release`: the static is built, so the next call skips it."""
+        memory.write(arguments[0], b"\x01")
+        return 0
 
     def _calloc(self, arguments: list[int], memory: ConcreteMemory) -> int:
         size = arguments[0] * arguments[1]
