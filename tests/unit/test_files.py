@@ -97,21 +97,35 @@ def test_the_solver_reads_the_same_bytes_the_interpreter_would() -> None:
     assert evaluate(call("feof", handle).outputs["RAX"], assignment) == 1
 
 
-def test_a_path_no_input_was_planned_for_is_refused() -> None:
-    executor = Executor(MODULE, Z3Backend(), Goal())
-    state = _symbolic_state(())
-    state.io.contents.clear()
+def _open(state: State, path: int) -> Returned | Failed:
     outcomes = SymbolicLibc(SYSV_X86_64).call(
-        executor,
+        Executor(MODULE, Z3Backend(), Goal()),
         state,
         "fopen",
-        {SYSV_X86_64.integer_parameters[0]: sx.const(PATH, 64)},
+        {SYSV_X86_64.integer_parameters[0]: sx.const(path, 64)},
         Origin(0, 0),
     )
     assert outcomes is not None
     (outcome,) = outcomes
+    assert isinstance(outcome, Returned | Failed)
+    return outcome
+
+
+def test_a_path_no_input_was_planned_for_becomes_one() -> None:
+    """The analysis reads the paths it can see; one it only meets here is an input too."""
+    state = _symbolic_state(())
+    state.io.contents.clear()
+    assert isinstance(_open(state, PATH), Returned)
+    content = state.io.contents["flag.txt"]
+    assert content and not any(symbol.is_const for symbol in content)
+
+
+def test_a_path_the_program_computes_is_refused() -> None:
+    state = _symbolic_state(())
+    state.memory.write_byte(PATH, sx.symbol("chosen", 8))
+    outcome = _open(state, PATH)
     assert isinstance(outcome, Failed)
-    assert "no input was planned" in outcome.detail
+    assert "a path the program computes" in outcome.detail
 
 
 def test_stdin_still_reads_from_stdin() -> None:

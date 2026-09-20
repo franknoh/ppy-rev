@@ -38,6 +38,7 @@ from ppy_rev.symbolic.executor import (
     StopReason,
 )
 from ppy_rev.symbolic.expr import Expr
+from ppy_rev.symbolic.inputs import file_symbols
 from ppy_rev.symbolic.state import ConstraintKind, OpenFile, State
 
 _NEWLINE = sx.const(0x0A, 8)
@@ -72,9 +73,13 @@ type _Model = Callable[[_Call], list[ExternalOutcome]]
 class SymbolicLibc:
     """`ExternalModels` for the symbolic executor."""
 
-    def __init__(self, convention: CallingConvention, string_limit: int = 4096) -> None:
+    def __init__(
+        self, convention: CallingConvention, string_limit: int = 4096, file_length: int = 64
+    ) -> None:
         self.convention = convention
         self.string_limit = string_limit
+        self.file_length = file_length
+        """Bytes offered for a file the program opens that the analysis did not foresee."""
         self._models: dict[str, _Model] = {
             "strlen": self._strlen,
             "strcmp": self._strcmp,
@@ -561,16 +566,18 @@ class SymbolicLibc:
     # -- files -----------------------------------------------------------------------------
 
     def _fopen(self, call: _Call) -> list[ExternalOutcome]:
-        """The file's contents are an input, so its name has to be one the analysis planned."""
-        name = bytes(
-            byte.value
-            for byte in self._string_bytes(call, self._concrete(call, call.arguments[0], "path"))
-            if byte.is_const
-        ).decode("latin-1")
+        """Whatever the program opens is an input: the analysis plans the paths it can read
+        statically, and a path it only learns here becomes an input too. A path the program
+        computes is refused, since the answer could not name the file it belongs in."""
+        path = self._string_bytes(call, self._concrete(call, call.arguments[0], "path"))
+        if not path or any(not byte.is_const for byte in path):
+            raise _Unsupported("fopen of a path the program computes")
+        name = bytes(byte.value for byte in path).decode("latin-1")
         io = call.state.io
         content = io.contents.get(name)
         if content is None:
-            raise _Unsupported(f"fopen of {name!r}, which no input was planned for")
+            content = file_symbols(name, self.file_length)
+            io.contents[name] = content
         for handle, item in io.files.items():
             if item.name == name:
                 io.positions[handle] = 0

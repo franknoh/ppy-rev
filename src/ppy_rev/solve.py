@@ -627,7 +627,10 @@ def _solutions(
         found = False
         while len(solutions) < request.solutions:
             traced_symbol = state.io.traced
-            wanted = all_symbols if traced_symbol is None else [*all_symbols, traced_symbol]
+            opened = dict(sorted(state.io.contents.items()))
+            wanted = [*all_symbols, *(symbol for content in opened.values() for symbol in content)]
+            if traced_symbol is not None:
+                wanted.append(traced_symbol)
             model = executor.solve_with(state, wanted, [*blocking, *extra, *bounds])
             if model is None and bounds:
                 bounds = []  # other solutions may need longer strings
@@ -644,7 +647,7 @@ def _solutions(
             traced = traced_symbol is not None and model.get(TRACED_SYMBOL, 0) != 0
             files = tuple(
                 (name, bytes(model.get(symbol.name, 0) for symbol in content).split(b"\0")[0])
-                for name, content in sorted(symbols.files.items())
+                for name, content in opened.items()
             )
             blocking.append(_block(symbols, argv, stdin))
             if (argv, stdin) not in seen:
