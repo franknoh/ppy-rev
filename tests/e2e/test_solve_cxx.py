@@ -22,28 +22,33 @@ pytestmark = [pytest.mark.ghidra, pytest.mark.native]
 
 SUCCESS = {
     "cpp_algorithm_transform": b"Correct!",
+    "cpp_array_check": b"Access granted",
     "cpp_cin_token": b"Correct!",
     "cpp_getline": b"Access granted",
+    "cpp_global_string": b"Correct!",
+    "cpp_iostream_integer": b"Correct!",
     "cpp_lambda_check": b"Correct!",
     "cpp_nested_helpers": b"Access granted",
+    "cpp_static_constructor": b"Correct!",
     "cpp_string_data": b"Correct!",
     "cpp_string_index": b"Correct!",
     "cpp_string_loop": b"Correct!",
     "cpp_string_size": b"Access granted",
+    "cpp_vector_check": b"Correct!",
 }
-"""What each fixture prints when the input is right."""
-SOLVED = [
-    (name, compiler, "O0")
-    for compiler in ("g++", "clang++")
-    for name in SUCCESS
-    if not (compiler == "g++" and name == "cpp_string_index")
-] + [("cpp_cin_token", compiler, "O2") for compiler in ("g++", "clang++")]
-"""Which (fixture, compiler, optimization) combinations solve with no options at all.
+"""What each fixture prints when the input is right; all of them read stdin."""
+OPTIMIZED = ("cpp_cin_token", "cpp_iostream_integer")
+"""The fixtures that also solve at `-O2`, where the library is inlined into the code.
 
-`cpp_string_index` under `g++ -O0` stops at the approximation `std::getline` makes when
-the line's length is up to the input. At `-O2` everything but `cpp_cin_token` inlines the
-library into loads and stores that no model recognizes; see docs/scope.md.
+Everything else in `SUCCESS` reaches `-O2` code that reads a `std::string` through its
+fields rather than calling `size()` or `operator[]`, which no model recognizes yet; those
+runs report unsupported semantics rather than an answer. `cpp_string_compare` is not here
+at all: it builds a `std::string` from `argv[1]`, whose length the input decides, and the
+allocation that follows needs a size the analysis does not have. See docs/scope.md.
 """
+SOLVED = [(name, compiler, "O0") for compiler in ("g++", "clang++") for name in SUCCESS] + [
+    (name, compiler, "O2") for compiler in ("g++", "clang++") for name in OPTIMIZED
+]
 
 
 def _solve(binary: Path, *options: str, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
@@ -73,3 +78,44 @@ def test_solution_is_accepted_by_the_binary(
         [str(binary)], input=output.read_bytes(), capture_output=True, timeout=30, check=False
     )
     assert SUCCESS[name] in completed.stdout
+
+
+@pytest.mark.parametrize("compiler", ["g++", "clang++"])
+def test_a_constructor_decides_the_answer(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    compiler: str,
+) -> None:
+    """The key table is built before main; solving from main would answer for zeros.
+
+    That answer used to come out `sat`, verify against RevIR, and be rejected by the real
+    binary — so this checks the recovered input against the program itself.
+    """
+    binary = compile_fixture.build("cpp_static_constructor", compiler, "O0")
+    del analyzer
+    output = tmp_path / "solution"
+    code, text = _solve(binary, "--output", str(output), capsys=capsys)
+    assert code == 0, text
+    assert output.read_bytes().rstrip(b"\n") == b"st4t1c"
+
+
+@pytest.mark.parametrize("compiler", ["g++", "clang++"])
+def test_optimized_string_code_is_refused_not_guessed(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    compiler: str,
+) -> None:
+    """At `-O2` the iostream internals are inlined, and nothing models what they read.
+
+    The honest answer is that the analysis stops there. It must not be `unsat`, which
+    would claim every path was explored.
+    """
+    del analyzer
+    binary = compile_fixture.build("cpp_getline", compiler, "O2")
+    code, text = _solve(binary, capsys=capsys)
+    assert code == 2, text
+    assert "result: unsupported semantics" in text
+    assert "library object" in text or "no model" in text
