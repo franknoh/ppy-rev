@@ -1,4 +1,4 @@
-"""Deterministic compilation of the C fixture corpus.
+"""Deterministic compilation of the C and C++ fixture corpus.
 
 Builds are keyed by source contents, compiler identity, and flags, so tests rebuild only
 when something that affects the binary changes. Outputs go to tests/fixtures/build/.
@@ -18,9 +18,12 @@ from pathlib import Path
 FIXTURES = Path(__file__).resolve().parent
 SOURCES = FIXTURES / "src"
 BUILD_ROOT = FIXTURES / "build"
-COMPILERS = ("gcc", "clang")
+COMPILERS = {".c": ("gcc", "clang"), ".cpp": ("g++", "clang++")}
+"""Which compilers build a source, by its extension."""
 OPTIMIZATION_LEVELS = ("O0", "O1", "O2", "O3")
 COMMON_FLAGS = ("-g0", "-fno-ident", "-Wall", "-Werror")
+LANGUAGE_FLAGS = {".c": (), ".cpp": ("-std=c++17",)}
+"""Extra flags a language needs; C builds keep the compiler's default dialect."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,13 +45,26 @@ def compiler_identity(compiler: str) -> str:
 
 
 def fixture_names() -> list[str]:
-    return sorted(path.stem for path in SOURCES.glob("*.c"))
+    return sorted(path.stem for path in SOURCES.iterdir() if path.suffix in COMPILERS)
+
+
+def source_for(name: str) -> Path:
+    """The fixture's source, whichever language it is written in."""
+    for suffix in COMPILERS:
+        source = SOURCES / f"{name}{suffix}"
+        if source.is_file():
+            return source
+    raise FileNotFoundError(f"no fixture source named {name!r}")
+
+
+def compilers_for(name: str) -> tuple[str, ...]:
+    return COMPILERS[source_for(name).suffix]
 
 
 def build(name: str, variant: Variant | None = None) -> Path:
-    variant = variant or Variant()
-    source = SOURCES / f"{name}.c"
-    flags = [f"-{variant.optimization}", *COMMON_FLAGS]
+    source = source_for(name)
+    variant = variant or Variant(compiler=COMPILERS[source.suffix][0])
+    flags = [f"-{variant.optimization}", *LANGUAGE_FLAGS[source.suffix], *COMMON_FLAGS]
     digest = hashlib.sha256()
     for part in (
         source.read_bytes(),
@@ -78,7 +94,7 @@ def main() -> int:
     arguments = parser.parse_args()
     names: list[str] = arguments.names or fixture_names()
     for name in names:
-        for compiler in COMPILERS:
+        for compiler in compilers_for(name):
             if shutil.which(compiler) is None:
                 continue
             for level in OPTIMIZATION_LEVELS:
