@@ -705,8 +705,10 @@ class SymbolicLibc:
                 self._write(call, destination + start + offset, sx.ite(copying, byte, old))
                 copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
             if terminated:
+                # `strncat` terminates after the bytes it copied, which is `limit` of them
+                # only when none of them was itself the terminator: `copying` says so.
                 end = destination + start + len(appended)
-                self._write(call, end, sx.ite(ends_here, _ZERO_BYTE, self._byte(call, end)))
+                self._write(call, end, sx.ite(copying, _ZERO_BYTE, self._byte(call, end)))
         return self._returns(call, sx.const(destination, 64))
 
     def _strstr(self, call: _Call) -> list[ExternalOutcome]:

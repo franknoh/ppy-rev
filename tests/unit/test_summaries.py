@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from ppy_rev.abi import SYSV_X86_64
@@ -156,7 +156,9 @@ def test_strchr(value: bytes, wanted: int) -> None:
 
 @settings(max_examples=60, deadline=None)
 @given(text, text)
+@example(left=b"\0" * 9 + b"\x01", right=b"\0" * 9)
 def test_string_concatenation_and_search(left: bytes, right: bytes) -> None:
+    """The `@example` is an empty source: `strncat` then writes one terminator, not `n`."""
     _run_both("strcat", [LEFT, RIGHT], left, right)
     for limit in (0, 2, 9):
         _run_both("strncat", [LEFT, RIGHT, limit], left, right)
