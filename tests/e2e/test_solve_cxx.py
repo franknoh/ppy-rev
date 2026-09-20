@@ -37,18 +37,18 @@ SUCCESS = {
     "cpp_vector_check": b"Correct!",
 }
 """What each fixture prints when the input is right; all of them read stdin."""
-OPTIMIZED = ("cpp_cin_token", "cpp_iostream_integer")
-"""The fixtures that also solve at `-O2`, where the library is inlined into the code.
-
-Everything else in `SUCCESS` reaches `-O2` code that reads a `std::string` through its
-fields rather than calling `size()` or `operator[]`, which no model recognizes yet; those
-runs report unsupported semantics rather than an answer. `cpp_string_compare` is not here
-at all: it builds a `std::string` from `argv[1]`, whose length the input decides, and the
-allocation that follows needs a size the analysis does not have. See docs/scope.md.
-"""
-SOLVED = [(name, compiler, "O0") for compiler in ("g++", "clang++") for name in SUCCESS] + [
-    (name, compiler, "O2") for compiler in ("g++", "clang++") for name in OPTIMIZED
+SOLVED = [
+    (name, compiler, optimization)
+    for compiler in ("g++", "clang++")
+    for optimization in ("O0", "O2")
+    for name in SUCCESS
 ]
+"""Every fixture, both compilers, with and without optimization.
+
+`cpp_string_compare` is not here: it builds a `std::string` from `argv[1]`, whose length
+the input decides, and the allocation that follows needs a size the analysis does not
+have. See docs/scope.md.
+"""
 
 
 def _solve(binary: Path, *options: str, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
@@ -102,20 +102,20 @@ def test_a_constructor_decides_the_answer(
 
 
 @pytest.mark.parametrize("compiler", ["g++", "clang++"])
-def test_optimized_string_code_is_refused_not_guessed(
+def test_a_string_of_unknown_length_is_refused_not_guessed(
     analyzer: Analyzer,
     compile_fixture: type[FixtureCompiler],
     capsys: pytest.CaptureFixture[str],
     compiler: str,
 ) -> None:
-    """At `-O2` the iostream internals are inlined, and nothing models what they read.
+    """`std::string s(argv[1])` allocates for a length the input decides.
 
     The honest answer is that the analysis stops there. It must not be `unsat`, which
     would claim every path was explored.
     """
     del analyzer
-    binary = compile_fixture.build("cpp_getline", compiler, "O2")
+    binary = compile_fixture.build("cpp_string_compare", compiler, "O0")
     code, text = _solve(binary, capsys=capsys)
     assert code == 2, text
     assert "result: unsupported semantics" in text
-    assert "library object" in text or "no model" in text
+    assert "is symbolic" in text

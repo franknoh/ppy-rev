@@ -117,6 +117,7 @@ FUNCTIONS: dict[str, LibraryFunction] = {
 }
 
 ALIASES = {
+    "bcmp": "memcmp",  # only zero or nonzero is promised, which memcmp also gives
     "getc": "fgetc",
     "putc": "fputc",
     "__memcpy_chk": "memcpy",

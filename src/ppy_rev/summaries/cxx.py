@@ -23,6 +23,19 @@ SMALL = 15
 """Longest string the object holds without allocating."""
 SIZE_OF = 32
 
+IOS_STATE = 0x20
+"""`rdstate()` in the `basic_ios` subobject: the bits that say a read failed."""
+IOS_FACET = 0xF0
+"""The `ctype<char>` a stream widens characters with, which `getline` reads inline."""
+IOS_VBASE_OFFSET = -0x18
+"""Where the offset to the `basic_ios` subobject sits, before the vtable's entries."""
+IOS_SIZE = 0x140
+CTYPE_WIDEN_OK = 0x38
+"""Nonzero once the widen table is built, which is how inlined code skips the call."""
+CTYPE_WIDEN = 0x39
+"""A 256-byte table: `widen(c)` for `char` is `c` itself."""
+CTYPE_SIZE = 0x140
+
 _STRING = "basic_string"
 _ISTREAM = "basic_istream"
 _OSTREAM = "basic_ostream"

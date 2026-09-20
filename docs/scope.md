@@ -39,13 +39,21 @@ it rather than guessing.
 - **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
   rather than an assumption, so a challenge that only reveals its answer under a debugger is
   solved, and the answer says it needs one.
-- **Simple C++**: input read with `std::getline` or `std::cin >>` into a `std::string`,
-  indexed, sized, compared, and printed through `std::cout`. `std::string` uses libstdc++'s
-  own layout, so code that reads the object directly agrees with code that calls `size()`
-  and `data()`, and which overload an import is comes from its mangled symbol rather than
-  from a demangled name a C program could share. This covers C++ compiled without
-  optimization; `-O2` inlines the iostream machinery, which is not modeled and is reported
-  as unsupported rather than guessed.
+- **C++, optimized or not**: input read with `std::getline` or `std::cin >>` into a
+  `std::string` or a number, indexed, sized, compared, transformed, pushed into a
+  `std::vector`, and printed through `std::cout`. `std::string` uses libstdc++'s own
+  layout, so code that reads the object directly agrees with code that calls `size()` and
+  `data()`, and which overload an import is comes from its mangled symbol rather than from
+  a demangled name a C program could share. At `-O2` the library is inlined into loads of
+  those same fields, and `std::cin` and `std::cout` are objects the code reads rather than
+  calls, so they are laid out too: a stream in good state, with the `ctype` facet that
+  inlined `getline` widens its delimiter with. The 14 C++ fixtures in `tests/fixtures/src`
+  are solved under `g++` and `clang++`, at `-O0` and `-O2`, and every answer is checked
+  against the compiled binary.
+- **Code that runs before main**: the constructors in `.init_array` are executed on the
+  image before solving starts, so a key table built by a global object, or a global
+  `std::string`, is what main really reads. A constructor that would need the input — it
+  reads, exits, or looks for a debugger — is not run, and is reported instead.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 
@@ -57,7 +65,7 @@ length, or a goal address).
 
 | Not solved | What you see |
 |---|---|
-| C++ built with optimization | the inlined iostream internals dereference objects with no model, reported as `unsupported semantics` — unoptimized C++ that calls the library is solved (see above) |
+| A `std::string` whose length the input decides — `std::string s(argv[1])` | `unsupported semantics`: the allocation that follows needs a size, and guessing one would answer for a different program. A line read with `getline` is fine, since the object it fills is laid out here |
 | Rust | the same: ten in the survey below, none solved |
 | Go | not represented in the survey; its runtime does not reach `main` the way this expects |
 | Input from a socket | `unsupported semantics` at the first call — there is no model |
@@ -65,7 +73,7 @@ length, or a goal address).
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |
 | x87 80-bit long double | `unsupported semantics`; binary32 and binary64 are modeled exactly |
 | Programs that only print (no check) | `no likely success output found`: there is no input to recover |
-| Anti-debug or environment checks *before* `main` | reported as `runs before main`, and not modeled — see [crewctf_ez_rev](../examples/crewctf_ez_rev/README.md) |
+| Anti-debug or environment checks *before* `main` | reported as `runs before main`: a constructor that reads input, exits, or calls `ptrace` is not executed, since running it would decide for the input — see [crewctf_ez_rev](../examples/crewctf_ez_rev/README.md) |
 
 A missing C library model is the cheapest of these to hit and the cheapest to fix: one
 beginner challenge in the survey below stops only because `getegid` has no model.

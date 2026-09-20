@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 
 from ppy_rev.ghidra.schema import (
     BinaryInfo,
+    ExternalFunction,
     Function,
     GhidraExport,
     Instruction,
@@ -103,6 +104,7 @@ class ProgramBuilder:
     functions: list[Function] = field(default_factory=list[Function])
     blocks: list[MemoryBlock] = field(default_factory=list[MemoryBlock])
     symbols: list[Symbol] = field(default_factory=list[Symbol])
+    externals: list[ExternalFunction] = field(default_factory=list[ExternalFunction])
 
     def code(self, address: int, pcode: list[PcodeOp], length: int = 4, text: str = "") -> int:
         """Add an instruction; returns the address of the next one."""
@@ -154,9 +156,21 @@ class ProgramBuilder:
             )
         )
 
-    def import_(self, name: str, stub: int, *, no_return: bool = False) -> None:
+    def import_(
+        self, name: str, stub: int, *, no_return: bool = False, symbol: str | None = None
+    ) -> None:
         self.function(
             name, stub, no_return=no_return, thunk=ThunkTarget(name, external=True, address=1)
+        )
+        self.externals.append(
+            ExternalFunction(
+                name=name,
+                external_address=stub,
+                library=None,
+                original_name=symbol,
+                no_return=no_return,
+                signature="",
+            )
         )
 
     def symbol(self, name: str, address: int) -> None:
@@ -218,7 +232,7 @@ class ProgramBuilder:
             memory_blocks=tuple(self.blocks),
             symbols=tuple(self.symbols),
             strings=(),
-            external_functions=(),
+            external_functions=tuple(self.externals),
             functions=tuple(sorted(self.functions, key=lambda function: function.entry)),
             instructions=tuple(self.instructions[address] for address in sorted(self.instructions)),
         )
