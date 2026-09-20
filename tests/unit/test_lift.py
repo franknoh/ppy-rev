@@ -24,6 +24,8 @@ from ppy_rev.ir.model import (
     Unsupported,
     UserOp,
     Var,
+    operation_inputs,
+    operation_output,
 )
 from ppy_rev.ir.validate import validate_module
 from ppy_rev.lift.lifter import LiftResult, lift_export
@@ -384,6 +386,20 @@ def test_a_loop_back_to_the_entry_reads_the_register_the_caller_left() -> None:
     function = _function(result.module, "f")
     assert "RAX" in [item.register for item in function.inputs]
     assert result.diagnostics == ()
+    # The entry gets a block of its own with nothing in it, so that the value carried
+    # around the loop has somewhere to come from on the way in. Without it, the phi for
+    # that value is replaced by a definition that reads it, and the simplifier walks
+    # that definition for ever.
+    entry, *rest = function.blocks
+    assert entry.operations == () and entry.phis == ()
+    assert isinstance(entry.terminator, Jump)
+    assert all(block.id != 0 for block in rest)
+    for block in function.blocks:
+        for operation in block.operations:
+            outputs = {output.id for output in operation_output(operation)}
+            assert not outputs & {
+                value.id for value in operation_inputs(operation) if isinstance(value, Var)
+            }, operation
 
 
 def test_deeply_nested_branches_lift() -> None:
