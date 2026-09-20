@@ -267,3 +267,31 @@ def test_the_string_members_a_construction_is_made_of() -> None:
             evaluate(state.memory.read_byte(data + offset), {})
             == memory.read(OBJECT + cxx.BUFFER + offset, 1)[0]
         ), offset
+
+
+@settings(max_examples=40, deadline=None)
+@given(
+    st.integers(-99999, 99999),
+    st.sampled_from([b"", b" "]),
+    st.sampled_from([b"", b" x", b"\n"]),
+)
+def test_a_number_read_from_cin(value: int, before: bytes, after: bytes) -> None:
+    """`std::cin >> n` reads a number the way scanf does, in both engines.
+
+    Only one leading space is tried, because the symbolic scanner explores skipping one
+    whitespace byte rather than a run of them — which keeps every answer, since a shorter
+    run of spaces reads the same number.
+    """
+    assert from_symbol("_ZNSirsERi") == "std::istream::operator>>(int)"
+    assert from_symbol("_ZNSirsERm") == "std::istream::operator>>(long)"
+    assert from_symbol("_ZNSirsERd") is None  # a double reads by rules of its own
+
+    stdin = before + str(value).encode() + after
+    name = "std::istream::operator>>(int)"
+    result, memory, _ = _concrete(name, [STREAM, OBJECT], stdin)
+    assert result == STREAM
+    assert memory.load(OBJECT, 32) == value & 0xFFFFFFFF
+
+    state, assignment, outcome = _symbolic(name, [STREAM, OBJECT], stdin)
+    assert evaluate(outcome.outputs["RAX"], assignment) == STREAM
+    assert evaluate(state.memory.load(OBJECT, 32), assignment) == value & 0xFFFFFFFF

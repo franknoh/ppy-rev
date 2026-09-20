@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import MemoryFaultError
@@ -108,6 +109,10 @@ class SymbolicLibc:
             "std::ostream::operator<<": self._ostream_write,
             "std::string::at": self._string_at,
             "std::istream::operator>>": self._istream_read,
+            **{
+                name: partial(self._istream_number, width=width)
+                for name, width in cxx.NUMBER_WIDTHS.items()
+            },
             "std::endl": self._endl,
             "std::string::begin": self._string_data,
             "std::string::end": self._string_end,
@@ -549,6 +554,17 @@ class SymbolicLibc:
             state.io.stdin_position = start + length
             outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
         return outcomes
+
+    def _istream_number(self, call: _Call, width: int) -> list[ExternalOutcome]:
+        """`in >> n`: whitespace, then a number, exactly as `scanf("%d")` reads one."""
+        destination = self._concrete(call, call.arguments[1], "number")
+        directives = [
+            scanning.Directive(scanning.DirectiveKind.SPACE),
+            scanning.Directive(scanning.DirectiveKind.DECIMAL, store_size=width),
+        ]
+        scanner = _Scanner(self, call, directives, [destination], STANDARD_STREAMS["stdin"])
+        scanner.result = call.arguments[0]  # the stream, so `in >> a >> b` chains
+        return scanner.run()
 
     def _getline(self, call: _Call) -> list[ExternalOutcome]:
         """`std::getline(in, s)`: a line without its newline, into a std::string."""
@@ -1581,6 +1597,8 @@ class _Scanner:
         self.directives = directives
         self.destinations = destinations
         self.stream = stream or STANDARD_STREAMS["stdin"]
+        self.result: Expr | None = None
+        """What to return instead of the number of conversions, for `in >> n`."""
 
     def content(self, state: State) -> tuple[Expr, ...]:
         """What the stream being scanned holds."""
@@ -1620,7 +1638,8 @@ class _Scanner:
                 io.positions[self.stream] = scan.position
         outputs = dict(self.call.registers)
         result = (scan.result or 0) & 0xFFFFFFFF
-        outputs[self.libc.convention.integer_returns[0]] = sx.const(result, 64)
+        returns = self.result if self.result is not None else sx.const(result, 64)
+        outputs[self.libc.convention.integer_returns[0]] = returns
         return Returned(scan.state, outputs)
 
     # -- stream ------------------------------------------------------------------------------

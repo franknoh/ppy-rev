@@ -39,6 +39,9 @@ def from_symbol(symbol: str) -> str | None:
         return "std::getline"
     if symbol.startswith("_ZSt") and "rs" in symbol and _ISTREAM in symbol and _STRING in symbol:
         return "std::istream::operator>>"
+    if symbol.startswith("_ZNSirsER"):
+        # `std::cin >> n`, whose type is the last letter of the mangled name.
+        return _NUMBER_EXTRACTIONS.get(symbol.split("@", 1)[0][len("_ZNSirsER") :])
     if symbol.startswith("_ZSt4endl"):
         return "std::endl"
     if _OSTREAM in symbol or symbol.startswith("_ZNSols"):
@@ -110,4 +113,27 @@ _STRING_INTERNALS = {
 `std::string s = "text"` compiles to a chain of these: take the internal buffer, copy
 into it, set the length. They are matched by the part of the mangled name that names the
 member, because the rest of it is back-references that differ between instantiations.
+"""
+
+
+NUMBER_WIDTHS = {
+    "std::istream::operator>>(short)": 2,
+    "std::istream::operator>>(int)": 4,
+    "std::istream::operator>>(long)": 8,
+}
+"""How many bytes each numeric extraction stores."""
+_NUMBER_EXTRACTIONS = {
+    "s": "std::istream::operator>>(short)",
+    "t": "std::istream::operator>>(short)",
+    "i": "std::istream::operator>>(int)",
+    "j": "std::istream::operator>>(int)",
+    "l": "std::istream::operator>>(long)",
+    "m": "std::istream::operator>>(long)",
+    "x": "std::istream::operator>>(long)",
+    "y": "std::istream::operator>>(long)",
+}
+"""`std::istream::operator>>` by the type it reads, from the mangled parameter letter.
+
+Only the integer types: a `float` or a `bool` reads by rules of its own, and guessing
+them would put a number in memory that the program never saw.
 """

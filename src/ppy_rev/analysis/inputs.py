@@ -48,6 +48,9 @@ STDIN_READERS = frozenset(
         "fgetc",
         "std::getline",
         "std::istream::operator>>",
+        "std::istream::operator>>(short)",
+        "std::istream::operator>>(int)",
+        "std::istream::operator>>(long)",
     }
 )
 """Library functions whose use means the program consumes standard input."""

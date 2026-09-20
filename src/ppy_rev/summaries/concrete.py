@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import ConcreteMemory
@@ -100,6 +101,10 @@ class ConcreteLibc:
             ),
             "std::ostream::operator<<": self._ostream_write,
             "std::istream::operator>>": self._istream_read,
+            **{
+                name: partial(self._istream_number, width=width)
+                for name, width in cxx.NUMBER_WIDTHS.items()
+            },
             "std::endl": self._endl,
             "std::string::at": lambda arguments, memory: (
                 (self._string_field(memory, arguments[0], cxx.DATA) + arguments[1]) & mask(64)
@@ -420,6 +425,19 @@ class ConcreteLibc:
                 break
         self._store_string(memory, arguments[1], token[:end])
         self.io.stdin_position += skipped + end
+        return arguments[0]
+
+    def _istream_number(self, arguments: list[int], memory: ConcreteMemory, width: int) -> int:
+        """`in >> n`: whitespace, then a number, exactly as `scanf("%d")` reads one."""
+        directives = [
+            scanning.Directive(scanning.DirectiveKind.SPACE),
+            scanning.Directive(scanning.DirectiveKind.DECIMAL, store_size=width),
+        ]
+        scanned = scanning.scan(directives, self.io.stdin[self.io.stdin_position :])
+        self.io.stdin_position += scanned.consumed
+        for assignment in scanned.assignments:
+            if isinstance(assignment.content, int):
+                memory.store(arguments[1], assignment.content & mask(width * 8), width * 8)
         return arguments[0]
 
     def _getline(self, arguments: list[int], memory: ConcreteMemory) -> int:
