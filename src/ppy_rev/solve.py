@@ -540,7 +540,7 @@ def _initial_state(
     }
     count = max([0, *argv_inputs]) + 1
     arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
-    image, _ = started_image(module)
+    image, started = started_image(module)
     entry = enter_main(
         module,
         image,
@@ -555,6 +555,7 @@ def _initial_state(
         frames=[],
         memory=memory,
         io=SymbolicIO(
+            heap_next=started.heap_next,
             stdin=stdin_symbols(stdin_length),
             contents={
                 item.name: file_symbols(item.name, item.capacity)

@@ -20,6 +20,7 @@ from ppy_rev.analysis.program import deferred_initializers, initializer_function
 from ppy_rev.execution.interpreter import ExecutionError, Interpreter, Limits
 from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.process import enter_call
+from ppy_rev.execution.program import HEAP_START
 from ppy_rev.ir.model import Module
 from ppy_rev.summaries.concrete import (
     ConcreteIO,
@@ -40,6 +41,8 @@ class Initialization:
     """Constructors that ran to completion; their writes are in the memory."""
     stopped: tuple[tuple[str, str], ...]
     """Constructors that could not be run, and why — their writes may be missing."""
+    heap_next: int = HEAP_START
+    """Where the heap has reached, so main does not allocate over what a constructor kept."""
 
     @property
     def complete(self) -> bool:
@@ -53,6 +56,9 @@ def run_initializers(module: Module, memory: ConcreteMemory) -> Initialization:
     """Run every constructor that can be run, writing into `memory`."""
     deferred = {item.address: item for item in deferred_initializers(module)}
     convention = calling_convention(module.target)
+    # One set of library state for all of them, as the program has: a constructor that
+    # allocates must not be handed memory another one is already keeping.
+    libc = ConcreteLibc(convention, ConcreteIO())
     ran: list[str] = []
     stopped: list[tuple[str, str]] = []
     for function in initializer_functions(module):
@@ -61,7 +67,6 @@ def run_initializers(module: Module, memory: ConcreteMemory) -> Initialization:
             calls = ", ".join(waiting.library_calls)
             stopped.append((function.name, f"it calls {calls}, which needs the input"))
             continue
-        libc = ConcreteLibc(convention, ConcreteIO())
         interpreter = Interpreter(module, memory, libc, INITIALIZER_LIMITS)
         frame = enter_call(module, memory, dict.fromkeys(convention.integer_parameters[:3], 0))
         try:
@@ -70,4 +75,4 @@ def run_initializers(module: Module, memory: ConcreteMemory) -> Initialization:
             stopped.append((function.name, str(error)))
             continue
         ran.append(function.name)
-    return Initialization(tuple(ran), tuple(stopped))
+    return Initialization(tuple(ran), tuple(stopped), libc.io.heap_next)

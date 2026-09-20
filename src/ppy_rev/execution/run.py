@@ -64,7 +64,12 @@ def run_program(
     memory = program_memory(module)
     initialization = run_initializers(module, memory)
     entry = enter_main(module, memory, arguments, reserve)
-    io = ConcreteIO(stdin=stdin, traced=traced, files=dict(files or {}))
+    io = ConcreteIO(
+        stdin=stdin,
+        traced=traced,
+        files=dict(files or {}),
+        heap_next=initialization.heap_next,
+    )
     libc = ConcreteLibc(calling_convention(module.target), io)
     at_instruction = {watch.address: watch for watch in watches if watch.register is None}
     at_call = [watch for watch in watches if watch.register is not None]

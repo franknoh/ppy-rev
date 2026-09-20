@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ppy_rev.analysis.program import deferred_initializers, initializer_functions
-from ppy_rev.execution.program import program_memory
+from ppy_rev.execution.program import HEAP_START, program_memory
 from ppy_rev.execution.startup import run_initializers
 from ppy_rev.lift.lifter import lift_export
 from support.exports import ProgramBuilder, call, const, op, ret
@@ -13,6 +13,8 @@ CONSTRUCTOR = 0x1100
 INIT_ARRAY = 0x4000
 TABLE = 0x4100
 FILLER = 0x1200
+ALLOCATOR = 0x1400
+MALLOC = 0x3020
 
 
 def _program() -> ProgramBuilder:
@@ -96,3 +98,21 @@ def test_a_constructor_that_needs_the_input_is_not_run() -> None:
     assert not initialization.complete
     assert initialization.stopped == (("_INIT_1", "it calls ptrace, which needs the input"),)
     assert memory.load(TABLE, 64) == 0x42
+
+
+def test_two_constructors_do_not_allocate_the_same_memory() -> None:
+    """They share the program's heap, so what one keeps the next cannot be handed."""
+    program = _program()
+    program.import_("malloc", MALLOC)
+    for index, entry in enumerate((ALLOCATOR, ALLOCATOR + 0x100)):
+        program.code(entry, call(MALLOC, entry + 4))
+        program.code(entry + 4, ret(), length=1)
+        program.function(f"_INIT_ALLOC_{index}", entry)
+    entries = b"".join(address.to_bytes(8, "little") for address in (ALLOCATOR, ALLOCATOR + 0x100))
+    program.data(".init_array", INIT_ARRAY, entries)
+    module = lift_export(program.build()).module
+    memory = program_memory(module)
+    initialization = run_initializers(module, memory)
+    assert initialization.ran == ("_INIT_ALLOC_0", "_INIT_ALLOC_1")
+    # Two allocations happened, so main starts past both of them.
+    assert initialization.heap_next > HEAP_START
