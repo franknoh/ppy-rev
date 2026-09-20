@@ -152,6 +152,24 @@ def test_wide_symbolic_pointers_are_unsupported_not_guessed() -> None:
     assert stop.code is DiagnosticCode.SYMBOLIC_POINTER_REQUIRED
 
 
+def test_reading_an_imported_object_is_unsupported_not_a_crash() -> None:
+    """Ghidra gives `std::cin` an address no section holds, and optimized C++ reads it.
+
+    Reading there faults, but the program is not the one at fault: no model put anything
+    in that object. Treating the path as dead would let a whole search end in `unsat`.
+    """
+    program = ProgramBuilder()
+    program.symbol("cin", 0x500000)
+    after = program.code(0x1000, [op("LOAD", [const(0x500000, 8)], reg("RAX"))])
+    program.code(after, ret(), length=1)
+    program.function("f", 0x1000)
+    solution = _solve(_module(program), _rax_is(1))
+    assert solution.model is None
+    (stop,) = solution.exploration.incomplete
+    assert stop.reason is StopReason.UNSUPPORTED
+    assert stop.detail == "no model for the library object cin"
+
+
 def test_a_pointer_chosen_between_constants_is_read_without_the_solver() -> None:
     """What `strchr` returns: one address per position, or NULL — far apart, but few."""
     from ppy_rev.symbolic.executor import constant_choices

@@ -157,6 +157,40 @@ def initializers(module: Module) -> tuple[Initializer, ...]:
     return tuple(found)
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalObjects:
+    """Where an import's *data* object lives: an address the program image does not hold.
+
+    Ghidra gives every imported symbol an address in a block of its own, outside the
+    sections the loader would map, and code reaching `std::cin` or `environ` through the
+    GOT ends up reading there. Such a read faults, but the program is not wrong — the
+    model is missing — so those addresses are recognized rather than called a crash.
+    """
+
+    names: dict[int, str]
+    start: int
+    end: int
+
+    def __contains__(self, address: int) -> bool:
+        return self.start <= address < self.end
+
+    def name_at(self, address: int) -> str | None:
+        return self.names.get(address)
+
+
+def external_objects(module: Module) -> ExternalObjects:
+    """The labels that fall outside every mapped region, and the span they occupy."""
+    names = {
+        label.address: label.name
+        for label in module.labels
+        if not any(region.start <= label.address < region.end for region in module.memory)
+    }
+    if not names:
+        return ExternalObjects({}, 0, 0)
+    step = module.target.pointer_width // 8
+    return ExternalObjects(names, min(names), max(names) + step)
+
+
 def executable_address(module: Module, address: int) -> int:
     """`address` if an instruction was lifted there, else the next one in the same function.
 

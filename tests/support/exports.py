@@ -17,6 +17,7 @@ from ppy_rev.ghidra.schema import (
     Producer,
     Register,
     ReturnValue,
+    Symbol,
     ThunkTarget,
     Varnode,
 )
@@ -101,6 +102,7 @@ class ProgramBuilder:
     instructions: dict[int, Instruction] = field(default_factory=dict[int, Instruction])
     functions: list[Function] = field(default_factory=list[Function])
     blocks: list[MemoryBlock] = field(default_factory=list[MemoryBlock])
+    symbols: list[Symbol] = field(default_factory=list[Symbol])
 
     def code(self, address: int, pcode: list[PcodeOp], length: int = 4, text: str = "") -> int:
         """Add an instruction; returns the address of the next one."""
@@ -157,6 +159,21 @@ class ProgramBuilder:
             name, stub, no_return=no_return, thunk=ThunkTarget(name, external=True, address=1)
         )
 
+    def symbol(self, name: str, address: int) -> None:
+        """A named address, as Ghidra reports one; outside every block it is an import."""
+        self.symbols.append(
+            Symbol(
+                name=name,
+                qualified_name=name,
+                kind="label",
+                source="imported",
+                external=False,
+                primary=True,
+                entry_point=False,
+                address=address,
+            )
+        )
+
     def data(self, name: str, start: int, content: bytes, *, writable: bool = False) -> None:
         self.blocks.append(
             MemoryBlock(
@@ -199,7 +216,7 @@ class ProgramBuilder:
             ),
             user_ops=(),
             memory_blocks=tuple(self.blocks),
-            symbols=(),
+            symbols=tuple(self.symbols),
             strings=(),
             external_functions=(),
             functions=tuple(sorted(self.functions, key=lambda function: function.entry)),

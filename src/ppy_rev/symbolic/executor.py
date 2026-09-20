@@ -17,6 +17,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from ppy_rev.analysis.locations import Location
+from ppy_rev.analysis.program import external_objects
 from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import Slice
 from ppy_rev.diagnostics import DiagnosticCode
@@ -273,6 +274,7 @@ class Executor:
             for external in module.externals
             for address in external.addresses
         }
+        self._library_objects = external_objects(module)
         self._stack_pointer = module.target.stack_pointer
         self._pointer_width = module.target.pointer_width
         self._next_state = 0
@@ -712,13 +714,41 @@ class Executor:
         if self.feasible(state) is Status.UNSAT:
             raise _Stop(StopReason.FAULT, f"symbolic pointer at {origin.address:#x} faults")
 
+    def _fault_stop(self, address: int, fault: MemoryFaultError, origin: Origin) -> _Stop:
+        """A fault, unless it is an unmodeled library object the program is reading.
+
+        A program that really dereferences a bad pointer crashes, and a path that crashes
+        reaches nothing. But the same access happens when a library object ppy-rev does
+        not model — `std::cin`, say — is read: either as zeros, through a null pointer, or
+        at the address Ghidra gave the import. Calling those "no path reaches the goal"
+        would report a gap as a proof, so they stop the path as unsupported instead.
+        """
+        if address in self._library_objects:
+            name = self._library_objects.name_at(address)
+            described = (
+                f"the library object {name}" if name else f"a library object at {address:#x}"
+            )
+            return _Stop(
+                StopReason.UNSUPPORTED,
+                f"no model for {described}",
+                DiagnosticCode.UNSUPPORTED_OPERATION,
+            )
+        if address < _NULL_PAGE or address >= (1 << 64) - _NULL_PAGE:
+            return _Stop(
+                StopReason.UNSUPPORTED,
+                "null pointer dereference: a library object with no model, "
+                "or a pointer this analysis lost",
+                DiagnosticCode.UNSUPPORTED_OPERATION,
+            )
+        return _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}")
+
     def load(self, state: State, address: Expr, width: int, origin: Origin) -> Expr:
         size = width // 8
         if address.is_const:
             try:
                 return state.memory.load(address.value, width)
             except MemoryFaultError as fault:
-                raise _fault_stop(address.value, fault, origin) from fault
+                raise self._fault_stop(address.value, fault, origin) from fault
         candidates = self._candidates(state, address, size, False, self.budget.pointer_range)
         if not candidates:
             raise _Stop(StopReason.FAULT, f"symbolic load at {origin.address:#x} faults")
@@ -738,7 +768,7 @@ class Executor:
             try:
                 state.memory.store(address.value, value)
             except MemoryFaultError as fault:
-                raise _fault_stop(address.value, fault, origin) from fault
+                raise self._fault_stop(address.value, fault, origin) from fault
             return
         candidates = self._candidates(state, address, size, True, self.budget.store_range)
         if not candidates:
@@ -1404,21 +1434,3 @@ def constant_choices(value: Expr, limit: int) -> list[int] | None:
         if len(found) > limit:
             return None
     return sorted(found)
-
-
-def _fault_stop(address: int, fault: MemoryFaultError, origin: Origin) -> _Stop:
-    """A fault, unless it is the null dereference an unmodeled library object leads to.
-
-    A program that really dereferences a null pointer crashes, and a path that crashes
-    reaches nothing. But the same access happens when a library object ppy-rev does not
-    model — `std::cin`, say — is read as zeros, and calling that "no path reaches the
-    goal" would report a gap as a proof.
-    """
-    if address < _NULL_PAGE or address >= (1 << 64) - _NULL_PAGE:
-        return _Stop(
-            StopReason.UNSUPPORTED,
-            "null pointer dereference: a library object with no model, "
-            "or a pointer this analysis lost",
-            DiagnosticCode.UNSUPPORTED_OPERATION,
-        )
-    return _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}")
