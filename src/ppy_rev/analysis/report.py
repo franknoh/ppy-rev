@@ -10,8 +10,8 @@ from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, discover_inputs
 from ppy_rev.analysis.program import (
     Initializer,
+    deferred_initializers,
     find_main,
-    initializers,
     reachable_functions,
     string_references,
 )
@@ -51,7 +51,7 @@ class AnalysisReport:
     printed: tuple[tuple[int, str], ...]
     """(instruction, message) for what the program prints, when nothing ranked as success."""
     initializers: tuple[Initializer, ...]
-    """Constructors that run before main and are not modeled."""
+    """Constructors that run before main and cannot be run without the input."""
     dispatchers: tuple[Dispatcher, ...]
     diagnostics: tuple[tuple[str, int], ...]
     """Lifting diagnostic codes in functions reachable from main, with their counts."""
@@ -98,7 +98,7 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
         ),
         flag_formats=tuple(flag_prefixes(module)),
         printed=() if successes else printed_messages(module, reachable),
-        initializers=initializers(module),
+        initializers=deferred_initializers(module),
         dispatchers=tuple(
             item for item in detect_dispatchers(module) if item.confidence >= LIKELY_DISPATCHER
         ),

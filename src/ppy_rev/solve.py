@@ -16,7 +16,6 @@ from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import (
     executable_address,
     find_main,
-    initializers,
     reachable_functions,
     string_references,
 )
@@ -24,8 +23,10 @@ from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.analysis.strings import describe_messages, printed_messages
 from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
+from ppy_rev.execution.startup import Initialization, run_initializers
 from ppy_rev.ir.model import Function, Module
 from ppy_rev.progress import Progress
 from ppy_rev.solver.backend import SolverBackend
@@ -233,6 +234,7 @@ def solve_module(
         )
 
     search = executor()
+    _, initialization = started_image(module)
     state, symbols = _initial_state(search, module, main, inputs, request)
     notes: list[str] = []
     solutions: list[Solution] = []
@@ -243,7 +245,7 @@ def solve_module(
         solutions, notes = _solutions(
             search, module, main, request, inputs, symbols, exploration, goal, avoid
         )
-        status = _status(exploration, solutions)
+        status = _status(exploration, solutions, initialization)
         notes += _incomplete_notes(exploration)
     if request.strategy is Strategy.CONCOLIC or (
         request.strategy is Strategy.AUTO and status in _CONCOLIC_FALLBACK
@@ -269,7 +271,7 @@ def solve_module(
                 search, module, main, request, inputs, symbols, exploration, goal, avoid
             )
             notes += concolic_notes
-            status = _concolic_status(result, solutions)
+            status = _concolic_status(result, solutions, initialization)
     reached = exploration.reached[0].state if exploration and exploration.reached else None
     smt2 = (
         search.session.smt2(reached.conditions())
@@ -305,7 +307,7 @@ def solve_module(
                 notes
                 + _unsat_notes(status, inputs)
                 + _flag_format_note(module, request, solutions)
-                + _initializer_note(module)
+                + _initializer_note(initialization)
             )
         ),
         smt2=smt2,
@@ -323,7 +325,9 @@ _CONCOLIC_FALLBACK = frozenset(
 )
 
 
-def _concolic_status(result: ConcolicResult, solutions: list[Solution]) -> SolveStatus:
+def _concolic_status(
+    result: ConcolicResult, solutions: list[Solution], initialization: Initialization
+) -> SolveStatus:
     if solutions:
         return SolveStatus.SAT
     exploration = result.exploration
@@ -335,7 +339,7 @@ def _concolic_status(result: ConcolicResult, solutions: list[Solution]) -> Solve
     # was approximated or cut short on the way.
     if exploration.statistics.hiding_approximations or exploration.incomplete:
         return SolveStatus.INCOMPLETE
-    return SolveStatus.UNSAT
+    return SolveStatus.UNSAT if initialization.complete else SolveStatus.INCOMPLETE
 
 
 def _seed(
@@ -510,6 +514,12 @@ class _Symbols:
         ]
 
 
+def started_image(module: Module) -> tuple[ConcreteMemory, Initialization]:
+    """The image main really starts from: the program plus whatever its constructors wrote."""
+    memory = program_memory(module)
+    return memory, run_initializers(module, memory)
+
+
 def _initial_state(
     executor: Executor,
     module: Module,
@@ -522,7 +532,7 @@ def _initial_state(
     }
     count = max([0, *argv_inputs]) + 1
     arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
-    image = program_memory(module)
+    image, _ = started_image(module)
     entry = enter_main(
         module,
         image,
@@ -858,7 +868,9 @@ def _printed_fragments(text: str) -> list[bytes]:
     ]
 
 
-def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:
+def _status(
+    exploration: Exploration, solutions: list[Solution], initialization: Initialization
+) -> SolveStatus:
     if solutions:
         return SolveStatus.SAT
     if exploration.reached:
@@ -878,7 +890,9 @@ def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:
         return SolveStatus.UNSUPPORTED
     if reasons & INCOMPLETE_REASONS:
         return SolveStatus.INCOMPLETE
-    return SolveStatus.UNSAT
+    # `unsat` claims every path was explored; a constructor that would not run means
+    # main started from an image the real program never has.
+    return SolveStatus.UNSAT if initialization.complete else SolveStatus.INCOMPLETE
 
 
 def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
@@ -896,12 +910,9 @@ def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
     )
 
 
-def _initializer_note(module: Module) -> list[str]:
-    """Say when a constructor runs before main, since solving does not model it."""
-    return [
-        f"code runs before main: {item.name} calls {', '.join(item.library_calls)} (not modeled)"
-        for item in initializers(module)
-    ]
+def _initializer_note(initialization: Initialization) -> list[str]:
+    """Say which constructors could not be run, since main then starts from less."""
+    return [f"code runs before main: {note} (not modeled)" for note in initialization.notes()]
 
 
 def _flag_format_note(

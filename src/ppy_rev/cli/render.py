@@ -277,7 +277,7 @@ def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
         calls = ", ".join(item.library_calls)
         out.write(
             f"\nRuns before main:\n  {item.name} at {item.address:#x} calls {calls}\n"
-            "  not modeled: solving starts at main\n"
+            "  not run: what it does depends on the input\n"
         )
     if verbose:
         for item in reachable:

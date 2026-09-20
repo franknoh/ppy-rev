@@ -126,34 +126,42 @@ class Initializer:
     library_calls: tuple[str, ...]
 
 
-def initializers(module: Module) -> tuple[Initializer, ...]:
-    """Constructors in `.init_array` that could decide the outcome before main runs.
-
-    Solving starts at main, so anything these do — reading the input themselves, checking for a
-    debugger, exiting — is not modeled. Only initializers that reach such a call are reported;
-    the ones every compiler emits reach none.
-    """
+def initializer_functions(module: Module) -> tuple[Function, ...]:
+    """The lifted constructors the loader runs before main, in the order it runs them."""
     width = module.target.pointer_width // 8
     order: Literal["little", "big"] = module.target.endianness.value
-    found: list[Initializer] = []
-    for region in module.memory:
-        if region.name not in (".init_array", ".preinit_array") or region.data is None:
-            continue
-        for offset in range(0, len(region.data) - width + 1, width):
-            address = int.from_bytes(region.data[offset : offset + width], order)
-            function = module.function_at(address)
-            if function is None or any(item.address == function.entry for item in found):
+    found: list[Function] = []
+    for name in (".preinit_array", ".init_array"):
+        for region in module.memory:
+            if region.name != name or region.data is None:
                 continue
-            names = sorted(
-                {
-                    name
-                    for reached in reachable_functions(module, function)
-                    for call, _ in calls(reached)
-                    if (name := external_name(module, call)) is not None and name in _BEFORE_MAIN
-                }
-            )
-            if names:
-                found.append(Initializer(function.name, function.entry, tuple(names)))
+            for offset in range(0, len(region.data) - width + 1, width):
+                address = int.from_bytes(region.data[offset : offset + width], order)
+                function = module.function_at(address)
+                if function is not None and function not in found:
+                    found.append(function)
+    return tuple(found)
+
+
+def deferred_initializers(module: Module) -> tuple[Initializer, ...]:
+    """Constructors whose behaviour depends on something only solving could decide.
+
+    Reading the input, checking for a debugger, exiting: running such a constructor
+    concretely before main would fix an answer to a guess. They are reported instead;
+    the ones every compiler emits reach none of these calls and simply run.
+    """
+    found: list[Initializer] = []
+    for function in initializer_functions(module):
+        names = sorted(
+            {
+                name
+                for reached in reachable_functions(module, function)
+                for call, _ in calls(reached)
+                if (name := external_name(module, call)) is not None and name in _BEFORE_MAIN
+            }
+        )
+        if names:
+            found.append(Initializer(function.name, function.entry, tuple(names)))
     return tuple(found)
 
 
