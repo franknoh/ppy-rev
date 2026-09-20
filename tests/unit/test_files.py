@@ -12,13 +12,15 @@ from ppy_rev.summaries.symbolic import SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.evaluate import evaluate
 from ppy_rev.symbolic.executor import Executor, Failed, Goal, Returned
+from ppy_rev.symbolic.inputs import file_symbols
 from ppy_rev.symbolic.memory import SymbolicMemory
-from ppy_rev.symbolic.state import State, SymbolicIO
+from ppy_rev.symbolic.state import ConstraintKind, State, SymbolicIO
 from support.revir import module_for
 
 REGISTERS = tuple((name, 64) for name in ("RAX", "RCX", "RDX", "RSP", "RSI", "RDI", "R8", "R9"))
 DATA = 0x10000
 PATH = DATA + 0x40
+FORMAT = DATA + 0x80
 BUFFER = DATA + 0x100
 MODULE = module_for(registers=REGISTERS)
 CONTENT = b"flag{from_a_file}\n"
@@ -126,6 +128,56 @@ def test_a_path_the_program_computes_is_refused() -> None:
     outcome = _open(state, PATH)
     assert isinstance(outcome, Failed)
     assert "a path the program computes" in outcome.detail
+
+
+def test_scanning_a_file_reads_what_scanning_stdin_would() -> None:
+    """`fscanf` is `scanf` over an opened file: both engines take the same fields from it."""
+    content = b"1337 ok\n"
+    memory = _memory()
+    memory.write(FORMAT, b"%d %s\0")
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO(files={"flag.txt": content}))
+    handle = _call(libc, "fopen", memory, PATH, 0)
+    assert _call(libc, "fscanf", memory, handle, FORMAT, BUFFER, BUFFER + 0x40) == 2
+    assert memory.load(BUFFER, 32) == 1337
+    assert memory.read_c_string(BUFFER + 0x40) == b"ok"
+
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    symbols = file_symbols("flag.txt", len(content))
+    image = _memory()
+    image.write(FORMAT, b"%d %s\0")
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO(contents={}))
+    assignment = {symbol.name: byte for symbol, byte in zip(symbols, content, strict=True)}
+    for symbol, byte in zip(symbols, content, strict=True):
+        executor.add_constraint(
+            state, sx.equal(symbol, sx.const(byte, 8)), ConstraintKind.INPUT, None, "flag.txt"
+        )
+    state.io.contents["flag.txt"] = symbols
+    opened = _open(state, PATH)
+    assert isinstance(opened, Returned)
+    stream = evaluate(opened.outputs["RAX"], assignment)
+    outcomes = SymbolicLibc(SYSV_X86_64).call(
+        executor,
+        opened.state,
+        "fscanf",
+        {
+            register: sx.const(value, 64)
+            for register, value in zip(
+                SYSV_X86_64.integer_parameters,
+                [stream, FORMAT, BUFFER, BUFFER + 0x40],
+                strict=False,
+            )
+        },
+        Origin(0, 0),
+    )
+    assert outcomes is not None
+    (outcome,) = [item for item in outcomes if isinstance(item, Returned)]
+    assert evaluate(outcome.outputs["RAX"], assignment) == 2
+    assert evaluate(outcome.state.memory.load(BUFFER, 32), assignment) == 1337
+    scanned = bytes(
+        evaluate(outcome.state.memory.read_byte(BUFFER + 0x40 + index), assignment)
+        for index in range(3)
+    )
+    assert scanned == b"ok\0"
 
 
 def test_stdin_still_reads_from_stdin() -> None:

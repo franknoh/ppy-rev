@@ -150,6 +150,7 @@ class SymbolicLibc:
             "strtol": self._strtol,
             "strtoll": self._strtol,
             "scanf": self._scanf,
+            "fscanf": self._fscanf,
             "toupper": lambda call: self._case(call, 0x61, 0x7A, -0x20),
             "tolower": lambda call: self._case(call, 0x41, 0x5A, 0x20),
             **{
@@ -1129,6 +1130,12 @@ class SymbolicLibc:
 
     # -- scanf -----------------------------------------------------------------------------
 
+    def _fscanf(self, call: _Call) -> list[ExternalOutcome]:
+        """`fscanf(stream, ...)`: scanf reading whatever that stream holds."""
+        stream = self._concrete(call, call.arguments[0], "stream")
+        self._stream(call, stream)  # refuses a stream this program never opened
+        return self._scan(call, format_index=1, stream=stream)
+
     def _scanf(self, call: _Call) -> list[ExternalOutcome]:
         """scanf over the symbolic stdin stream, forking where the input's shape decides.
 
@@ -1138,7 +1145,12 @@ class SymbolicLibc:
         skips several whitespace bytes behaves exactly like one that skips a single byte
         of it, so only zero or one skipped byte is explored.
         """
-        template = self._string_bytes(call, self._concrete(call, call.arguments[0], "format"))
+        return self._scan(call, format_index=0, stream=0)
+
+    def _scan(self, call: _Call, format_index: int, stream: int) -> list[ExternalOutcome]:
+        template = self._string_bytes(
+            call, self._concrete(call, call.arguments[format_index], "format")
+        )
         if any(not byte.is_const for byte in template):
             raise _Unsupported("the format string is symbolic")
         try:
@@ -1149,11 +1161,10 @@ class SymbolicLibc:
             1 for directive in directives if directive.assigns and _converts(directive)
         )
         destinations = [
-            self._concrete(call, self._variadic(call, 1 + index), "pointer")
+            self._concrete(call, self._variadic(call, format_index + 1 + index), "pointer")
             for index in range(assignments)
         ]
-        scanner = _Scanner(self, call, directives, destinations)
-        return scanner.run()
+        return _Scanner(self, call, directives, destinations, stream).run()
 
     def _variadic(self, call: _Call, index: int) -> Expr:
         registers = self.convention.integer_parameters
@@ -1462,15 +1473,28 @@ class _Scanner:
         call: _Call,
         directives: list[scanning.Directive],
         destinations: list[int],
+        stream: int = 0,
     ) -> None:
         self.libc = libc
         self.call = call
         self.directives = directives
         self.destinations = destinations
+        self.stream = stream or STANDARD_STREAMS["stdin"]
+
+    def content(self, state: State) -> tuple[Expr, ...]:
+        """What the stream being scanned holds."""
+        if self.stream == STANDARD_STREAMS["stdin"]:
+            return state.io.stdin
+        item = state.io.files.get(self.stream)
+        return item.content if item is not None else ()
+
+    def position(self, state: State) -> int:
+        if self.stream == STANDARD_STREAMS["stdin"]:
+            return state.io.stdin_position
+        return state.io.positions.get(self.stream, 0)
 
     def run(self) -> list[ExternalOutcome]:
-        io = self.call.state.io
-        pending = [_Scan(self.call.state, io.stdin_position)]
+        pending = [_Scan(self.call.state, self.position(self.call.state))]
         outcomes: list[ExternalOutcome] = []
         while pending:
             scan = pending.pop()
@@ -1486,9 +1510,13 @@ class _Scanner:
 
     def _finish(self, scan: _Scan) -> ExternalOutcome:
         io = scan.state.io
-        if scan.position > io.stdin_position:
-            io.stdin_reads.append((io.stdin_position, scan.position, False))
-            io.stdin_position = scan.position
+        read_from = self.position(scan.state)
+        if scan.position > read_from:
+            if self.stream == STANDARD_STREAMS["stdin"]:
+                io.stdin_reads.append((read_from, scan.position, False))
+                io.stdin_position = scan.position
+            else:
+                io.positions[self.stream] = scan.position
         outputs = dict(self.call.registers)
         result = (scan.result or 0) & 0xFFFFFFFF
         outputs[self.libc.convention.integer_returns[0]] = sx.const(result, 64)
@@ -1497,8 +1525,8 @@ class _Scanner:
     # -- stream ------------------------------------------------------------------------------
 
     def _byte(self, scan: _Scan, index: int) -> Expr | None:
-        stdin = scan.state.io.stdin
-        return stdin[index] if index < len(stdin) else None
+        content = self.content(scan.state)
+        return content[index] if index < len(content) else None
 
     def _fork[T](self, scan: _Scan, options: list[tuple[Expr, T]]) -> list[tuple[_Scan, T]]:
         """Split `scan` by mutually exclusive conditions, keeping the feasible ones."""
@@ -1570,38 +1598,38 @@ class _Scanner:
 
     def _string(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
         start = scan.position
-        stdin = scan.state.io.stdin
-        longest = len(stdin) - start
+        data = self.content(scan.state)
+        longest = len(data) - start
         if directive.width is not None:
             longest = min(longest, directive.width)
         options: list[tuple[Expr, int]] = []
         prefix = sx.TRUE
         for length in range(1, longest + 1):
-            prefix = sx.bool_and(prefix, sx.bool_not(_is_space(stdin[start + length - 1])))
+            prefix = sx.bool_and(prefix, sx.bool_not(_is_space(data[start + length - 1])))
             after = self._byte(scan, start + length)
             ends = sx.TRUE if length == directive.width or after is None else _is_space(after)
             options.append((sx.bool_and(prefix, ends), length))
         branches = self._fork(scan, options)
         for branch, length in branches:
-            content = list(stdin[start : start + length])
+            content = list(data[start : start + length])
             self._store(branch, directive, [*content, _ZERO_BYTE])
             branch.position = start + length
         return [branch for branch, _ in branches]
 
     def _characters(self, scan: _Scan, directive: scanning.Directive) -> _Scan:
-        stdin = scan.state.io.stdin
+        data = self.content(scan.state)
         start = scan.position
-        content = list(stdin[start : start + (directive.width or 1)])
+        content = list(data[start : start + (directive.width or 1)])
         self._store(scan, directive, content)
         scan.position = start + len(content)
         return scan
 
     def _decimal(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
-        stdin = scan.state.io.stdin
+        data = self.content(scan.state)
         start = scan.position
-        available = len(stdin) - start
+        available = len(data) - start
         limit = available if directive.width is None else min(available, directive.width)
-        first = stdin[start]
+        first = data[start]
         sign = sx.bool_or(sx.equal(first, sx.const(0x2B, 8)), sx.equal(first, sx.const(0x2D, 8)))
         # (sign bytes, digit count): no digits is a matching failure, after which a sign
         # that was read stays consumed.
@@ -1613,10 +1641,10 @@ class _Scanner:
                 continue
             digits = sx.TRUE
             options.append(
-                (sx.bool_and(head, sx.bool_not(_is_digit(stdin[start + signed]))), (signed, 0))
+                (sx.bool_and(head, sx.bool_not(_is_digit(data[start + signed]))), (signed, 0))
             )
             for count in range(1, limit - signed + 1):
-                digits = sx.bool_and(digits, _is_digit(stdin[start + signed + count - 1]))
+                digits = sx.bool_and(digits, _is_digit(data[start + signed + count - 1]))
                 after = self._byte(scan, start + signed + count)
                 if signed + count == directive.width or after is None:
                     ends = sx.TRUE
@@ -1633,9 +1661,7 @@ class _Scanner:
                 continue
             if signed not in values:
                 negative = sx.equal(first, sx.const(0x2D, 8)) if signed else sx.FALSE
-                values[signed] = _token_values(
-                    list(stdin[start + signed : start + limit]), negative
-                )
+                values[signed] = _token_values(list(data[start + signed : start + limit]), negative)
             value = values[signed][count - 1]
             size = directive.store_size
             self._store(

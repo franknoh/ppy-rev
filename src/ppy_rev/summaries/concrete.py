@@ -149,6 +149,7 @@ class ConcreteLibc:
             "strtol": self._strtol,
             "strtoll": self._strtol,
             "scanf": self._scanf,
+            "fscanf": self._fscanf,
             "__errno_location": lambda arguments, memory: ERRNO_ADDRESS,
             "toupper": lambda arguments, memory: self._case(ctype.to_upper, arguments),
             "tolower": lambda arguments, memory: self._case(ctype.to_lower, arguments),
@@ -490,15 +491,23 @@ class ConcreteLibc:
         return byte
 
     def _scanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return self._scan(arguments, memory, format_index=0, stream=STANDARD_STREAMS["stdin"])
+
+    def _fscanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return self._scan(arguments, memory, format_index=1, stream=arguments[0])
+
+    def _scan(
+        self, arguments: list[int], memory: ConcreteMemory, format_index: int, stream: int
+    ) -> int:
         try:
-            directives = scanning.parse_format(self._string(memory, arguments[0]))
+            directives = scanning.parse_format(self._string(memory, arguments[format_index]))
         except scanning.FormatError as error:
             raise UnsupportedLibraryCallError(f"scanf: {error}") from error
-        io = self.io
-        scanned = scanning.scan(directives, io.stdin[io.stdin_position :])
-        io.stdin_position += scanned.consumed
+        content, position = self._stream(stream)
+        scanned = scanning.scan(directives, content[position:])
+        self._advance(stream, scanned.consumed)
         for index, assignment in enumerate(scanned.assignments):
-            destination = self._variadic(arguments, 1 + index, memory)
+            destination = self._variadic(arguments, format_index + 1 + index, memory)
             match assignment.content:
                 case bytes() as content if (
                     assignment.directive.kind is scanning.DirectiveKind.STRING
