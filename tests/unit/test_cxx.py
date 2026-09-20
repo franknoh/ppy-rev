@@ -198,3 +198,72 @@ def test_the_runtime_helpers_a_constructor_calls() -> None:
     state, model, returned = _symbolic("__cxa_guard_acquire", [guard], b"")
     assert evaluate(returned.outputs["RAX"], model) == 1
     assert evaluate(state.memory.read_byte(guard), model) == 0
+
+
+def test_the_string_members_a_construction_is_made_of() -> None:
+    """`std::string s = "text"` at -O0 is a chain of these, one call each.
+
+    Both engines have to end with the same object: a `data` pointer at the buffer, the
+    length, and a terminator after it — the layout optimized code reads directly.
+    """
+    assert from_symbol(
+        "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE13_M_local_dataEv"
+    ) == ("std::string::_M_local_data")
+    assert from_symbol(
+        "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE13_M_set_lengthEm"
+    ) == ("std::string::_M_set_length")
+
+    memory = _memory()
+    memory.write(TEXT, b"six!!!\0")
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO())
+
+    def call(name: str, *arguments: int) -> int:
+        registers = dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False))
+        return libc(name, registers, memory)["RAX"]
+
+    buffer = call("std::string::_M_local_data", OBJECT)
+    assert buffer == OBJECT + cxx.BUFFER
+    call("std::string::_M_data=", OBJECT, buffer)
+    call("std::string::_S_copy_chars", buffer, TEXT, TEXT + 6)
+    call("std::string::_M_set_length", OBJECT, 6)
+    assert call("std::string::size", OBJECT) == 6
+    assert memory.read_c_string(call("std::string::data", OBJECT)) == b"six!!!"
+    call("std::string::operator+=", OBJECT, ord("?"))
+    assert call("std::string::size", OBJECT) == 7
+    assert memory.read_c_string(call("std::string::data", OBJECT)) == b"six!!!?"
+
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _memory()
+    image.write(TEXT, b"six!!!\0")
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO())
+    symbolic = SymbolicLibc(SYSV_X86_64)
+
+    def call_symbolic(name: str, *arguments: int) -> int:
+        outcomes = symbolic.call(
+            executor,
+            state,
+            name,
+            {
+                register: sx.const(value, 64)
+                for register, value in zip(SYSV_X86_64.integer_parameters, arguments, strict=False)
+            },
+            Origin(0, 0),
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned), outcome
+        return evaluate(outcome.outputs["RAX"], {})
+
+    buffer = call_symbolic("std::string::_M_local_data", OBJECT)
+    call_symbolic("std::string::_M_data=", OBJECT, buffer)
+    call_symbolic("std::string::_S_copy_chars", buffer, TEXT, TEXT + 6)
+    call_symbolic("std::string::_M_set_length", OBJECT, 6)
+    assert call_symbolic("std::string::size", OBJECT) == 6
+    call_symbolic("std::string::operator+=", OBJECT, ord("?"))
+    assert call_symbolic("std::string::size", OBJECT) == 7
+    data = call_symbolic("std::string::data", OBJECT)
+    for offset in range(8):
+        assert (
+            evaluate(state.memory.read_byte(data + offset), {})
+            == memory.read(OBJECT + cxx.BUFFER + offset, 1)[0]
+        ), offset

@@ -94,6 +94,13 @@ class SymbolicLibc:
             "strchr": self._strchr,
             "std::getline": self._getline,
             "std::string::string": self._string_new,
+            "std::string::_M_local_data": self._string_local_data,
+            "std::string::_M_data=": self._string_set_data,
+            "std::string::_M_set_length": self._string_set_length,
+            "std::string::_M_capacity": self._string_set_capacity,
+            "std::string::_S_copy_chars": self._string_copy_chars,
+            "std::string::_M_create": self._string_create,
+            "std::string::operator+=": self._string_append,
             "std::string::~string": self._returns_zero,
             "std::string::size": self._string_size,
             "std::string::data": self._string_data,
@@ -414,6 +421,63 @@ class SymbolicLibc:
         if not state.memory.accessible(address, 1, write=True):
             raise _Fault(f"write to unwritable memory at {address:#x}")
         state.memory.write_byte(address, value)
+
+    def _string_local_data(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_local_data()`: the buffer inside the object, where a short string lives."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        return self._returns(call, sx.const(object_at + cxx.BUFFER, 64))
+
+    def _string_set_data(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_data(p)`, and the `_Alloc_hider` constructor that is the same store."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        self._store(call, call.state, object_at + cxx.DATA, call.arguments[1])
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_set_length(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_set_length(n)`: the length, and the terminator the string keeps after it."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        length = call.arguments[1]
+        self._store(call, call.state, object_at + cxx.SIZE, length)
+        data = self._concrete(call, self._string_field(call, cxx.DATA), "string data")
+        self._write(call, data + self._concrete(call, length, "length"), _ZERO_BYTE)
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_set_capacity(self, call: _Call) -> list[ExternalOutcome]:
+        object_at = self._concrete(call, call.arguments[0], "string")
+        self._store(call, call.state, object_at + cxx.CAPACITY, call.arguments[1])
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_copy_chars(self, call: _Call) -> list[ExternalOutcome]:
+        """`_S_copy_chars(destination, first, last)`: the copy a construction ends with."""
+        destination = self._concrete(call, call.arguments[0], "destination")
+        first = self._concrete(call, call.arguments[1], "source")
+        last = self._concrete(call, call.arguments[2], "end of source")
+        for offset in range(max(0, last - first)):
+            self._write(call, destination + offset, self._byte(call, first + offset))
+        return self._returns(call, sx.const(destination, 64))
+
+    def _string_create(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_create(capacity, old)`: a buffer for a string too long to live in the object."""
+        capacity_at = self._concrete(call, call.arguments[1], "capacity")
+        wanted = self._concrete(call, call.state.memory.load(capacity_at, 64), "capacity")
+        buffer = self._allocate(call, wanted + 1)
+        if not buffer:
+            raise _Unsupported("a std::string longer than the heap can hold")
+        return self._returns(call, sx.const(buffer, 64))
+
+    def _string_append(self, call: _Call) -> list[ExternalOutcome]:
+        """`s += c`: one character onto the end, moving to the heap if it no longer fits.
+
+        Where the end is has to be known: a string whose length the input decides would
+        put the character in a place the analysis cannot name.
+        """
+        object_at = self._concrete(call, call.arguments[0], "string")
+        data = self._concrete(call, self._string_field(call, cxx.DATA), "string data")
+        length = self._concrete(call, self._string_field(call, cxx.SIZE), "string length")
+        content = [self._byte(call, data + offset) for offset in range(length)]
+        character = sx.extract(call.arguments[1], 0, 8)
+        self._store_string(call, call.state, object_at, [*content, character])
+        return self._returns(call, sx.const(object_at, 64))
 
     def _string_field(self, call: _Call, offset: int) -> Expr:
         object_at = self._concrete(call, call.arguments[0], "string")

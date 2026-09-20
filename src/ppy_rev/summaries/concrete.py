@@ -81,6 +81,13 @@ class ConcreteLibc:
             "strchr": self._strchr,
             "std::getline": self._getline,
             "std::string::string": self._string_new,
+            "std::string::_M_local_data": lambda arguments, memory: arguments[0] + cxx.BUFFER,
+            "std::string::_M_data=": self._string_set_data,
+            "std::string::_M_set_length": self._string_set_length,
+            "std::string::_M_capacity": self._string_set_capacity,
+            "std::string::_S_copy_chars": self._string_copy_chars,
+            "std::string::_M_create": self._string_create,
+            "std::string::operator+=": self._string_append,
             "std::string::~string": lambda arguments, memory: 0,
             "std::string::size": lambda arguments, memory: self._string_field(
                 memory, arguments[0], cxx.SIZE
@@ -345,6 +352,45 @@ class ConcreteLibc:
         memory.store(object_at + cxx.DATA, buffer, 64)
         memory.store(object_at + cxx.SIZE, len(content), 64)
         memory.write(buffer, content + b"\0")
+
+    def _string_set_data(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_M_data(p)`, and the `_Alloc_hider` constructor that is the same store."""
+        memory.store(arguments[0] + cxx.DATA, arguments[1], 64)
+        return arguments[0]
+
+    def _string_set_length(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_M_set_length(n)`: the length, and the terminator the string keeps after it."""
+        object_at, length = arguments[0], arguments[1]
+        memory.store(object_at + cxx.SIZE, length, 64)
+        memory.write(self._string_field(memory, object_at, cxx.DATA) + length, b"\0")
+        return object_at
+
+    def _string_set_capacity(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        memory.store(arguments[0] + cxx.CAPACITY, arguments[1], 64)
+        return arguments[0]
+
+    def _string_copy_chars(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_S_copy_chars(destination, first, last)`: the copy a construction ends with."""
+        destination, first, last = arguments[0], arguments[1], arguments[2]
+        memory.write(destination, memory.read(first, max(0, last - first)))
+        return destination
+
+    def _string_create(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_M_create(capacity, old)`: a buffer for a string too long to live in the object."""
+        wanted = memory.load(arguments[1], 64)
+        buffer = self._allocate(wanted + 1)
+        if not buffer:
+            raise UnsupportedLibraryCallError("a std::string longer than the heap can hold")
+        memory.store(arguments[1], wanted, 64)
+        return buffer
+
+    def _string_append(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`s += c`: one character onto the end, moving to the heap if it no longer fits."""
+        object_at, character = arguments[0], arguments[1] & 0xFF
+        data = self._string_field(memory, object_at, cxx.DATA)
+        length = self._string_field(memory, object_at, cxx.SIZE)
+        self._store_string(memory, object_at, memory.read(data, length) + bytes([character]))
+        return object_at
 
     def _string_new(self, arguments: list[int], memory: ConcreteMemory) -> int:
         source = arguments[1]

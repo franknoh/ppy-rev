@@ -48,6 +48,9 @@ def from_symbol(symbol: str) -> str | None:
     for suffix, name in _STRING_MEMBERS.items():
         if symbol.endswith(suffix):
             return name
+    for part, name in _STRING_INTERNALS.items():
+        if part in symbol:
+            return name
     return None
 
 
@@ -87,4 +90,24 @@ _RUNTIME = {
 
 They are named by mangled symbol like everything else here, because `operator new` is a
 name a C program can export too.
+"""
+
+
+_STRING_INTERNALS = {
+    "13_M_local_dataEv": "std::string::_M_local_data",
+    "7_M_dataEPc": "std::string::_M_data=",
+    "7_M_dataEv": "std::string::data",
+    "13_M_set_lengthEm": "std::string::_M_set_length",
+    "11_M_capacityEm": "std::string::_M_capacity",
+    "12_Alloc_hiderC1": "std::string::_M_data=",
+    "12_Alloc_hiderC2": "std::string::_M_data=",
+    "13_S_copy_chars": "std::string::_S_copy_chars",
+    "9_M_createERmm": "std::string::_M_create",
+    "EEpLEc": "std::string::operator+=",
+}
+"""The members libstdc++'s own header code calls, which end up in the binary at `-O0`.
+
+`std::string s = "text"` compiles to a chain of these: take the internal buffer, copy
+into it, set the length. They are matched by the part of the mangled name that names the
+member, because the rest of it is back-references that differ between instantiations.
 """
