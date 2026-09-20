@@ -101,3 +101,24 @@ def test_what_a_program_prints_is_listed_for_a_manual_goal() -> None:
     listed = printed_messages_from(references)
     assert listed == ((0x1100, "Enter the code: "), (0x1200, "The joker settles the pack."))
     assert "0x1200" in describe_messages(listed)
+
+
+def test_a_message_passed_to_something_that_never_prints_is_not_a_verdict() -> None:
+    """A table with no terminator reads as the literal after it.
+
+    `expected[i]` then looks like a reference to "Denied", and avoiding the instruction
+    that indexes the table would cut the very loop the answer runs through.
+    """
+    table = StringReference(
+        b"\x3b\x29.i'Denied\n", 0x50, "main", 0x1050, "operator[]", "RSI", external=False
+    )
+    printed = StringReference(b"Denied\n", 0x58, "main", 0x1060, "report", "RDI", external=False)
+    ranked = rank_goals([table, printed], printing=frozenset({"report"}))
+    assert [candidate.address for candidate in ranked] == [0x1060]
+    assert rank_goals([table, printed]) == []
+
+
+def test_a_message_printed_through_a_helper_is_still_a_verdict() -> None:
+    reference = StringReference(b"Correct!", 0x60, "main", 0x1070, "say", "RDI", external=False)
+    (candidate,) = rank_goals([reference], printing=frozenset({"say"}))
+    assert candidate.outcome is Outcome.SUCCESS

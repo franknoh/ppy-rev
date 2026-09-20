@@ -11,7 +11,8 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ppy_rev.analysis.program import StringReference
+from ppy_rev.analysis.program import StringReference, calls, external_name
+from ppy_rev.ir.model import DirectTarget, Module
 
 _SUCCESS = (
     (re.compile(r"\bcorrect\b"), 0.9),
@@ -98,13 +99,53 @@ def _score(text: str, patterns: tuple[tuple[re.Pattern[str], float], ...]) -> tu
     return best, reason
 
 
-def rank_goals(references: list[StringReference]) -> list[GoalCandidate]:
-    """Success and failure candidates, most confident first (ties by address)."""
+def printing_functions(module: Module) -> frozenset[str]:
+    """Names of functions that reach an output call, directly or through other functions.
+
+    A challenge often prints its verdict through a helper of its own, so what a message
+    is passed to is only evidence once that callee is followed to a `puts` or an
+    `operator<<`.
+    """
+    callees: dict[str, set[str]] = {}
+    prints: set[str] = set()
+    for function in module.functions:
+        named: set[str] = set()
+        for call, _ in calls(function):
+            external = external_name(module, call)
+            if external is not None:
+                if external in _OUTPUT_FUNCTIONS:
+                    prints.add(function.name)
+                continue
+            if isinstance(call.target, DirectTarget):
+                callee = module.function_at(call.target.address)
+                if callee is not None:
+                    named.add(callee.name)
+        callees[function.name] = named
+    growing = True
+    while growing:
+        growing = False
+        for name, named in callees.items():
+            if name not in prints and named & prints:
+                prints.add(name)
+                growing = True
+    return frozenset(prints)
+
+
+def rank_goals(
+    references: list[StringReference], printing: frozenset[str] = frozenset()
+) -> list[GoalCandidate]:
+    """Success and failure candidates, most confident first (ties by address).
+
+    `printing` names the functions that end up printing something; a message passed to a
+    call that never prints — `operator[]` on a table that runs into the next literal —
+    is not a verdict on the input.
+    """
     counts = Counter(reference.address for reference in references)
     candidates: list[GoalCandidate] = []
     for reference in references:
-        if reference.external and reference.call not in _OUTPUT_FUNCTIONS:
-            continue  # a file name, a format to scan, a password to compare: not a message
+        passed_on = reference.call is not None and reference.call not in _OUTPUT_FUNCTIONS
+        if passed_on and (reference.external or reference.call not in printing):
+            continue  # a file name, a format to scan, a table index: not a message
         text = reference.text.decode("latin-1")
         lowered = text.lower()
         success, success_word = _score(lowered, _SUCCESS)

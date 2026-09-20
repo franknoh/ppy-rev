@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.analysis.flags import flag_prefixes
-from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
+from ppy_rev.analysis.goals import GoalCandidate, Outcome, printing_functions, rank_goals
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import (
     executable_address,
@@ -410,7 +410,7 @@ def reach(module: Module, request: SolveRequest, address: int) -> State | None:
 def _select_goals(
     module: Module, reachable: list[Function], request: SolveRequest
 ) -> tuple[GoalCandidate, list[GoalCandidate]]:
-    ranked = rank_goals(string_references(module, reachable))
+    ranked = rank_goals(string_references(module, reachable), printing_functions(module))
     goal: GoalCandidate
     if request.goal_address is not None:
         address = executable_address(module, request.goal_address)
@@ -434,7 +434,15 @@ def _select_goals(
         _by_string(module, reachable, text, Outcome.FAILURE) for text in request.avoid_strings
     )
     if request.goal_address is None and request.goal_string is None and not avoid:
-        avoid = [candidate for candidate in ranked if candidate.outcome is Outcome.FAILURE]
+        # Only a message the program hands to something else is a failure branch. An
+        # address that merely computes a pointer into the data is not: a table with no
+        # terminator reads as the literal after it, and avoiding the instruction that
+        # indexes that table would cut the loop the answer runs through.
+        avoid = [
+            candidate
+            for candidate in ranked
+            if candidate.outcome is Outcome.FAILURE and candidate.call is not None
+        ]
     return goal, [candidate for candidate in avoid if candidate.address != goal.address]
 
 
