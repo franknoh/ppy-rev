@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from ppy_rev.execution.program import CXX_CTYPE, CXX_IOS_VTABLE, program_memory
+from ppy_rev.execution.program import (
+    CXX_CTYPE,
+    CXX_IOS_VTABLE,
+    STANDARD_STREAMS,
+    program_memory,
+)
 from ppy_rev.lift.lifter import lift_export
 from ppy_rev.summaries import cxx
 from support.exports import ProgramBuilder, ret
@@ -63,3 +68,19 @@ def test_a_c_program_with_a_global_named_cout_is_left_alone() -> None:
     program.symbol("cout", BSS)
     memory = program_memory(lift_export(program.build()).module)
     assert memory.load(BSS, 64) == 0
+
+
+def test_a_stream_pointer_in_read_only_data_is_still_filled_in() -> None:
+    """`stdout` can land in a section the program itself may not write.
+
+    The loader writes it before the program runs, so setting up the image must not ask
+    for write permission — it used to, and a binary laid out this way crashed the run.
+    """
+    program = ProgramBuilder()
+    program.code(0x1000, ret(), length=1)
+    program.function("main", 0x1000)
+    program.import_("puts", 0x3000)
+    program.data(".data.rel.ro", BSS, bytes(16))  # not writable
+    program.symbol("stdout", BSS)
+    memory = program_memory(lift_export(program.build()).module)
+    assert memory.load(BSS, 64) == STANDARD_STREAMS["stdout"]

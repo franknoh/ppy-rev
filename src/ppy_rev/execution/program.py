@@ -87,7 +87,7 @@ def program_memory(module: Module) -> ConcreteMemory:
             # Imports reached through the GOT land in Ghidra's unmapped EXTERNAL block.
             name = f"[import {label.name}]"
             memory.map(Mapping(name, address, pointer_width // 8, True, True, None))
-        memory.store(address, STANDARD_STREAMS[match.group(1)], pointer_width)
+        memory.relocate(address, STANDARD_STREAMS[match.group(1)], pointer_width)
     _map_cxx_streams(module, memory)
     return memory
 
