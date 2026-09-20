@@ -104,8 +104,8 @@ aimed at a string that turned out to be a prompt or a usage line rather than a s
 message. Today's goal ranking rejects prompts and negations, so that last group is smaller
 now, but the honest figure to quote from this survey is **55 of 1,796**. All 55 are plain C;
 there is not one C++, Go, or Rust solve, and not one where the input came from a file or a
-socket. That survey predates the `std::string` and `std::ostream` models, so its C++ figure
-is a floor, not a ceiling.
+socket. That survey predates every C++ model here, so its C++ figure is a floor, not a
+ceiling; the section after next measures a fresh sample instead.
 
 Time, wall clock including Ghidra: median 14 s, 90th percentile 37 s, longest 170 s. The
 tool's own analysis is a fraction of that — median 0.8 s — so most of a short solve is
@@ -118,29 +118,47 @@ divergence above. And the outcome is not perfectly stable across versions: of 20
 re-attempted after changes to the tool, 38 changed category — 4 became solvable, and 9 that
 had been solved were not solved again.
 
-## Measured on 57 C++ challenges
+## Measured again on 452 binaries
 
-The survey above found no C++ solve at all, so the C++ work was measured against its own
-sample: every x86-64 ELF in the reversing categories of the same archive that links
-libstdc++, out of 553 candidate binaries — 57 of them. Each was run with a 90-second
-budget and no options, and none was executed.
+The survey above is from before the C++ work, and the binaries it ran on are gone, so the
+measurement was repeated on a fresh sample from the same archive: every blob in a
+reversing category between 5 KB and 400 KB with no file extension (553 of them), of which
+452 are x86-64 ELF and 57 link libstdc++. Same method as before — a 90-second budget, no
+options, and nothing executed.
 
-| count | outcome |
+| share | outcome |
 |---|---|
-| 32 | no success string could be ranked |
-| 12 | unsupported semantics |
-| 3 | no input source found |
-| 3 | ran out of time |
-| 2 | ran out of budget |
-| 2 | `unsat` |
-| 2 | an answer — one of them the challenge's flag, `byuctf{3v3n_v3ct0rs_4pp34r_1n_m3m0ry}` |
-| 1 | analysis incomplete |
+| 62.2% (281) | no success string could be ranked |
+| 12.2% (55) | unsupported semantics |
+| 7.7% (35) | an answer |
+| 4.6% (21) | `main` not found |
+| 4.4% (20) | ran out of time |
+| 3.8% (17) | no input source found |
+| 1.8% (8) | a crash in `ppy-rev` itself |
+| 1.3% (6) | `unsat` |
+| 0.9% (4) | ran out of budget |
+| 0.9% (4) | analysis incomplete |
+| 0.2% (1) | `unknown` |
 
-Nothing crashed. The C++ *semantics* are no longer what stops most of these: what stops
-them is that half print nothing a keyword can rank as success — they print the flag they
-computed, or a prompt, or nothing at all. The remaining unsupported ones ask for models
-this does not have yet, most often `std::ifstream` (5 of the 12) and, behind it,
-`std::string::erase`, `operator=` on a stream, `atof`, and C++ exceptions.
+Of the 35 answers, 32 pass `ppy-rev`'s own re-execution check and 6 of those recovered
+nothing, because the goal turned out to be reachable with no input at all. The remaining
+26 were not audited for the failure mode the first survey found in 14 of its 81 answers —
+a goal that was a prompt rather than a verdict — so **26 is an upper bound**, against 55
+of 1,796 (and 55 of 692 distinct challenges) in the first survey. The two samples are not
+the same binaries, and this one has no challenge shipping a thousand variants, so the
+per-binary rates are not directly comparable; the per-challenge rate of the first survey,
+8%, is the closer comparison.
+
+What this says about the C++ work is narrower than the fixtures suggest. Of the 57 C++
+binaries, 2 are solved — before this, none were — and the C++ *semantics* are no longer
+what stops most of them: 32 of the 57 stop because nothing they print ranks as a success
+message. That is the same wall the whole sample hits, and it is now the first thing worth
+working on. Behind it, the models still missing most often are `std::ifstream` (5 of the
+12 unsupported C++ runs), `std::string::erase`, `atof`, and C++ exceptions.
+
+The 8 crashes are the other actionable result: one was the image setup writing a stream
+pointer into read-only data, fixed here; 6 are one assertion in SSA construction
+(`phi ... has no incoming value`) and 1 is a recursion limit, both still open.
 
 The other side of the same coin: the 14 C++ fixtures in `tests/fixtures/src` — `getline`,
 `cin >>`, indexing, sizing, comparison, `std::vector`, `std::array`, `std::transform`,
