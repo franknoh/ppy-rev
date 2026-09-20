@@ -117,9 +117,9 @@ def _map_cxx_streams(module: Module, memory: ConcreteMemory) -> None:
         if memory.mapping_at(object_at) is None:
             object_at = CXX_STREAMS + index * cxx.IOS_SIZE
             _redirect(module, memory, label.address, object_at, pointer_width)
-        memory.store(object_at, CXX_IOS_VTABLE, pointer_width)
+        memory.relocate(object_at, CXX_IOS_VTABLE, pointer_width)
         if memory.mapping_at(object_at + cxx.IOS_FACET) is not None:
-            memory.store(object_at + cxx.IOS_FACET, CXX_CTYPE, pointer_width)
+            memory.relocate(object_at + cxx.IOS_FACET, CXX_CTYPE, pointer_width)
 
 
 def _redirect(

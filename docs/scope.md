@@ -118,6 +118,35 @@ divergence above. And the outcome is not perfectly stable across versions: of 20
 re-attempted after changes to the tool, 38 changed category — 4 became solvable, and 9 that
 had been solved were not solved again.
 
+## Measured on 57 C++ challenges
+
+The survey above found no C++ solve at all, so the C++ work was measured against its own
+sample: every x86-64 ELF in the reversing categories of the same archive that links
+libstdc++, out of 553 candidate binaries — 57 of them. Each was run with a 90-second
+budget and no options, and none was executed.
+
+| count | outcome |
+|---|---|
+| 32 | no success string could be ranked |
+| 12 | unsupported semantics |
+| 3 | no input source found |
+| 3 | ran out of time |
+| 2 | ran out of budget |
+| 2 | `unsat` |
+| 2 | an answer — one of them the challenge's flag, `byuctf{3v3n_v3ct0rs_4pp34r_1n_m3m0ry}` |
+| 1 | analysis incomplete |
+
+Nothing crashed. The C++ *semantics* are no longer what stops most of these: what stops
+them is that half print nothing a keyword can rank as success — they print the flag they
+computed, or a prompt, or nothing at all. The remaining unsupported ones ask for models
+this does not have yet, most often `std::ifstream` (5 of the 12) and, behind it,
+`std::string::erase`, `operator=` on a stream, `atof`, and C++ exceptions.
+
+The other side of the same coin: the 14 C++ fixtures in `tests/fixtures/src` — `getline`,
+`cin >>`, indexing, sizing, comparison, `std::vector`, `std::array`, `std::transform`,
+lambdas, global constructors — are all solved under `g++` and `clang++`, at `-O0` and
+`-O2`, with every answer accepted by the compiled binary.
+
 ## What a failure is worth
 
 - `unsat` means *every path within the given bounds* was explored. It is not a proof that no
