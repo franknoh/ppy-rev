@@ -9,7 +9,7 @@ path condition; otherwise the call stops exploration as unsupported rather than 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import MemoryFaultError
@@ -525,6 +525,7 @@ class SymbolicLibc:
         io = call.state.io
         window = list(io.stdin[io.stdin_position :])
         if not window:
+            self._at_end(call)
             return self._returns(call, call.arguments[0])
         options: list[tuple[Expr, tuple[int, int]]] = []
         for skipped in (0, 1):
@@ -555,6 +556,7 @@ class SymbolicLibc:
         io = call.state.io
         taken = list(io.stdin[io.stdin_position :])
         if not taken:
+            self._at_end(call)
             return self._returns(call, call.arguments[0])
         # The line ends at the first newline; where that is may be up to the input.
         length = sx.const(len(taken), 64)
@@ -574,11 +576,12 @@ class SymbolicLibc:
             state.io.stdin_reads.append((state.io.stdin_position, read_to, True))
             consumed = call.executor.unique_value(state, length)
             if consumed is None:
-                state.io.stdin = state.io.stdin[: state.io.stdin_position]
-                call.executor.approximate(
-                    state,
-                    "stdin after a symbolic-length getline is treated as empty",
-                    may_hide_paths=True,
+                note = "stdin after a symbolic-length getline is treated as empty"
+                self._truncate(
+                    replace(call, state=state),
+                    STANDARD_STREAMS["stdin"],
+                    state.io.stdin_position,
+                    note,
                 )
             else:
                 state.io.stdin_position += consumed + (1 if consumed < len(taken) else 0)
@@ -630,6 +633,8 @@ class SymbolicLibc:
         count = self._concrete(call, call.arguments[2], "count")
         io = call.state.io
         available = io.stdin[io.stdin_position : io.stdin_position + count]
+        if not available:
+            self._at_end(call)
         for index, byte in enumerate(available):
             self._write(call, buffer + index, byte)
         io.stdin_reads.append((io.stdin_position, io.stdin_position + len(available), False))
@@ -664,11 +669,15 @@ class SymbolicLibc:
         """What a stream still holds, and how far it has been read."""
         io = call.state.io
         if stream == STANDARD_STREAMS["stdin"]:
-            return io.stdin, io.stdin_position
-        item = io.files.get(stream)
-        if item is None:
-            raise _Unsupported(f"stream {stream:#x} was not opened here")
-        return item.content, io.positions.get(stream, 0)
+            content, position = io.stdin, io.stdin_position
+        else:
+            item = io.files.get(stream)
+            if item is None:
+                raise _Unsupported(f"stream {stream:#x} was not opened here")
+            content, position = item.content, io.positions.get(stream, 0)
+        if position >= len(content):
+            self._at_end(call, stream)
+        return content, position
 
     def _advance(self, call: _Call, stream: int, count: int) -> None:
         io = call.state.io
@@ -839,24 +848,32 @@ class SymbolicLibc:
         consumed = call.executor.unique_value(call.state, count)
         if consumed is None:
             # What follows is only meaningful once the line's length is known.
-            self._truncate(call, stream, position)
-            call.executor.approximate(
-                call.state,
-                "input after a symbolic-length fgets line is treated as empty",
-                may_hide_paths=True,
-            )
+            note = "input after a symbolic-length fgets line is treated as empty"
+            self._truncate(call, stream, position, note)
         else:
             self._advance(call, stream, consumed)
         return self._returns(call, sx.const(buffer, 64))
 
-    def _truncate(self, call: _Call, stream: int, position: int) -> None:
-        """Forget what a stream holds past `position`, where the model cannot follow it."""
+    def _truncate(self, call: _Call, stream: int, position: int, note: str) -> None:
+        """Forget what a stream holds past `position`, where the model cannot follow it.
+
+        `note` is what to say if the program reads this stream again; until it does, the
+        bytes nobody looks at cost nothing, so nothing is reported.
+        """
         io = call.state.io
+        io.unknown_from[stream] = note
         if stream == STANDARD_STREAMS["stdin"]:
             io.stdin = io.stdin[:position]
             return
         item = io.files[stream]
         io.files[stream] = OpenFile(item.name, item.content[:position])
+
+    @staticmethod
+    def _at_end(call: _Call, stream: int = STANDARD_STREAMS["stdin"]) -> None:
+        """A read found nothing left: say so when the model is the reason there is nothing."""
+        note = call.state.io.unknown_from.get(stream)
+        if note is not None:
+            call.executor.approximate(call.state, note, may_hide_paths=True)
 
     def _srand(self, call: _Call) -> list[ExternalOutcome]:
         seed = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "srand seed")
@@ -873,6 +890,7 @@ class SymbolicLibc:
         io = call.state.io
         remaining = io.stdin[io.stdin_position :]
         if not remaining:
+            self._at_end(call)
             return self._returns(call, sx.const(0, 64))
         length = sx.const(len(remaining), 64)
         for index in reversed(range(len(remaining))):
@@ -899,12 +917,8 @@ class SymbolicLibc:
         io.stdin_reads.append((io.stdin_position, io.stdin_position + len(remaining), True))
         consumed = call.executor.unique_value(call.state, length)
         if consumed is None:
-            io.stdin = io.stdin[: io.stdin_position]
-            call.executor.approximate(
-                call.state,
-                "stdin after a symbolic-length gets line is treated as empty",
-                may_hide_paths=True,
-            )
+            note = "stdin after a symbolic-length gets line is treated as empty"
+            self._truncate(call, STANDARD_STREAMS["stdin"], io.stdin_position, note)
         else:
             io.stdin_position += consumed + (consumed < len(remaining))
         return self._returns(call, sx.const(buffer, 64))
@@ -912,6 +926,7 @@ class SymbolicLibc:
     def _getchar(self, call: _Call) -> list[ExternalOutcome]:
         io = call.state.io
         if io.stdin_position >= len(io.stdin):
+            self._at_end(call)
             return self._returns(call, sx.const(0xFFFFFFFF, 64))
         byte = io.stdin[io.stdin_position]
         io.stdin_reads.append((io.stdin_position, io.stdin_position + 1, False))

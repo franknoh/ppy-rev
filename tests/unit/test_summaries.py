@@ -329,18 +329,28 @@ def test_character_functions() -> None:
             assert evaluate(outcome.outputs["RAX"], assignment) == expected["RAX"], (name, value)
 
 
-def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:
+def test_input_after_a_symbolic_length_line_is_only_lost_if_it_is_read() -> None:
+    """Where the next read starts is unknown, which costs nothing until one happens.
+
+    Most programs read their input once, so reporting the approximation at the `fgets`
+    itself would call those analyses incomplete for bytes nobody looks at.
+    """
     executor = Executor(MODULE, Z3Backend(), Goal())
     stdin = tuple(sx.symbol(f"in_{index}", 8) for index in range(8))
     state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO(stdin=stdin))
+    libc = SymbolicLibc(SYSV_X86_64)
     arguments = {
         "RDI": sx.const(OUT, 64),
         "RSI": sx.const(4, 64),
         "RDX": sx.const(STANDARD_STREAMS["stdin"], 64),
     }
-    outcomes = SymbolicLibc(SYSV_X86_64).call(executor, state, "fgets", arguments, Origin(0, 0))
+    outcomes = libc.call(executor, state, "fgets", arguments, Origin(0, 0))
     assert outcomes is not None
     assert state.io.stdin == ()
+    assert executor.statistics.hiding_approximations == set()
+
+    again = libc.call(executor, state, "fgets", arguments, Origin(0, 0))
+    assert again is not None
     assert executor.statistics.hiding_approximations == {
         "input after a symbolic-length fgets line is treated as empty"
     }

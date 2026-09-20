@@ -62,6 +62,13 @@ class SymbolicIO:
     """Streams `fopen` returned, by the handle the program holds."""
     positions: dict[int, int] = field(default_factory=dict[int, int])
     """How far each open file has been read."""
+    unknown_from: dict[int, str] = field(default_factory=dict[int, str])
+    """Streams cut short where a model lost track, and what to say if one is read again.
+
+    A line whose length the input decides leaves the next read's position unknown. That
+    costs nothing while nothing reads the stream again — most programs read once — so the
+    approximation is recorded here and only reported when a later read runs into it.
+    """
     traced: Expr | None = None
     """`ptrace(PTRACE_TRACEME)`'s result: 0, or -1 when a debugger already traces us.
 
@@ -81,6 +88,7 @@ class SymbolicIO:
             contents=dict(self.contents),
             files=dict(self.files),
             positions=dict(self.positions),
+            unknown_from=dict(self.unknown_from),
             traced=self.traced,
         )
 
