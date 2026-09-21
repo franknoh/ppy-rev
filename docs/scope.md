@@ -24,7 +24,11 @@ it rather than guessing.
   is where the solver struggles: those queries can exceed `--solver-timeout`.
 - **Loops and per-character checks**, including ones with several hundred constraints:
   [csaw_beleaf](../examples/csaw_beleaf/README.md) takes about three minutes,
-  [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
+  [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds. When
+  each character is checked through a helper that validates it and calls `exit` on a bad
+  one, the two sides of that check meet again and are merged, so the loop costs one path
+  per character instead of one per combination of them — the difference between solving in
+  a minute and never finishing.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
 - **A file the program reads**: `fopen`, or `std::ifstream` of a path the binary spells
@@ -83,6 +87,26 @@ it rather than guessing.
 The 60 challenges in [`examples/`](../examples/README.md) are all of this kind; 55 of them
 are solved with no options at all, and the other five need one hint each (a flag format, a
 length, or a goal address).
+
+
+## Merging per-character checks that branch
+
+A common crackme shape checks the input one character at a time, and after each character
+takes a branch — a compare against a table, a helper that rejects bytes out of range by
+calling `exit`. Explored naively, the branches multiply: a 29-character check is half a
+billion paths. Diamonds like these, whose sides meet again with no loop of their own, are
+now explored to that meeting point and merged into a single state, and the merge sees
+through a branch side that ends the program and through the two loops clang emits at `-O2`
+for a check that must keep running after one character fails. Values live only earlier in
+the loop no longer keep the merge apart. A path the solver cannot settle at the join — the
+whole check at once is a hard query — is kept rather than dropped, so a slow query never
+turns into a false "no input works".
+
+Measured against the commit before this work, on a hundred variants of one such challenge
+(GreyCat's *AngryRobot*, a 29-byte per-character modular check), none solved before and all
+hundred solve now, every answer accepted by the program's own re-execution. On a
+40-binary sample of unrelated challenges the change is neutral: the same outcomes, nothing
+lost.
 
 ## It does not solve
 
