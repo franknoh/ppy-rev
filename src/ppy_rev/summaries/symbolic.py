@@ -21,6 +21,7 @@ from ppy_rev.execution.program import (
     FILE_HANDLES,
     HEAP_SIZE,
     HEAP_START,
+    PROCESS_IDS,
     STANDARD_STREAMS,
 )
 from ppy_rev.ir.model import Origin
@@ -83,6 +84,10 @@ class SymbolicLibc:
         """Bytes offered for a file the program opens that the analysis did not foresee."""
         self._models: dict[str, _Model] = {
             "strlen": self._strlen,
+            "strnlen": self._strnlen,
+            "sscanf": self._sscanf,
+            "write": self._write_descriptor,
+            **{name: partial(self._process_id, name=name) for name in PROCESS_IDS},
             "strcmp": self._strcmp,
             "strncmp": self._strncmp,
             "memcmp": self._memcmp,
@@ -267,6 +272,32 @@ class SymbolicLibc:
             if not byte.is_const:
                 length = sx.ite(sx.equal(byte, _ZERO_BYTE), sx.const(index, 64), length)
         return self._returns(call, length)
+
+    def _strnlen(self, call: _Call) -> list[ExternalOutcome]:
+        """`strnlen(s, n)`: the length, but never more than `n`."""
+        limit = self._concrete(call, call.arguments[1], "limit")
+        address = self._concrete(call, call.arguments[0], "string")
+        text = self._string_bytes(call, address)[:limit]
+        length = sx.const(len(text), 64)
+        for index in reversed(range(len(text))):
+            byte = text[index]
+            if not byte.is_const:
+                length = sx.ite(sx.equal(byte, _ZERO_BYTE), sx.const(index, 64), length)
+        return self._returns(call, length)
+
+    def _process_id(self, call: _Call, name: str) -> list[ExternalOutcome]:
+        """What the process says it is: settled, and the same in both engines."""
+        return self._returns(call, sx.const(PROCESS_IDS[name], 64))
+
+    def _write_descriptor(self, call: _Call) -> list[ExternalOutcome]:
+        """`write(fd, buffer, count)` to stdout or stderr; another descriptor has no model."""
+        descriptor = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "descriptor")
+        if descriptor not in (1, 2):
+            raise _Unsupported(f"write to file descriptor {descriptor}")
+        buffer = self._concrete(call, call.arguments[1], "buffer")
+        count = self._concrete(call, call.arguments[2], "count")
+        call.state.io.stdout.extend(self._byte(call, buffer + index) for index in range(count))
+        return self._returns(call, sx.const(count, 64))
 
     def _compare_strings(self, call: _Call, limit: int | None) -> Expr:
         left_address = self._concrete(call, call.arguments[0], "first string")
@@ -1284,7 +1315,15 @@ class SymbolicLibc:
         """
         return self._scan(call, format_index=0, stream=0)
 
-    def _scan(self, call: _Call, format_index: int, stream: int) -> list[ExternalOutcome]:
+    def _sscanf(self, call: _Call) -> list[ExternalOutcome]:
+        """`sscanf(text, ...)`: scanf over a string in memory rather than a stream."""
+        address = self._concrete(call, call.arguments[0], "text")
+        data = tuple(self._string_bytes(call, address))
+        return self._scan(call, format_index=1, stream=0, data=data)
+
+    def _scan(
+        self, call: _Call, format_index: int, stream: int, data: tuple[Expr, ...] | None = None
+    ) -> list[ExternalOutcome]:
         template = self._string_bytes(
             call, self._concrete(call, call.arguments[format_index], "format")
         )
@@ -1301,7 +1340,7 @@ class SymbolicLibc:
             self._concrete(call, self._variadic(call, format_index + 1 + index), "pointer")
             for index in range(assignments)
         ]
-        return _Scanner(self, call, directives, destinations, stream).run()
+        return _Scanner(self, call, directives, destinations, stream, data).run()
 
     def _variadic(self, call: _Call, index: int) -> Expr:
         registers = self.convention.integer_parameters
@@ -1623,23 +1662,30 @@ class _Scanner:
         directives: list[scanning.Directive],
         destinations: list[int],
         stream: int = 0,
+        data: tuple[Expr, ...] | None = None,
     ) -> None:
         self.libc = libc
         self.call = call
         self.directives = directives
         self.destinations = destinations
         self.stream = stream or STANDARD_STREAMS["stdin"]
+        self.data = data
+        """Bytes to scan instead of a stream's, for `sscanf`: nothing is consumed."""
         self.result: Expr | None = None
         """What to return instead of the number of conversions, for `in >> n`."""
 
     def content(self, state: State) -> tuple[Expr, ...]:
         """What the stream being scanned holds."""
+        if self.data is not None:
+            return self.data
         if self.stream == STANDARD_STREAMS["stdin"]:
             return state.io.stdin
         item = state.io.files.get(self.stream)
         return item.content if item is not None else ()
 
     def position(self, state: State) -> int:
+        if self.data is not None:
+            return 0
         if self.stream == STANDARD_STREAMS["stdin"]:
             return state.io.stdin_position
         return state.io.positions.get(self.stream, 0)
@@ -1662,7 +1708,7 @@ class _Scanner:
     def _finish(self, scan: _Scan) -> ExternalOutcome:
         io = scan.state.io
         read_from = self.position(scan.state)
-        if scan.position > read_from:
+        if self.data is None and scan.position > read_from:
             if self.stream == STANDARD_STREAMS["stdin"]:
                 io.stdin_reads.append((read_from, scan.position, False))
                 io.stdin_position = scan.position

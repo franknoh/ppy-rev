@@ -33,6 +33,20 @@ STANDARD_STREAMS = {
 FILE_HANDLES = LIBC_DATA_START + 0x400
 """Where `fopen` hands out stand-ins for FILE objects, one 0x40 bytes after another."""
 FILE_HANDLE_STEP = 0x40
+PROCESS_IDS = {
+    "getuid": 1000,
+    "geteuid": 1000,
+    "getgid": 1000,
+    "getegid": 1000,
+    "getpid": 4242,
+    "getppid": 4241,
+}
+"""What the process says it is: an ordinary user, not root, with a settled pid.
+
+A challenge that asks is usually checking that it is not being run as root, or seeding
+something with its own pid; both are answered the same way by both engines, so an answer
+verified here is one the program accepts when it runs the same way.
+"""
 ERRNO_ADDRESS = LIBC_DATA_START + 0x900
 """What `__errno_location` returns: a zeroed cell, since no modeled call ever fails."""
 CTYPE_POINTERS = {

@@ -19,6 +19,7 @@ from ppy_rev.execution.program import (
     FILE_HANDLES,
     HEAP_SIZE,
     HEAP_START,
+    PROCESS_IDS,
     STANDARD_STREAMS,
 )
 from ppy_rev.ir.model import mask
@@ -70,6 +71,10 @@ class ConcreteLibc:
         self.io = io or ConcreteIO()
         self._handlers: dict[str, _Handler] = {
             "strlen": self._strlen,
+            "strnlen": self._strnlen,
+            "sscanf": self._sscanf,
+            "write": self._write_descriptor,
+            **{name: partial(self._process_id, name=name) for name in PROCESS_IDS},
             "strcmp": self._strcmp,
             "strncmp": self._strncmp,
             "memcmp": self._memcmp,
@@ -209,6 +214,26 @@ class ConcreteLibc:
 
     def _strlen(self, arguments: list[int], memory: ConcreteMemory) -> int:
         return len(self._string(memory, arguments[0]))
+
+    def _strnlen(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return len(self._string(memory, arguments[0], arguments[1]))
+
+    @staticmethod
+    def _process_id(arguments: list[int], memory: ConcreteMemory, name: str) -> int:
+        del arguments, memory
+        return PROCESS_IDS[name]
+
+    def _write_descriptor(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`write(fd, buffer, count)` to stdout or stderr; another descriptor has no model."""
+        descriptor, buffer, count = arguments[0] & 0xFFFFFFFF, arguments[1], arguments[2]
+        if descriptor not in (1, 2):
+            raise UnsupportedLibraryCallError(f"write to file descriptor {descriptor}")
+        self.io.stdout += memory.read(buffer, count)
+        return count
+
+    def _sscanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`sscanf(text, ...)`: scanf over a string in memory rather than a stream."""
+        return self._scan_into(arguments, memory, 1, self._string(memory, arguments[0]))[1]
 
     def _strcmp(self, arguments: list[int], memory: ConcreteMemory) -> int:
         left = self._string(memory, arguments[0]) + b"\0"
@@ -593,13 +618,20 @@ class ConcreteLibc:
     def _scan(
         self, arguments: list[int], memory: ConcreteMemory, format_index: int, stream: int
     ) -> int:
+        content, position = self._stream(stream)
+        consumed, result = self._scan_into(arguments, memory, format_index, content[position:])
+        self._advance(stream, consumed)
+        return result
+
+    def _scan_into(
+        self, arguments: list[int], memory: ConcreteMemory, format_index: int, data: bytes
+    ) -> tuple[int, int]:
+        """Run a scanf format over `data`; returns what it consumed and what it returns."""
         try:
             directives = scanning.parse_format(self._string(memory, arguments[format_index]))
         except scanning.FormatError as error:
             raise UnsupportedLibraryCallError(f"scanf: {error}") from error
-        content, position = self._stream(stream)
-        scanned = scanning.scan(directives, content[position:])
-        self._advance(stream, scanned.consumed)
+        scanned = scanning.scan(directives, data)
         for index, assignment in enumerate(scanned.assignments):
             destination = self._variadic(arguments, format_index + 1 + index, memory)
             match assignment.content:
@@ -612,7 +644,7 @@ class ConcreteLibc:
                 case int() as value:
                     size = assignment.directive.store_size
                     memory.store(destination, value & mask(size * 8), size * 8)
-        return scanned.result & 0xFFFFFFFF
+        return scanned.consumed, scanned.result & 0xFFFFFFFF
 
     def _variadic(self, arguments: list[int], index: int, memory: ConcreteMemory) -> int:
         """Integer argument `index`, from its register or the caller's stack."""

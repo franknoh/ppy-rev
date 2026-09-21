@@ -392,3 +392,37 @@ def test_rand_follows_the_seed_in_both_models() -> None:
     symbolic_seed = {"RDI": sx.symbol("seed", 64)}
     (refused,) = libc.call(executor, state, "srand", symbolic_seed, Origin(0, 0)) or []
     assert isinstance(refused, Failed) and refused.reason is StopReason.UNSUPPORTED
+
+
+@settings(max_examples=60, deadline=None)
+@given(text, st.integers(0, 12))
+def test_strnlen_and_the_process_identity(value: bytes, limit: int) -> None:
+    _run_both("strnlen", [LEFT, limit], value, b"")
+    for name in ("getuid", "geteuid", "getgid", "getegid", "getpid"):
+        _run_both(name, [], b"", b"")
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    st.sampled_from([b"%d", b"%s", b"%d %d", b"%c%c", b"x%d"]),
+    st.sampled_from([b"12 34", b"abc", b" 7x", b"", b"-5", b"x9"]),
+)
+def test_sscanf_reads_a_string_not_a_stream(template: bytes, value: bytes) -> None:
+    """`sscanf` is `scanf` over memory: stdin must be left exactly where it was.
+
+    One leading space at most, because the symbolic scanner explores skipping a single
+    whitespace byte rather than a run of them — which keeps every answer, since a
+    shorter run reads the same fields.
+    """
+    _run_both(
+        "sscanf",
+        [LEFT, RIGHT, OUT, OUT + 0x40],
+        value,
+        template,
+        stdin=b"untouched\n",
+        concrete_right=True,
+    )
+
+
+def test_write_goes_to_the_output_the_program_prints() -> None:
+    _run_both("write", [1, LEFT, 5], b"hello", b"")
