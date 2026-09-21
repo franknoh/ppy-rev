@@ -87,3 +87,15 @@ def test_lift_modes_carry_more_of_the_analysis() -> None:
         assert arguments.mode == mode
     assert parser.parse_args(["lift", "chall"]).mode == "simplified"
     assert parser.parse_args(["lift", "chall", "--no-simplify"]).no_simplify
+
+
+def test_unsat_says_when_the_goal_itself_was_a_guess() -> None:
+    """`unsat` about an outcome picked by its shape is a much smaller claim."""
+    from ppy_rev.analysis.goals import GoalCandidate, Outcome
+    from ppy_rev.solve import SolveStatus, _goal_note
+
+    shaped = GoalCandidate(0x1234, Outcome.SUCCESS, "", "main", 0.45, ("passed to puts",))
+    said = GoalCandidate(0x1234, Outcome.SUCCESS, "Correct!", "main", 0.95, ())
+    assert _goal_note(shaped, SolveStatus.UNSAT)
+    assert _goal_note(said, SolveStatus.UNSAT) == []
+    assert _goal_note(shaped, SolveStatus.SAT) == []

@@ -315,6 +315,7 @@ def solve_module(
             dict.fromkeys(
                 notes
                 + _unsat_notes(status, inputs)
+                + _goal_note(goal, status)
                 + _flag_format_note(module, request, solutions)
                 + _initializer_note(initialization)
             )
@@ -1012,6 +1013,23 @@ def _incomplete_notes(exploration: Exploration) -> list[str]:
     for stop in exploration.incomplete[:10]:
         notes.append(_describe_stop(stop))
     return notes
+
+
+def _goal_note(goal: GoalCandidate, status: SolveStatus) -> list[str]:
+    """Say when `unsat` is about a goal that was picked by its shape rather than its words.
+
+    Such a goal is a guess about which outcome is the good one, so "no input reaches it"
+    is a much smaller claim than it looks.
+    """
+    if status is not SolveStatus.UNSAT or goal.confidence >= _CONFIDENT_GOAL:
+        return []
+    return [
+        f"the goal at {goal.address:#x} was chosen by how it is reached rather than by "
+        "what it says: another outcome may be the one worth solving for"
+    ]
+
+
+_CONFIDENT_GOAL = 0.7
 
 
 def _unsat_notes(status: SolveStatus, inputs: list[InputDescription]) -> list[str]:

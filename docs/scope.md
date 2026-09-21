@@ -148,29 +148,33 @@ options, and nothing executed.
 
 | share | outcome |
 |---|---|
-| 62.4% (282) | no success string could be ranked |
-| 12.4% (56) | unsupported semantics |
-| 7.7% (35) | an answer |
+| 55.8% (252) | no success string could be ranked, and no outcome found by its shape |
+| 11.9% (54) | unsupported semantics |
+| 9.5% (43) | an answer |
 | 6.2% (28) | `main` not found |
-| 4.0% (18) | ran out of time |
-| 3.8% (17) | no input source found |
-| 1.3% (6) | `unsat` |
-| 1.1% (5) | ran out of budget |
-| 0.9% (4) | analysis incomplete |
-| 0.2% (1) | `unknown` |
+| 4.4% (20) | ran out of time |
+| 4.0% (18) | no input source found |
+| 3.8% (17) | analysis incomplete |
+| 2.2% (10) | `unsat` |
+| 2.2% (10) | ran out of budget, or something else |
 
-Nothing crashed. The first run of this sample did crash on 8 binaries, and those are what
-the paragraph below is about; the table is from the re-run afterwards, where each of them
-reports why it stopped instead.
+Nothing crashed: the 8 crashes the first run of this sample hit are fixed, as described
+below, and each of those binaries now reports why it stopped.
 
-Of the 35 answers, 32 pass `ppy-rev`'s own re-execution check and 6 of those recovered
-nothing, because the goal turned out to be reachable with no input at all. The remaining
-26 were not audited for the failure mode the first survey found in 14 of its 81 answers —
-a goal that was a prompt rather than a verdict — so **26 is an upper bound**, against 55
-of 1,796 (and 55 of 692 distinct challenges) in the first survey. The two samples are not
-the same binaries, and this one has no challenge shipping a thousand variants, so the
-per-binary rates are not directly comparable; the per-challenge rate of the first survey,
-8%, is the closer comparison.
+Of the 43 answers, 38 pass `ppy-rev`'s own re-execution check and 8 of those recovered
+nothing, because the goal turned out to be reachable with no input at all — which the
+output now says. That leaves **31 answers worth the name**, against 27 before outcomes
+could be found by their shape, and 55 of 1,796 (55 of 692 distinct challenges) in the
+first survey. The two samples are not the same binaries, and this one has no challenge
+shipping a thousand variants, so the per-binary rates are not directly comparable; the
+per-challenge rate of the first survey, 8%, is the closer comparison.
+
+Finding outcomes by shape moved 30 binaries out of the largest bucket: 11 of them to an
+answer — among them `BITSCTF{w3lc0me_t0_r3v}` and `TooEasyForTheFirstFlag`, which no
+keyword would have reached — and the rest to a reason the analysis can name, such as an
+unsupported call or a search that ran out of time. It also costs something: `unsat` went
+from 6 to 10, and those are about a goal chosen by how it is reached rather than by what
+it says, which the output says when it reports one.
 
 What this says about the C++ work is narrower than the fixtures suggest. Of the 57 C++
 binaries, 2 are solved — before this, none were — and the C++ *semantics* are no longer
