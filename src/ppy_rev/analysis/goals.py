@@ -11,6 +11,7 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ppy_rev.analysis.outcomes import input_dependent_outputs
 from ppy_rev.analysis.program import StringReference, calls, external_name
 from ppy_rev.ir.model import Branch, DirectTarget, Function, Module
 
@@ -69,9 +70,14 @@ _PROMPT = re.compile(
 )
 """Asks for input: printed before the answer exists, so never a verdict on it."""
 _NEGATED = re.compile(
-    r"\b(not|isn't|isnt|aren't|wasn't|never)\s+(a |an |the |quite |really |very )?"
-    r"(valid|correct|right|good|accepted|it|there|the flag)\b"
+    r"(?:\b(?:not|never|no)\b|n'?t\b)[^.!?]{0,24}?"
+    r"\b(?:valid|correct|right|good|accepted|it|there|quite|the flag)\b"
 )
+"""A verdict turned around: *"I don't think that's it"* is the failure, not the success.
+
+The words may be a little apart — a program says "that isn't it" and "I don't think
+that's it" — so a few words are allowed between, but not a sentence break.
+"""
 
 
 class Outcome(StrEnum):
@@ -275,3 +281,55 @@ def _says_something(text: str) -> bool:
     a `"%s"`, a `"[+] "` or a row of dashes is not enough to call an outcome.
     """
     return sum(character.isalpha() for character in re.sub(r"%[-#0-9.lhz]*[a-zA-Z]", "", text)) >= 3
+
+
+def shaped_successes(
+    module: Module, reachable: list[Function], ranked: list[GoalCandidate]
+) -> list[GoalCandidate]:
+    """Outputs the input decides the program reaches, for when no message says so.
+
+    This is the last thing tried, and the weakest: it says a program printed something it
+    only prints for the right input, not that the message means success. A call that ends
+    the program badly is not one; a call that ends it well is a better one.
+    """
+    already = {candidate.address for candidate in ranked}
+    failures = {
+        candidate.address
+        for candidate in ranked
+        if candidate.outcome is Outcome.FAILURE and candidate.confidence >= _CONFIDENT_FAILURE
+    }
+    found: list[GoalCandidate] = []
+    for site in input_dependent_outputs(module, reachable, printing_functions(module)):
+        if site.address in already or site.address in failures:
+            continue
+        if site.ends_badly and not site.ends_well:
+            continue
+        evidence = [f"passed to {site.call}"]
+        confidence = _SHAPED_CONFIDENCE if site.decisions else _SHOWN_CONFIDENCE
+        if site.decisions:
+            decided = ", ".join(f"{address:#x}" for address in site.decisions[:3])
+            evidence.append(f"reached only through the test on the input at {decided}")
+        if site.prints_input:
+            confidence += 0.05
+            evidence.append("what it prints came from the input")
+        if site.ends_well and not site.ends_badly:
+            confidence += 0.1
+            evidence.append("the program then leaves with a success status")
+        found.append(
+            GoalCandidate(
+                address=site.address,
+                outcome=Outcome.SUCCESS,
+                text="",
+                function=site.function,
+                confidence=round(confidence, 2),
+                evidence=tuple(evidence),
+                call=site.call,
+            )
+        )
+    return found
+
+
+_SHAPED_CONFIDENCE = 0.4
+"""What an outcome's shape alone is worth, against 0.9 for a message that says so."""
+_SHOWN_CONFIDENCE = 0.3
+"""Less again for a call the input only reaches the *contents* of: it may be an echo."""

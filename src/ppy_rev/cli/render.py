@@ -14,7 +14,11 @@ from ppy_rev.vm.detect import Dispatcher
 from ppy_rev.vm.lift import LiftedVm
 
 _PRINTABLE = frozenset(range(0x20, 0x7F))
-_ALWAYS_SHOWN = ("the program mentions", "code runs before main")
+_ALWAYS_SHOWN = (
+    "the program mentions",
+    "code runs before main",
+    "the goal is reached without reading the input",
+)
 """Notes worth printing even when an answer was found."""
 
 
@@ -236,7 +240,11 @@ def render_lifted_vm(target: str, lifted: LiftedVm, out: TextIO) -> None:
 
 def _outcome(candidate: GoalCandidate) -> str:
     text = json.dumps(candidate.text)
-    use = f"{candidate.call}({text})" if candidate.call else f"uses {text}"
+    if not candidate.text:
+        # An outcome recognized by its shape prints something this cannot read.
+        use = f"calls {candidate.call}" if candidate.call else "runs"
+    else:
+        use = f"{candidate.call}({text})" if candidate.call else f"uses {text}"
     return f"  {candidate.confidence:.2f}  {candidate.address:#x}  {use} in {candidate.function}\n"
 
 

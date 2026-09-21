@@ -197,3 +197,17 @@ def test_no_verdict_on_either_side_invents_nothing() -> None:
     references = string_references(module, reachable)
     ranked = rank_goals(references, printing_functions(module))
     assert sibling_successes(module, reachable, ranked, references) == []
+
+
+def test_a_verdict_turned_around_is_a_failure() -> None:
+    """Challenges say no in the words they would say yes with, a few words apart."""
+    for message in (
+        b"I don't think that's it...",
+        b"No, that definitely isn't it.",
+        b"I think it's something like that but not quite...",
+        b"that is not the flag",
+    ):
+        (candidate,) = rank_goals([_reference(message, 0x90)])
+        assert candidate.outcome is Outcome.FAILURE, message
+    (correct,) = rank_goals([_reference(b"Yes! That's it! That's the flag!", 0x94)])
+    assert correct.outcome is Outcome.SUCCESS

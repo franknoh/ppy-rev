@@ -11,6 +11,7 @@ from ppy_rev.analysis.goals import (
     Outcome,
     printing_functions,
     rank_goals,
+    shaped_successes,
     sibling_successes,
 )
 from ppy_rev.analysis.inputs import InputCandidate, discover_inputs
@@ -73,8 +74,11 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
     references = string_references(module, reachable) if reachable else []
     ranked = rank_goals(references, printing_functions(module)) if reachable else []
     if reachable and not any(candidate.outcome is Outcome.SUCCESS for candidate in ranked):
+        found = sibling_successes(module, reachable, ranked, references)
+        if not found:
+            found = shaped_successes(module, reachable, ranked)
         ranked = sorted(
-            [*ranked, *sibling_successes(module, reachable, ranked, references)],
+            [*ranked, *found],
             key=lambda candidate: (-candidate.confidence, candidate.address),
         )
     successes = tuple(item for item in ranked if item.outcome is Outcome.SUCCESS)

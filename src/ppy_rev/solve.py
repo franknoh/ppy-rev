@@ -16,6 +16,7 @@ from ppy_rev.analysis.goals import (
     Outcome,
     printing_functions,
     rank_goals,
+    shaped_successes,
     sibling_successes,
 )
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
@@ -421,8 +422,11 @@ def _select_goals(
     references = string_references(module, reachable)
     ranked = rank_goals(references, printing_functions(module))
     if not any(candidate.outcome is Outcome.SUCCESS for candidate in ranked):
+        found = sibling_successes(module, reachable, ranked, references)
+        if not found:
+            found = shaped_successes(module, reachable, ranked)
         ranked = sorted(
-            [*ranked, *sibling_successes(module, reachable, ranked, references)],
+            [*ranked, *found],
             key=lambda candidate: (-candidate.confidence, candidate.address),
         )
     goal: GoalCandidate
@@ -684,6 +688,11 @@ def _solutions(
                 (name, _file_content(name, content, model, state.io))
                 for name, content in opened.items()
             )
+            if not argv and not stdin and not any(content for _, content in files):
+                notes.append(
+                    "the goal is reached without reading the input: this answer says "
+                    "nothing about what the program wants"
+                )
             blocking.append(_block(symbols, argv, stdin))
             if (argv, stdin) not in seen:
                 seen.add((argv, stdin))
