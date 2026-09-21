@@ -39,6 +39,8 @@ CTYPE_SIZE = 0x140
 _STRING = "basic_string"
 _ISTREAM = "basic_istream"
 _OSTREAM = "basic_ostream"
+_IFSTREAM = "basic_ifstream"
+_IOS = "9basic_iosI"
 
 
 def from_symbol(symbol: str) -> str | None:
@@ -48,6 +50,19 @@ def from_symbol(symbol: str) -> str | None:
     runtime = _RUNTIME.get(symbol.split("@", 1)[0])
     if runtime is not None:
         return runtime
+    if "12__basic_fileI" in symbol and symbol.endswith("7is_openEv"):
+        # Optimized code asks the file itself, past the stream it belongs to.
+        return "std::ifstream::is_open"
+    if _IOS in symbol:
+        for part, name in _IOS_MEMBERS.items():
+            if symbol.endswith(part):
+                return name
+        return None
+    if _IFSTREAM in symbol:
+        for part, name in _IFSTREAM_MEMBERS.items():
+            if part in symbol:
+                return name
+        return None
     if "7getline" in symbol and _STRING in symbol:
         return "std::getline"
     if symbol.startswith("_ZSt") and "rs" in symbol and _ISTREAM in symbol and _STRING in symbol:
@@ -156,4 +171,36 @@ _NUMBER_EXTRACTIONS = {
 
 Only the integer types: a `float` or a `bool` reads by rules of its own, and guessing
 them would put a number in memory that the program never saw.
+"""
+
+
+_IFSTREAM_MEMBERS = {
+    "C1EPKc": "std::ifstream::ifstream",
+    "C2EPKc": "std::ifstream::ifstream",
+    "C1ERKNS": "std::ifstream::ifstream",
+    "4openEPKc": "std::ifstream::ifstream",
+    "7is_openEv": "std::ifstream::is_open",
+    "5closeEv": "std::ifstream::close",
+    "D1Ev": "std::ifstream::close",
+    "D2Ev": "std::ifstream::close",
+}
+"""`std::ifstream`, which a challenge reads its flag file with.
+
+Opening one is opening a file; the object then stands in for the stream it is, so
+`std::getline(file, line)` reads from that file rather than from the terminal.
+"""
+
+
+_IOS_MEMBERS = {
+    "4failEv": "std::ios::fail",
+    "3badEv": "std::ios::fail",
+    "4goodEv": "std::ios::good",
+    "cvbEv": "std::ios::good",
+    "ntEv": "std::ios::fail",
+    "3eofEv": "std::ios::eof",
+}
+"""What a program asks a stream about itself.
+
+A file this opens always opened, and its contents are an input, so failure is not a state
+any of these report; only `eof` depends on how far the program has read.
 """

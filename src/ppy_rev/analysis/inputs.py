@@ -8,8 +8,10 @@ dereferenced or handed to a library function.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.analysis.program import (
@@ -82,14 +84,25 @@ def discover_inputs(module: Module, main: Function) -> list[InputCandidate]:
         if index > 0
     ]
     stdin_evidence: list[str] = []
+    files = _opened_files(module, main)
+    opens_a_file = bool(files)
+    streams = _cin_addresses(module)
+    first = calling_convention(module.target).integer_parameters[0]
     for function in reachable_functions(module, main):
         for call, _ in calls(function):
             name = external_name(module, call)
-            if name in STDIN_READERS:
-                stdin_evidence.append(f"{function.name} calls {name} at {call.origin.address:#x}")
+            if name not in STDIN_READERS:
+                continue
+            if name.startswith("std::") and opens_a_file:
+                # `std::getline(file, line)` reads that file, not the terminal. Only a
+                # program that opens one has to be told apart this way.
+                arguments = dict(zip(call.argument_registers, call.arguments, strict=True))
+                if not _is_cin(module, function, arguments.get(first), streams):
+                    continue
+            stdin_evidence.append(f"{function.name} calls {name} at {call.origin.address:#x}")
     if stdin_evidence:
         candidates.append(InputCandidate(InputKind.STDIN, None, tuple(stdin_evidence)))
-    candidates.extend(_opened_files(module, main))
+    candidates.extend(files)
     return candidates
 
 
@@ -99,10 +112,13 @@ def _opened_files(module: Module, main: Function) -> list[InputCandidate]:
     pointer = calling_convention(module.target).integer_parameters[0]
     for function in reachable_functions(module, main):
         for call, _ in calls(function):
-            if external_name(module, call) != "fopen":
+            opener = external_name(module, call)
+            if opener not in ("fopen", "std::ifstream::ifstream"):
                 continue
             arguments = dict(zip(call.argument_registers, call.arguments, strict=True))
-            path = arguments.get(pointer)
+            # An `ifstream` is constructed on the object, so the name is its second argument.
+            registers = calling_convention(module.target).integer_parameters
+            path = arguments.get(pointer if opener == "fopen" else registers[1])
             text = read_c_string(module, path.value) if isinstance(path, Const) else None
             if text is None:
                 continue
@@ -320,3 +336,49 @@ class _ArgvFlow:
                 elif isinstance(call.target, DirectTarget):
                     outgoing.append((call.target.address, register, found))
         return outgoing
+
+
+def _cin_addresses(module: Module) -> frozenset[int]:
+    """Where `std::cin` is, so that a read from somewhere else is a read of a file."""
+    return frozenset(
+        label.address for label in module.labels if _CIN_LABEL.match(label.name) is not None
+    )
+
+
+_CIN_LABEL = re.compile(r"^(?:std::)?cin(@@?GLIBCXX.*)?$")
+
+
+def _is_cin(
+    module: Module, function: Function, stream: Operand | None, streams: frozenset[int]
+) -> bool:
+    """Whether a C++ read is on `std::cin`, by address or through the entry holding it."""
+    if isinstance(stream, Const):
+        return stream.value in streams
+    if isinstance(stream, Var):
+        loaded = _loaded_address(function, stream)
+        if loaded is not None:
+            return _pointer_at(module, loaded) in streams
+    return False
+
+
+def _loaded_address(function: Function, value: Var) -> int | None:
+    for block in function.blocks:
+        for operation in block.operations:
+            if (
+                isinstance(operation, Load)
+                and operation.output == value
+                and isinstance(operation.address, Const)
+            ):
+                return operation.address.value
+    return None
+
+
+def _pointer_at(module: Module, address: int) -> int:
+    order: Literal["little", "big"] = module.target.endianness.value
+    size = module.target.pointer_width // 8
+    for region in module.memory:
+        if region.data is None or not region.start <= address < region.end:
+            continue
+        offset = address - region.start
+        return int.from_bytes(region.data[offset : offset + size], order)
+    return 0

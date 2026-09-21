@@ -681,7 +681,7 @@ def _solutions(
             traced = traced_symbol is not None and model.get(TRACED_SYMBOL, 0) != 0
             clock = model.get(CLOCK_SYMBOL) if state.io.clock is not None else None
             files = tuple(
-                (name, bytes(model.get(symbol.name, 0) for symbol in content).split(b"\0")[0])
+                (name, _file_content(name, content, model, state.io))
                 for name, content in opened.items()
             )
             blocking.append(_block(symbols, argv, stdin))
@@ -781,6 +781,24 @@ def _block(symbols: _Symbols, argv: bytes | None, stdin: bytes | None) -> Expr:
         for position, value in enumerate(stdin):
             differences.append(sx.bool_not(sx.equal(symbols.stdin[position], sx.const(value, 8))))
     return sx.bool_or(*differences) if differences else sx.FALSE
+
+
+def _file_content(
+    name: str, content: tuple[Expr, ...], model: dict[str, int], io: SymbolicIO
+) -> bytes:
+    """What a file has to contain: as far as the program read it.
+
+    A file is not NUL-terminated, so cutting at the first zero byte would drop whatever
+    the program went on to read — the newline ending a line, say. A file read a line at a
+    time ends with that line, since nothing past it was ever looked at.
+    """
+    raw = bytes(model.get(symbol.name, 0) for symbol in content)
+    terminator = raw.find(b"\0")
+    end = max(len(raw) if terminator < 0 else terminator, io.read_to.get(name, 0))
+    newline = raw.find(b"\n")
+    if name in io.line_read and 0 <= newline < end:
+        return raw[: newline + 1]
+    return raw[:end]
 
 
 def _verify(

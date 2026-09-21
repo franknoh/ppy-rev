@@ -16,6 +16,8 @@ from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import MemoryFaultError
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
+    CXX_CTYPE,
+    CXX_IOS_VTABLE,
     ERRNO_ADDRESS,
     FILE_HANDLE_STEP,
     FILE_HANDLES,
@@ -104,6 +106,12 @@ class SymbolicLibc:
             "strchr": self._strchr,
             "memchr": self._memchr,
             "std::getline": self._getline,
+            "std::ifstream::ifstream": self._ifstream_open,
+            "std::ifstream::is_open": self._ifstream_is_open,
+            "std::ifstream::close": self._ifstream_close,
+            "std::ios::fail": self._returns_zero,
+            "std::ios::good": lambda call: self._returns(call, sx.const(1, 64)),
+            "std::ios::eof": self._ios_eof,
             "std::allocator": lambda call: self._returns(call, call.arguments[0]),
             "std::string::string": self._string_new,
             "std::string::string()": self._string_empty_new,
@@ -688,12 +696,17 @@ class SymbolicLibc:
         return scanner.run()
 
     def _getline(self, call: _Call) -> list[ExternalOutcome]:
-        """`std::getline(in, s)`: a line without its newline, into a std::string."""
+        """`std::getline(in, s)`: a line without its newline, into a std::string.
+
+        `in` is the terminal or a file the program opened; an `ifstream` stands in for
+        its own stream, so which it is comes from the object the call is given.
+        """
         object_at = self._concrete(call, call.arguments[1], "string")
-        io = call.state.io
-        taken = list(io.stdin[io.stdin_position :])
+        stream = self._reading_stream(call)
+        content, position = self._stream(call, stream)
+        taken = list(content[position:])
         if not taken:
-            self._at_end(call)
+            self._at_end(call, stream)
             return self._returns(call, call.arguments[0])
         # The line ends at the first newline; where that is may be up to the input.
         length = sx.const(len(taken), 64)
@@ -707,23 +720,72 @@ class SymbolicLibc:
             options = [(sx.TRUE, True)]
         outcomes: list[ExternalOutcome] = []
         for state, is_short in _split(call, call.state, options, "a std::string holds 15 bytes"):
-            content = taken[: cxx.SMALL] if is_short else taken
-            self._store_string(call, state, object_at, content, length, in_object=is_short)
-            read_to = state.io.stdin_position + len(content)
-            state.io.stdin_reads.append((state.io.stdin_position, read_to, True))
+            kept = taken[: cxx.SMALL] if is_short else taken
+            self._store_string(call, state, object_at, kept, length, in_object=is_short)
+            item = state.io.files.get(stream)
+            if stream == STANDARD_STREAMS["stdin"]:
+                state.io.stdin_reads.append((position, position + len(kept), True))
+            elif item is not None:
+                state.io.line_read.add(item.name)
             consumed = call.executor.unique_value(state, length)
+            branch = replace(call, state=state)
             if consumed is None:
-                note = "stdin after a symbolic-length getline is treated as empty"
-                self._truncate(
-                    replace(call, state=state),
-                    STANDARD_STREAMS["stdin"],
-                    state.io.stdin_position,
-                    note,
-                )
+                note = "input after a symbolic-length getline is treated as empty"
+                if item is not None:
+                    # Where the line ends is up to the file, so all of it was looked at.
+                    state.io.read_to[item.name] = len(content)
+                self._truncate(branch, stream, position, note)
             else:
-                state.io.stdin_position += consumed + (1 if consumed < len(taken) else 0)
+                self._advance(branch, stream, consumed + (1 if consumed < len(taken) else 0))
             outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
         return outcomes
+
+    def _reading_stream(self, call: _Call) -> int:
+        """Which stream a C++ read is on: a file the program opened, or the terminal."""
+        stream = call.executor.unique_value(call.state, call.arguments[0])
+        if stream is not None and stream in call.state.io.files:
+            return stream
+        return STANDARD_STREAMS["stdin"]
+
+    def _ifstream_open(self, call: _Call) -> list[ExternalOutcome]:
+        """`std::ifstream file(path)`: the object stands in for the stream it opens."""
+        object_at = self._concrete(call, call.arguments[0], "stream")
+        path = self._string_bytes(call, self._concrete(call, call.arguments[1], "path"))
+        if not path or any(not byte.is_const for byte in path):
+            raise _Unsupported("std::ifstream of a path the program computes")
+        name = bytes(byte.value for byte in path).decode("latin-1")
+        io = call.state.io
+        content = io.contents.get(name)
+        if content is None:
+            content = file_symbols(name, self.file_length)
+            io.contents[name] = content
+        io.files[object_at] = OpenFile(name, content)
+        io.positions[object_at] = 0
+        # Optimized code reads the stream through its own vtable, as it does for `cin`.
+        self._store(call, call.state, object_at, sx.const(CXX_IOS_VTABLE, 64))
+        if call.state.memory.accessible(object_at + cxx.IOS_FACET, 8, write=True):
+            self._store(call, call.state, object_at + cxx.IOS_FACET, sx.const(CXX_CTYPE, 64))
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _ios_eof(self, call: _Call) -> list[ExternalOutcome]:
+        """Whether the program has read everything the stream holds."""
+        stream = self._reading_stream(call)
+        content, position = self._stream(call, stream)
+        return self._returns(call, sx.const(int(position >= len(content)), 64))
+
+    def _ifstream_is_open(self, call: _Call) -> list[ExternalOutcome]:
+        """Whether the file opened: it did, since its contents are an input.
+
+        Optimized code asks the file object inside the stream rather than the stream, so
+        an address this does not know is still a file the program opened.
+        """
+        return self._returns(call, sx.const(1, 64))
+
+    def _ifstream_close(self, call: _Call) -> list[ExternalOutcome]:
+        stream = call.executor.unique_value(call.state, call.arguments[0])
+        if stream is not None:
+            call.state.io.positions.pop(stream, None)
+        return self._returns_zero(call)
 
     def _memchr(self, call: _Call) -> list[ExternalOutcome]:
         """`memchr(s, c, n)`: the first `c` in `n` bytes, NULL if there is none."""
@@ -831,8 +893,12 @@ class SymbolicLibc:
         io = call.state.io
         if stream == STANDARD_STREAMS["stdin"]:
             io.stdin_position += count
-        else:
-            io.positions[stream] = io.positions.get(stream, 0) + count
+            return
+        position = io.positions.get(stream, 0) + count
+        io.positions[stream] = position
+        item = io.files.get(stream)
+        if item is not None:
+            io.read_to[item.name] = max(io.read_to.get(item.name, 0), position)
 
     def _feof(self, call: _Call) -> list[ExternalOutcome]:
         stream = self._concrete(call, call.arguments[0], "stream")

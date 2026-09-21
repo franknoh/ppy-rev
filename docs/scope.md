@@ -27,9 +27,12 @@ it rather than guessing.
   [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
-- **A file the program reads**: `fopen` of a path the binary spells out makes that file's
-  contents an input like any other, recovered and printed as `flag.txt: ...`; `fgets`,
-  `fread`, `fgetc`, `fseek`, `ftell` and `rewind` read it, and what the program writes to a
+- **A file the program reads**: `fopen`, or `std::ifstream` of a path the binary spells
+  out, makes that file's contents an input like any other, recovered and printed as
+  `flag.txt: ...` (and written by `--output`). `std::getline(file, line)` reads that file
+  rather than the terminal, and what a file has to contain runs to the last byte the
+  program looked at — a file is not a C string, so a zero byte in the middle of it is
+  part of the answer. `fgets`, `fread`, `fgetc`, `fseek`, `ftell` and `rewind` read it, and what the program writes to a
   file it opened becomes that file's contents. The answer is checked by re-running the
   program against those contents; the sandboxed native run is skipped, since it would need
   the file written for it.
@@ -181,7 +184,7 @@ the function as unliftable if it ever runs out anyway. Re-running the whole samp
 afterwards changed nothing else: seven of the eight now report `main` not found and one
 reports unsupported semantics, and every other binary landed where it had before.
 
-The other side of the same coin: the 15 C++ fixtures in `tests/fixtures/src` — `getline`,
+The other side of the same coin: the 16 C++ fixtures in `tests/fixtures/src` — `getline`,
 `cin >>`, indexing, sizing, comparison, `std::vector`, `std::array`, `std::transform`,
 lambdas, global constructors, a string built from `argv[1]` — are all solved under `g++`
 and `clang++`, at `-O0` and `-O2`, with every answer accepted by the compiled binary.

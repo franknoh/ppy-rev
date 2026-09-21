@@ -121,3 +121,28 @@ def test_a_string_built_from_the_argument_is_solved(
     code, text = _solve(binary, "--output", str(output), capsys=capsys)
     assert code == 0, text
     assert output.read_bytes() == b"fssbfrpsduh"
+
+
+@pytest.mark.parametrize("compiler", ["g++", "clang++"])
+@pytest.mark.parametrize("optimization", ["O0", "O2"])
+def test_a_flag_file_is_recovered(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    compiler: str,
+    optimization: str,
+) -> None:
+    """`std::ifstream file("flag.txt")`: the answer is what the file has to contain."""
+    del analyzer
+    binary = compile_fixture.build("cpp_ifstream", compiler, optimization)
+    output = tmp_path / "solution"
+    code, text = _solve(binary, "--output", str(output), capsys=capsys)
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "  flag.txt\n" in text
+    (tmp_path / "flag.txt").write_bytes(output.read_bytes())
+    completed = subprocess.run(
+        [str(binary)], cwd=tmp_path, capture_output=True, timeout=30, check=False
+    )
+    assert b"Correct!" in completed.stdout

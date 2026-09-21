@@ -62,6 +62,14 @@ class SymbolicIO:
     """Streams `fopen` returned, by the handle the program holds."""
     positions: dict[int, int] = field(default_factory=dict[int, int])
     """How far each open file has been read."""
+    read_to: dict[str, int] = field(default_factory=dict[str, int])
+    """How far the program read into each file it opened, by name.
+
+    A file is not a C string: what it has to contain runs to the last byte the program
+    looked at, including any terminator or newline in the middle of it.
+    """
+    line_read: set[str] = field(default_factory=set[str])
+    """Files the program read a line at a time, so the answer ends at that line."""
     unknown_from: dict[int, str] = field(default_factory=dict[int, str])
     """Streams cut short where a model lost track, and what to say if one is read again.
 
@@ -94,6 +102,8 @@ class SymbolicIO:
             contents=dict(self.contents),
             files=dict(self.files),
             positions=dict(self.positions),
+            read_to=dict(self.read_to),
+            line_read=set(self.line_read),
             unknown_from=dict(self.unknown_from),
             clock=self.clock,
             traced=self.traced,

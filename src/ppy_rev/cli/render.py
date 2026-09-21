@@ -43,7 +43,14 @@ def render_info(info: ProgramInfo, out: TextIO) -> None:
 
 
 def solution_bytes(solution: Solution) -> bytes:
-    return solution.argv if solution.argv is not None else solution.stdin or b""
+    """What `--output` writes: the input the program reads, whichever kind it is."""
+    if solution.argv is not None:
+        return solution.argv
+    if solution.stdin:
+        return solution.stdin
+    if solution.files:
+        return solution.files[0][1]
+    return solution.stdin or b""
 
 
 def _content(data: bytes, indent: str = "  ") -> str:

@@ -14,6 +14,8 @@ from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
+    CXX_CTYPE,
+    CXX_IOS_VTABLE,
     DEFAULT_CLOCK,
     ERRNO_ADDRESS,
     FILE_HANDLE_STEP,
@@ -90,6 +92,12 @@ class ConcreteLibc:
             "strchr": self._strchr,
             "memchr": self._memchr,
             "std::getline": self._getline,
+            "std::ifstream::ifstream": self._ifstream_open,
+            "std::ifstream::is_open": self._ifstream_is_open,
+            "std::ifstream::close": self._ifstream_close,
+            "std::ios::fail": lambda arguments, memory: 0,
+            "std::ios::good": lambda arguments, memory: 1,
+            "std::ios::eof": self._ios_eof,
             "std::allocator": lambda arguments, memory: arguments[0],
             "std::string::string": self._string_new,
             "std::string::string()": self._string_empty_new,
@@ -502,14 +510,44 @@ class ConcreteLibc:
         return arguments[0]
 
     def _getline(self, arguments: list[int], memory: ConcreteMemory) -> int:
-        remaining = self.io.stdin[self.io.stdin_position :]
+        """`std::getline(in, s)`: from the terminal, or from a file the program opened."""
+        stream = arguments[0] if arguments[0] in self.io.open_files else STANDARD_STREAMS["stdin"]
+        content, position = self._stream(stream)
+        remaining = content[position:]
         if not remaining:
             return arguments[0]
         newline = remaining.find(b"\n")
-        content = remaining if newline < 0 else remaining[:newline]
-        self._store_string(memory, arguments[1], content)
-        self.io.stdin_position += len(content) + (0 if newline < 0 else 1)
+        line = remaining if newline < 0 else remaining[:newline]
+        self._store_string(memory, arguments[1], line)
+        self._advance(stream, len(line) + (0 if newline < 0 else 1))
         return arguments[0]
+
+    def _ifstream_open(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`std::ifstream file(path)`: the object stands in for the stream it opens."""
+        self.io.open_files[arguments[0]] = self._string(memory, arguments[1]).decode("latin-1")
+        self.io.file_positions[arguments[0]] = 0
+        # Optimized code reads the stream through its own vtable, as it does for `cin`.
+        memory.store(arguments[0], CXX_IOS_VTABLE, 64)
+        if memory.mapping_at(arguments[0] + cxx.IOS_FACET) is not None:
+            memory.store(arguments[0] + cxx.IOS_FACET, CXX_CTYPE, 64)
+        return arguments[0]
+
+    def _ios_eof(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """Whether the program has read everything the stream holds."""
+        del memory
+        stream = arguments[0] if arguments[0] in self.io.open_files else STANDARD_STREAMS["stdin"]
+        content, position = self._stream(stream)
+        return int(position >= len(content))
+
+    def _ifstream_is_open(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """The file opened: its contents are an input, so it exists."""
+        del arguments, memory
+        return 1
+
+    def _ifstream_close(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self.io.file_positions.pop(arguments[0], None)
+        return 0
 
     def _seek(self, stream: int, offset: int, whence: int) -> int:
         content, position = self._stream(stream)
