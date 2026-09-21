@@ -20,6 +20,7 @@ from ppy_rev.ir.model import (
     Return,
     UnaryOp,
     UnaryOpcode,
+    Var,
 )
 from ppy_rev.ir.validate import validate_function, validate_module
 from ppy_rev.lift.lifter import lift_export
@@ -27,7 +28,7 @@ from ppy_rev.simplify.cfg import simplify_cfg
 from ppy_rev.simplify.dce import eliminate_dead_code
 from ppy_rev.simplify.fold import fold_function
 from ppy_rev.simplify.interfaces import trim_interfaces
-from ppy_rev.simplify.memory import forward_memory
+from ppy_rev.simplify.memory import CanonicalAddress, forward_memory
 from ppy_rev.simplify.pipeline import simplify_function, simplify_module
 from support.exports import ProgramBuilder, call, const, op, reg, ret
 from support.revir import FunctionBuilder, module_for
@@ -289,3 +290,16 @@ def test_simplification_preserves_random_programs(
     assert validate_function(simplified, dict(REGISTERS), 64) == []
     for a, b in [*inputs, (0, 0), (2**64 - 1, 1)]:
         assert _outcome(module, function, a, b) == _outcome(module, simplified, a, b)
+
+
+def test_an_address_defined_from_itself_is_a_base_not_a_walk() -> None:
+    """Malformed RevIR must not cost the simplifier an unbounded walk.
+
+    A lifter bug once produced `v1 = v1 + 8`; following that chain to find what the
+    address is relative to never finished, and a 15 KB binary took minutes.
+    """
+    from ppy_rev.simplify.memory import canonical_address
+
+    var = Var(1, 64)
+    definitions = {1: BinaryOp(BinaryOpcode.ADD, var, var, Const(8, 64), Origin(0, 0))}
+    assert canonical_address(var, definitions, 64) == CanonicalAddress(1, 8)
