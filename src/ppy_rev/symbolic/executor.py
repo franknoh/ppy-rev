@@ -288,6 +288,8 @@ class Executor:
         self._exploration = Exploration([], [], self.statistics)
         self._report_at = _REPORT_EVERY_STEPS
         self._helpers: dict[int, bool] = {}
+        self._deferred = 0
+        """Depth of branch regions whose forks are checked at the join, not as they fork."""
         self._created = time.monotonic()
         """When this executor was made: what the reported solver share is measured against."""
 
@@ -393,9 +395,7 @@ class Executor:
         known = self._helpers.get(address)
         if known is None:
             function = self._functions.get(address)
-            known = function is not None and mergeable_helper(
-                function, lookup=self._functions.get
-            )
+            known = function is not None and mergeable_helper(function, lookup=self._functions.get)
             self._helpers[address] = known
         return known
 
@@ -1151,6 +1151,8 @@ class Executor:
             self.add_constraint(child, condition, ConstraintKind.BRANCH, origin)
             if last and unsatisfiable == len(choices) - 1:
                 status = Status.SAT  # the parent was feasible and every other side was not
+            elif self._deferred:
+                status = Status.SAT  # asked at the join instead, where one answer covers all
             else:
                 status = self.feasible(child)
             if status is Status.UNSAT:
@@ -1233,7 +1235,33 @@ class Executor:
         shared_constraints = len(state.constraints)
         decisions = state.decisions
         checkpoint = state.memory.checkpoint()
-        pending, stopped = self._fork(state, choices, origin)
+        # Paths inside the region are not checked as they fork: the merge keeps only the
+        # ones that arrive, under the disjunction of their conditions, so an impossible
+        # one costs nothing there. Every path that leaves the region is checked below.
+        noted = set(self.statistics.hiding_approximations)
+        self._deferred += 1
+        try:
+            pending, stopped = self._fork(state, choices, origin)
+            arrived, escaped = self._run_region(pending, stopped, depth, region)
+        finally:
+            self._deferred -= 1
+        stopped = [stop for stop in stopped if self._possible(stop.state)]
+        escaped = self._possible_states(escaped)
+        if len(arrived) > 1:
+            merged = self._merge(arrived, shared_constraints, checkpoint, origin, region.join)
+            if merged is not None:
+                merged.decisions = decisions + 1
+                arrived = [merged]
+        successors = self._possible_states(arrived) + escaped
+        if not successors and not stopped:
+            # Nothing here can happen, so nothing an unchecked path approximated did.
+            self.statistics.hiding_approximations &= noted
+        return successors, stopped
+
+    def _run_region(
+        self, pending: list[State], stopped: list[Stopped], depth: int, region: MergeRegion
+    ) -> tuple[list[State], list[State]]:
+        """Run every forked path to the region's join; report the arrivals and the leavers."""
         arrived: list[State] = []
         escaped: list[State] = []
         while pending:
@@ -1260,13 +1288,17 @@ class Executor:
             else:
                 pending.extend(outcome[0])
                 stopped.extend(outcome[1])
-        if len(arrived) <= 1:
-            return arrived + escaped, stopped
-        merged = self._merge(arrived, shared_constraints, checkpoint, origin, region.join)
-        if merged is None:
-            return arrived + escaped, stopped
-        merged.decisions = decisions + 1
-        return [merged, *escaped], stopped
+        return arrived, escaped
+
+    def _possible(self, state: State) -> bool:
+        """Whether a path whose forks went unchecked can happen after all."""
+        if self.feasible(state) is Status.SAT:
+            return True
+        self.statistics.stops[StopReason.INFEASIBLE] += 1
+        return False
+
+    def _possible_states(self, states: list[State]) -> list[State]:
+        return [state for state in states if self._possible(state)]
 
     def _address_cells(self, state: State) -> set[int]:
         """Bytes of memory the current function loads addresses from, where known now.

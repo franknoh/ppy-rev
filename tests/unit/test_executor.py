@@ -384,3 +384,44 @@ def test_concolic_search_flips_its_way_to_the_goal() -> None:
     assert (result.runs, result.flips) == (2, 1)
     (reached,) = result.exploration.reached
     assert search.solve(reached.state, [x]) == {"x": 0x53}
+
+
+def _nested_equality(inner: int) -> Module:
+    """`rax = 0; if (x == 5) { if (x == inner) rax = 1 /* 0x1010 */; } return rax;`"""
+    program = ProgramBuilder()
+    program.code(
+        0x1000,
+        [
+            op("INT_EQUAL", [reg("RDI"), const(5, 8)], reg("ZF")),
+            op("COPY", [const(0, 8)], reg("RAX")),
+            op("CBRANCH", [ram(0x1008), reg("ZF")]),
+        ],
+    )
+    program.code(0x1004, [op("BRANCH", [ram(0x1014)])])
+    program.code(
+        0x1008,
+        [
+            op("INT_EQUAL", [reg("RDI"), const(inner, 8)], reg("ZF")),
+            op("CBRANCH", [ram(0x1010), reg("ZF")]),
+        ],
+    )
+    program.code(0x100C, [op("BRANCH", [ram(0x1014)])])
+    program.code(0x1010, [op("COPY", [const(1, 8)], reg("RAX"))])
+    program.code(0x1014, ret(), length=1)
+    program.function("f", 0x1000)
+    return _module(program)
+
+
+def test_a_goal_inside_a_merged_region_is_reached_only_on_a_possible_path() -> None:
+    """Forks inside a region go unchecked until the join; what stops there is checked then.
+
+    `x == 5` and then `x == 6` cannot both hold, so reaching 0x1010 would be a goal on a
+    path that cannot happen: it must be dropped, not reported.
+    """
+    impossible = _solve(_nested_equality(6), Goal(addresses=frozenset({0x1010})))
+    assert impossible.model is None
+    assert impossible.exploration.reached == []
+    assert impossible.exploration.statistics.stops[StopReason.INFEASIBLE] >= 1
+    assert impossible.exploration.statistics.merges >= 1  # the region did run, and merge
+    possible = _solve(_nested_equality(5), Goal(addresses=frozenset({0x1010})))
+    assert possible.model == {"x": 5}
