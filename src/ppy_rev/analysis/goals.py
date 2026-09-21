@@ -17,7 +17,7 @@ from ppy_rev.ir.model import Branch, DirectTarget, Function, Module
 _SUCCESS = (
     (re.compile(r"\bcorrect\b"), 0.9),
     (re.compile(r"\bcongrat"), 0.95),
-    (re.compile(r"\bsuccess"), 0.9),
+    (re.compile(r"\bsuccess|\bsucceeded\b"), 0.9),
     (re.compile(r"\baccess granted\b"), 0.95),
     (re.compile(r"\bwell done\b"), 0.9),
     (re.compile(r"\bgood job\b"), 0.9),
@@ -45,6 +45,7 @@ _FAILURE = (
     (re.compile(r"\b(not quite|mismatch)"), 0.9),
     (re.compile(r"\btoo (short|long|big|small)\b|\b(wrong|different) length\b"), 0.85),
     (re.compile(r"\b(access )?denied\b"), 0.9),
+    (re.compile(r"\b(nah|no way|not today)\b"), 0.85),
     (re.compile(r"\b(bad|sorry|lose|loser)\b"), 0.7),
     (re.compile(r"\busage\b"), 0.6),
     (re.compile(r"\berror\b"), 0.6),
@@ -246,6 +247,8 @@ def sibling_successes(
                 if in_block.get(address) != other or address in found:
                     continue
                 text = reference.text.decode("latin-1")
+                if not _says_something(text):
+                    continue
                 found[address] = GoalCandidate(
                     address=address,
                     outcome=Outcome.SUCCESS,
@@ -263,3 +266,12 @@ def sibling_successes(
                     call=reference.call,
                 )
     return sorted(found.values(), key=lambda candidate: candidate.address)
+
+
+def _says_something(text: str) -> bool:
+    """Whether a string is a message rather than a decoration or a bare format.
+
+    Without a verdict word of its own, all this has to go on is the branch it sits on, so
+    a `"%s"`, a `"[+] "` or a row of dashes is not enough to call an outcome.
+    """
+    return sum(character.isalpha() for character in re.sub(r"%[-#0-9.lhz]*[a-zA-Z]", "", text)) >= 3
