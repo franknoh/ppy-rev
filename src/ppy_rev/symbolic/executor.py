@@ -1245,7 +1245,7 @@ class Executor:
             arrived, escaped = self._run_region(pending, stopped, depth, region)
         finally:
             self._deferred -= 1
-        stopped = [stop for stop in stopped if self._possible(stop.state)]
+        stopped = [stop for stop in stopped if self._possible(stop.state) is not Status.UNSAT]
         escaped = self._possible_states(escaped)
         if len(arrived) > 1:
             merged = self._merge(arrived, shared_constraints, checkpoint, origin, region.join)
@@ -1290,15 +1290,20 @@ class Executor:
                 stopped.extend(outcome[1])
         return arrived, escaped
 
-    def _possible(self, state: State) -> bool:
-        """Whether a path whose forks went unchecked can happen after all."""
-        if self.feasible(state) is Status.SAT:
-            return True
-        self.statistics.stops[StopReason.INFEASIBLE] += 1
-        return False
+    def _possible(self, state: State) -> Status:
+        """Whether a path whose forks went unchecked can happen after all.
+
+        Only a definite `unsat` drops a path. When the solver cannot decide - it timed out
+        on the region's whole condition at once - the path is kept: dropping it would let
+        the search report "no path reaches the goal" when it had merely given up on one.
+        """
+        status = self.feasible(state)
+        if status is Status.UNSAT:
+            self.statistics.stops[StopReason.INFEASIBLE] += 1
+        return status
 
     def _possible_states(self, states: list[State]) -> list[State]:
-        return [state for state in states if self._possible(state)]
+        return [state for state in states if self._possible(state) is not Status.UNSAT]
 
     def _address_cells(self, state: State) -> set[int]:
         """Bytes of memory the current function loads addresses from, where known now.

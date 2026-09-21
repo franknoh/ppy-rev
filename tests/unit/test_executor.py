@@ -8,6 +8,7 @@ from ppy_rev.execution.process import enter_call, standard_memory
 from ppy_rev.ir.model import Module
 from ppy_rev.lift.lifter import lift_export
 from ppy_rev.simplify.pipeline import simplify_module
+from ppy_rev.solver.backend import CheckResult, Status
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.concolic import concolic_search
@@ -425,3 +426,65 @@ def test_a_goal_inside_a_merged_region_is_reached_only_on_a_possible_path() -> N
     assert impossible.exploration.statistics.merges >= 1  # the region did run, and merge
     possible = _solve(_nested_equality(5), Goal(addresses=frozenset({0x1010})))
     assert possible.model == {"x": 5}
+
+
+class _TimeoutBackend:
+    """A solver that never settles: every check times out.
+
+    It stands in for a real solver giving up on a hard query, which is what a deferred
+    region's join check can do. A path it cannot disprove must be kept, not dropped.
+    """
+
+    name = "timeout"
+
+    def session(self) -> _TimeoutSession:
+        return _TimeoutSession()
+
+
+class _TimeoutSession:
+    def add(self, constraint: object) -> None:
+        del constraint
+
+    def push(self) -> None:
+        pass
+
+    def pop(self) -> None:
+        pass
+
+    def check(
+        self,
+        assumptions: object = (),
+        symbols: object = (),
+        timeout_ms: int | None = None,
+    ) -> CheckResult:
+        del assumptions, symbols, timeout_ms
+        return CheckResult(Status.TIMEOUT, {}, "timeout")
+
+    def smt2(self, assumptions: object = ()) -> str:
+        del assumptions
+        return ""
+
+
+def test_a_merged_path_the_solver_cannot_disprove_is_not_dropped() -> None:
+    """A join check that times out must not turn a reachable goal into no goal at all.
+
+    The two sides of the branch merge, then the goal sits past the join. With a solver
+    that gives up on every query, the merged path cannot be shown feasible - but it also
+    cannot be shown impossible, so it is kept and the goal is still reached.
+    """
+    program = ProgramBuilder()
+    _xor_check(program)
+    program.function("f", 0x1000)
+    module = _module(program)
+    function = module.function_named("f")
+    assert function is not None
+    solution = solve_function(
+        module,
+        function,
+        {"RDI": sx.symbol("x", 64)},
+        Goal(addresses=frozenset({0x100C})),
+        _TimeoutBackend(),
+    )
+    assert solution.exploration.reached, "the merged path was dropped as if impossible"
+    assert solution.exploration.statistics.stops[StopReason.INFEASIBLE] == 0
+    assert solution.exploration.statistics.merges == 1
