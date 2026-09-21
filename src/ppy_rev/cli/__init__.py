@@ -66,8 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     lift.add_argument("-o", "--output", type=Path, help="write output here instead of stdout")
     lift.add_argument("--function", action="append", help="limit output to these functions")
     lift.add_argument(
-        "--no-simplify", action="store_true", help="show RevIR exactly as lifted from p-code"
+        "--mode",
+        choices=("raw", "simplified", "vm", "solved"),
+        default="simplified",
+        help="how much of what ppy-rev works out the output carries: raw p-code, "
+        "simplified (default), plus a lifted bytecode VM, or plus the answer solving found",
     )
+    lift.add_argument("--no-simplify", action="store_true", help="the same as --mode raw")
     lift.set_defaults(handler=commands.lift)
 
     analyze = subcommands.add_parser(

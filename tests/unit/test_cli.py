@@ -6,7 +6,7 @@ import pytest
 from ppy_rev import __version__
 from ppy_rev.analysis.goals import GoalCandidate, Outcome
 from ppy_rev.analysis.inputs import InputKind
-from ppy_rev.cli import main
+from ppy_rev.cli import build_parser, main
 from ppy_rev.cli.render import render_solve
 from ppy_rev.solve import (
     InputDescription,
@@ -77,3 +77,13 @@ def test_empty_solutions_are_named() -> None:
     assert "Solution 1:\n  (empty)\n" in text
     assert "Solution 2:\n  (empty line)\n" in text
     assert "Solution 3:\n  key\n" in text
+
+
+def test_lift_modes_carry_more_of_the_analysis() -> None:
+    """`--mode` says how much of what ppy-rev worked out the output carries."""
+    parser = build_parser()
+    for mode in ("raw", "simplified", "vm", "solved"):
+        arguments = parser.parse_args(["lift", "chall", "--mode", mode])
+        assert arguments.mode == mode
+    assert parser.parse_args(["lift", "chall"]).mode == "simplified"
+    assert parser.parse_args(["lift", "chall", "--no-simplify"]).no_simplify

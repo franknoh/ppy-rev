@@ -97,7 +97,8 @@ input and goal, and what the search did.
 ```bash
 ppy-rev info ./chall                # architecture, entry point, sections, functions
 ppy-rev analyze ./chall             # inputs, outcomes, flag format, relevant code, VMs
-ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function (--no-simplify: raw)
+ppy-rev lift ./chall --emit-ir      # simplified RevIR for every recovered function
+ppy-rev lift ./chall --emit-ppy --mode solved   # PPy that runs, carrying the answer
 ppy-rev lift ./chall --emit-ir --function main -o main.revir
 ppy-rev lift ./chall --emit-ppy -o out --check-ppy
 ppy-rev solve ./chall               # find an input that reaches the success output
@@ -115,7 +116,17 @@ standard input and calls the lifted `main`), and `out/metadata.json` (function i
 ```text
 $ echo | ppy out/program.ppy -- 'ais3{I_tak3_g00d_n0t3s}'
 Correct! that is the secret key!
-``` Values are masked machine integers with
+```
+
+`--mode` decides how much of what ppy-rev worked out the emitted code carries:
+
+| mode | what the output is |
+|---|---|
+| `raw` | RevIR exactly as p-code gave it, nothing folded away |
+| `simplified` | the default: constants folded, dead code gone, library calls modeled |
+| `vm` | the same, plus a bytecode VM's program lifted into a function beside its interpreter |
+| `solved` | the same, plus the input solving found — `ppy out/program.ppy` then runs it with no arguments and reaches the goal |
+ Values are masked machine integers with
 PPy fixed-width annotations; `--check-ppy` runs `ppy check` and fails if PPy reports
 an error or has to insert a runtime width check. Functions with more than one block use
 explicit block dispatch, so arbitrary control flow is preserved exactly.

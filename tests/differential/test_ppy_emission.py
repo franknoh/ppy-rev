@@ -19,8 +19,10 @@ from types import ModuleType
 import pytest
 
 from conftest import FixtureCompiler
+from fixtures.compile import BUILD_ROOT
 from ppy_rev import Analyzer
 from ppy_rev.analysis.program import find_main
+from ppy_rev.cli import main
 from ppy_rev.execution.interpreter import Interpreter
 from ppy_rev.execution.process import (
     INITIAL_STACK_POINTER,
@@ -146,3 +148,35 @@ def test_emitted_program_runs_like_the_interpreter(
     assert completed.stderr == b"", completed.stderr.decode()
     assert completed.stdout == expected
     assert f"main returned {completed.returncode}" == interpreted.outcome
+
+
+def test_the_answer_is_carried_into_the_emitted_program(
+    analyzer: Analyzer, compile_fixture: type[FixtureCompiler], tmp_path: Path
+) -> None:
+    """`lift --mode solved`: the lifted program runs the input solving found, by itself."""
+    del analyzer  # the CLI finds Ghidra through the environment
+    binary = compile_fixture.build("xor_check", "gcc", "O0")
+    code = main(
+        [
+            "lift",
+            str(binary),
+            "--emit-ppy",
+            "--mode",
+            "solved",
+            "--output",
+            str(tmp_path),
+            "--cache-dir",
+            str(BUILD_ROOT / "cache"),
+        ]
+    )
+    assert code == 0
+    source = (tmp_path / "program.ppy").read_text(encoding="utf-8")
+    assert "ANSWER_ARGUMENTS: list[bytes] = [b'rev_is_easy']" in source
+    completed = subprocess.run(
+        [sys.executable, "-m", "ppy_compiler", "--color", "never", str(tmp_path / "program.ppy")],
+        capture_output=True,
+        cwd=tmp_path,
+        timeout=600,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert b"Correct!" in completed.stdout

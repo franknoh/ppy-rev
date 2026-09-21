@@ -120,7 +120,18 @@ def runtime_source() -> str:
     return files("ppy_rev.ppy").joinpath(RUNTIME_NAME).read_text(encoding="utf-8")
 
 
-def emit_module(module: Module) -> EmittedModule:
+@dataclass(frozen=True, slots=True)
+class Answer:
+    """What solving found, for the emitted program to run with."""
+
+    argv: bytes | None
+    stdin: bytes | None
+    goal: int
+    text: str
+    """The message the goal prints, when it is one that can be read."""
+
+
+def emit_module(module: Module, answer: Answer | None = None) -> EmittedModule:
     names = _function_names(module)
     emitted = tuple(
         EmittedFunction(
@@ -180,7 +191,7 @@ def emit_module(module: Module) -> EmittedModule:
     }
     entry = _entry_function(module, by_entry)
     if entry is not None:
-        sources[PROGRAM_NAME] = "\n".join(_program(module, entry)) + "\n"
+        sources[PROGRAM_NAME] = "\n".join(_program(module, entry, answer)) + "\n"
     return EmittedModule(sources=sources, functions=emitted)
 
 
@@ -192,8 +203,12 @@ def _entry_function(module: Module, emitted: dict[int, EmittedFunction]) -> Emit
         return None
 
 
-def _program(module: Module, entry: EmittedFunction) -> list[str]:
-    """A runnable front end: arguments and standard input in, output and status out."""
+def _program(module: Module, entry: EmittedFunction, answer: Answer | None = None) -> list[str]:
+    """A runnable front end: arguments and standard input in, output and status out.
+
+    With an answer, it runs with that input unless another is given, so the lifted
+    program reproduces what solving found by being run.
+    """
     convention = calling_convention(module.target)
     width = module.target.pointer_width
     values = {
@@ -204,8 +219,17 @@ def _program(module: Module, entry: EmittedFunction) -> list[str]:
     }
     passed = ", ".join(values.get(register, "0") for register, _ in entry.parameters)
     returns = entry.outputs.index(convention.integer_returns[0])
+    found = answer if answer is not None else Answer(None, None, 0, "")
+    argv = [] if found.argv is None else [found.argv]
+    headline = '"""Run the lifted program: `ppy program.ppy -- ARGUMENTS`, standard input included.'
+    if answer is not None:
+        message = f", which prints {found.text!r}" if found.text else ""
+        headline += (
+            f"\n\nRunning it with nothing given reaches {found.goal:#x}{message}, with the input"
+            "\nsolving found."
+        )
     return [
-        '"""Run the lifted program: `ppy program.ppy -- ARGUMENTS`, standard input included."""',
+        headline + '"""',
         "",
         "import sys",
         "",
@@ -274,10 +298,18 @@ def _program(module: Module, entry: EmittedFunction) -> list[str]:
         '        text += line + "\\n"',
         '    return text.encode("latin-1")',
         "",
+        f"ANSWER_ARGUMENTS: list[bytes] = {argv!r}",
+        f"ANSWER_INPUT: bytes = {found.stdin or b''!r}",
+        "",
         "",
         "def start() -> int:",
         "    arguments: list[bytes] = [item.encode() for item in sys.argv]",
-        "    status, output = run(arguments, standard_input())",
+        "    if len(arguments) == 1:",
+        "        arguments = arguments + ANSWER_ARGUMENTS",
+        "    given: bytes = standard_input()",
+        "    if len(given) == 0:",
+        "        given = ANSWER_INPUT",
+        "    status, output = run(arguments, given)",
         '    print(output.decode("latin-1"), end="")',
         "    return status",
         "",

@@ -20,9 +20,10 @@ from ppy_rev.cli.render import (
 )
 from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
 from ppy_rev.diagnostics import PpyRevError, Severity
+from ppy_rev.ir.model import Module
 from ppy_rev.ir.text import format_module
 from ppy_rev.ppy.check import check_ppy
-from ppy_rev.ppy.emit import emit_module
+from ppy_rev.ppy.emit import Answer, emit_module
 from ppy_rev.progress import reporter
 from ppy_rev.solve import (
     SolveRequest,
@@ -71,13 +72,18 @@ def lift(arguments: argparse.Namespace, out: TextIO) -> int:
     binary: Path = arguments.binary
     output: Path | None = arguments.output
     selected: list[str] | None = arguments.function
-    no_simplify: bool = arguments.no_simplify
+    mode: str = "raw" if arguments.no_simplify else arguments.mode
     emit_ppy: bool = arguments.emit_ppy
     emit_ir: bool = arguments.emit_ir
     check: bool = arguments.check_ppy
     tool = analyzer(arguments)
     lifted = tool.lift(binary)
-    module = lifted.module if no_simplify else tool.simplify(lifted).module
+    module = lifted.module if mode == "raw" else tool.simplify(lifted).module
+    answer: Answer | None = None
+    if mode in ("vm", "solved"):
+        module = _with_lifted_vm(module, binary, out)
+    if mode == "solved":
+        answer = _solved_answer(tool, binary, out)
     if selected:
         missing = sorted(set(selected) - {function.name for function in module.functions})
         if missing:
@@ -90,7 +96,7 @@ def lift(arguments: argparse.Namespace, out: TextIO) -> int:
             sys.stderr.write(diagnostic.render() + "\n")
     if emit_ppy:
         directory = output or Path("out")
-        emitted = emit_module(module)
+        emitted = emit_module(module, answer)
         emitted.write(directory)
         out.write(f"wrote PPy for {len(emitted.functions)} functions to {directory}\n")
         if not check:
@@ -211,6 +217,37 @@ def vm_detect(arguments: argparse.Namespace, out: TextIO) -> int:
         out,
     )
     return 0 if likely else EXIT_UNSOLVED
+
+
+def _with_lifted_vm(module: Module, binary: Path, out: TextIO) -> Module:
+    """The module with any bytecode VM lifted into a function of its own beside it.
+
+    The interpreter stays as it was, so the program still runs; the bytecode it walks is
+    added next to it, as the straight-line program it really is.
+    """
+    try:
+        lifted = lift_vm(module, SolveRequest(binary=binary))
+    except PpyRevError as error:
+        out.write(f"no VM lifted: {error}\n")
+        return module
+    beyond = max(function.entry for function in module.functions) + 0x1000
+    out.write(f"lifted {lifted.function.name} from the VM's bytecode\n")
+    return replace(module, functions=(*module.functions, replace(lifted.function, entry=beyond)))
+
+
+def _solved_answer(tool: Analyzer, binary: Path, out: TextIO) -> Answer | None:
+    """What solving found, so the emitted program runs the input that works."""
+    try:
+        result = tool.solve(SolveRequest(binary=binary))
+    except PpyRevError as error:
+        out.write(f"no answer to carry: {error}\n")
+        return None
+    if not result.solutions:
+        out.write(f"no answer to carry: {result.status}\n")
+        return None
+    solution = result.solutions[0]
+    out.write(f"carrying the answer for {result.goal.address:#x} into the program\n")
+    return Answer(solution.argv, solution.stdin, result.goal.address, result.goal.text)
 
 
 def vm_lift(arguments: argparse.Namespace, out: TextIO) -> int:
