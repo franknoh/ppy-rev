@@ -66,8 +66,10 @@ it rather than guessing.
   `analysis incomplete` rather than `unsat`. `signal` installs a handler that is never
   called, since nothing here raises one.
 - **An outcome with nothing to read in it**: when no message ranks as success, the goal
-  is looked for by shape instead — a call that prints, that the input decides the program
-  reaches, and that the program leaves well from. That is language-independent, so it
+  is looked for by shape instead — a call that prints, or a success status the program
+  leaves with, that the input decides it reaches. Plenty of checkers say nothing at all:
+  passing is returning zero. The input is followed across calls and through a call table,
+  since the deciding usually happens in a function `main` handed the buffer to. That is language-independent, so it
   covers a flag spelled out with `putc`, a message built while running, and the runtimes
   of Rust, Go and Nim, whose strings a C-string reader cannot see. The evidence is
   printed with the candidate, and an answer that turns out to reach the goal without

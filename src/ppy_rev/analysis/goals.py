@@ -12,8 +12,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ppy_rev.analysis.outcomes import input_dependent_outputs
-from ppy_rev.analysis.program import StringReference, calls, external_name
-from ppy_rev.ir.model import Branch, DirectTarget, Function, Module
+from ppy_rev.analysis.program import (
+    StringReference,
+    callee_addresses,
+    calls,
+    external_name,
+)
+from ppy_rev.ir.model import Branch, Function, Module
 
 _SUCCESS = (
     (re.compile(r"\bcorrect\b"), 0.9),
@@ -130,8 +135,8 @@ def printing_functions(module: Module) -> frozenset[str]:
                 if external in _OUTPUT_FUNCTIONS:
                     prints.add(function.name)
                 continue
-            if isinstance(call.target, DirectTarget):
-                callee = module.function_at(call.target.address)
+            for address in callee_addresses(call.target):
+                callee = module.function_at(address)
                 if callee is not None:
                     named.add(callee.name)
         callees[function.name] = named
@@ -304,7 +309,8 @@ def shaped_successes(
             continue
         if site.ends_badly and not site.ends_well:
             continue
-        evidence = [f"passed to {site.call}"]
+        leaves = site.call in ("exit", "_exit", "return")
+        evidence = ["leaves with a success status" if leaves else f"passed to {site.call}"]
         confidence = _SHAPED_CONFIDENCE if site.decisions else _SHOWN_CONFIDENCE
         if site.decisions:
             decided = ", ".join(f"{address:#x}" for address in site.decisions[:3])
@@ -312,7 +318,7 @@ def shaped_successes(
         if site.prints_input:
             confidence += 0.05
             evidence.append("what it prints came from the input")
-        if site.ends_well and not site.ends_badly:
+        if site.ends_well and not site.ends_badly and not leaves:
             confidence += 0.1
             evidence.append("the program then leaves with a success status")
         found.append(

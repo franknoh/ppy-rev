@@ -87,7 +87,7 @@ def reachable_functions(module: Module, root: Function) -> list[Function]:
     order = [root]
     for function in order:
         for call, _ in calls(function):
-            for address in _callees(call.target):
+            for address in callee_addresses(call.target):
                 callee = module.function_at(address)
                 if callee is not None and callee.entry not in seen:
                     seen.add(callee.entry)
@@ -95,7 +95,8 @@ def reachable_functions(module: Module, root: Function) -> list[Function]:
     return order
 
 
-def _callees(target: CallTarget) -> tuple[int, ...]:
+def callee_addresses(target: CallTarget) -> tuple[int, ...]:
+    """Where a call can go: the one place it names, or the places it was resolved to."""
     match target:
         case DirectTarget(address=address):
             return (address,)

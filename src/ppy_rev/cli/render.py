@@ -241,8 +241,11 @@ def render_lifted_vm(target: str, lifted: LiftedVm, out: TextIO) -> None:
 def _outcome(candidate: GoalCandidate) -> str:
     text = json.dumps(candidate.text)
     if not candidate.text:
-        # An outcome recognized by its shape prints something this cannot read.
-        use = f"calls {candidate.call}" if candidate.call else "runs"
+        # An outcome recognized by its shape: nothing here can be read as a message.
+        if candidate.call in ("return", "exit", "_exit"):
+            use = f"leaves well by {candidate.call}"
+        else:
+            use = f"calls {candidate.call}" if candidate.call else "runs"
     else:
         use = f"{candidate.call}({text})" if candidate.call else f"uses {text}"
     return f"  {candidate.confidence:.2f}  {candidate.address:#x}  {use} in {candidate.function}\n"

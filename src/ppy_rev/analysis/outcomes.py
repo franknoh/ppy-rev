@@ -8,9 +8,13 @@ it ends well from.
 
 So this looks for that shape rather than for words:
 
-    the call prints something
+    the call prints something, or the program leaves with a success status
     it is control-dependent on a branch whose condition came from the input
-    the program leaves with a success status from there, rather than a failure
+    the ways on from it do not end in failure
+
+The input is followed across calls, because a checker is usually handed the buffer and
+decides inside; and through a call table, because a program that dispatches that way
+prints that way too.
 
 Each of those is evidence the caller can read, and none of them needs the message to be
 readable at all. It is a fallback: a program that does say `Correct!` is ranked on that,
@@ -23,7 +27,7 @@ from dataclasses import dataclass
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.analysis.locations import Location, Locations, definitions
-from ppy_rev.analysis.program import external_name
+from ppy_rev.analysis.program import callee_addresses, external_name
 from ppy_rev.ir.cfg import ControlFlow, control_flow, immediate_post_dominators
 from ppy_rev.ir.model import (
     BinaryOp,
@@ -31,12 +35,12 @@ from ppy_rev.ir.model import (
     Branch,
     Call,
     Const,
-    DirectTarget,
     Function,
     Load,
     Module,
     Operand,
     Operation,
+    Phi,
     Return,
     Store,
     Subpiece,
@@ -109,17 +113,51 @@ class OutputSite:
 def input_dependent_outputs(
     module: Module, functions: list[Function], printing: frozenset[str]
 ) -> list[OutputSite]:
-    """Printing calls that the input decides the program reaches, in address order."""
+    """Printing calls that the input decides the program reaches, in address order.
+
+    The input does not stop at the function that read it: a checker is handed the buffer
+    and decides there, so what a call carries is followed into the callee until nothing
+    new arrives.
+    """
+    by_entry = {function.entry: function for function in functions}
+    start = functions[0].entry if functions else 0
+    """Where the program starts: the one whose return value is the program's status."""
+    seeded: dict[int, frozenset[str]] = {function.entry: frozenset() for function in functions}
+    analyses: dict[int, _Outcomes] = {}
+    work = [function.entry for function in functions]
+    while work:
+        entry = work.pop()
+        function = by_entry.get(entry)
+        if function is None:
+            continue
+        outcomes = _Outcomes(module, function, printing, seeded[entry], entry == start)
+        outcomes.spread()
+        analyses[entry] = outcomes
+        for callee, carried in outcomes.carried():
+            if callee not in seeded:
+                continue
+            grown = seeded[callee] | carried
+            if grown != seeded[callee]:
+                seeded[callee] = grown
+                work.append(callee)
     found: list[OutputSite] = []
-    for function in functions:
-        found.extend(_Outcomes(module, function, printing).run())
+    for entry, outcomes in analyses.items():
+        del entry
+        found.extend(outcomes.sites())
     return sorted(found, key=lambda site: site.address)
 
 
 class _Outcomes:
     """Where the input reaches in one function, and what that decides."""
 
-    def __init__(self, module: Module, function: Function, printing: frozenset[str]) -> None:
+    def __init__(
+        self,
+        module: Module,
+        function: Function,
+        printing: frozenset[str],
+        seeded: frozenset[str] = frozenset(),
+        entry: bool = False,
+    ) -> None:
         self.module = module
         self.function = function
         self.printing = printing
@@ -129,11 +167,15 @@ class _Outcomes:
         """Values that came from the input."""
         self.memory: set[Location] = set()
         """Places the input was read into."""
-        if function.name == "main":
-            argv = self.convention.integer_parameters[1]
-            for item in function.inputs:
-                if item.register == argv:
-                    self.values.add(item.value.id)
+        self._leaving_cache: dict[int, tuple[int, int, str]] | None = None
+        self.entry = entry
+        """Whether this is where the program starts: its return value is the status."""
+        carried = set(seeded)
+        if entry:
+            carried.add(self.convention.integer_parameters[1])
+        for item in function.inputs:
+            if item.register in carried:
+                self.values.add(item.value.id)
 
     # -- where the input reaches ---------------------------------------------------------
 
@@ -199,7 +241,9 @@ class _Outcomes:
             if location not in self.memory:
                 self.memory.add(location)
                 changed = True
-        carries = any(self._tainted(value) for value in _parameters(call, registers))
+        # Handing over a pointer to where the input was read hands over the input: a
+        # checker is usually `check(buffer)`, and the buffer's address is its own value.
+        carries = any(self._carries(value) for value in _parameters(call, registers))
         if name in RETURNS_INPUT or carries:
             # Only what the callee returns carries the input on: the other results are
             # registers it gave back untouched.
@@ -223,10 +267,40 @@ class _Outcomes:
     def _tainted(self, value: Operand) -> bool:
         return isinstance(value, Var) and value.id in self.values
 
+    def _carries(self, value: Operand) -> bool:
+        """Whether a value is the input, or points at where the input was read."""
+        return self._tainted(value) or self.locations.of(value) in self.memory
+
     # -- what the input decides ----------------------------------------------------------
+
+    def carried(self) -> list[tuple[int, frozenset[str]]]:
+        """For each call, where it can go and which of its arguments carry the input."""
+        registers = self.convention.integer_parameters
+        found: list[tuple[int, frozenset[str]]] = []
+        for block in self.function.blocks:
+            for operation in block.operations:
+                if not isinstance(operation, Call):
+                    continue
+                passed = dict(zip(operation.argument_registers, operation.arguments, strict=True))
+                carrying = frozenset(
+                    register
+                    for register in registers
+                    if register in passed and self._carries(passed[register])
+                )
+                if not carrying:
+                    continue
+                found.extend((address, carrying) for address in callee_addresses(operation.target))
+        return found
+
+    def spread(self) -> None:
+        """Follow the input through this function's values and memory."""
+        self._spread()
 
     def run(self) -> list[OutputSite]:
         self._spread()
+        return self.sites()
+
+    def sites(self) -> list[OutputSite]:
         decisions = {
             block.id: block.terminator.origin.address
             for block in self.function.blocks
@@ -247,6 +321,20 @@ class _Outcomes:
             # argument: a banner, or a program reading back what it was given.
             always = _post_dominates(post, block.id, 0)
             well, badly = statuses[block.id]
+            leaving = self.leaving().get(block.id) if deciding else None
+            if leaving is not None and leaving[0] == 0:
+                # Plenty of checkers say nothing at all: passing is leaving with zero.
+                found.append(
+                    OutputSite(
+                        function=self.function.name,
+                        address=leaving[1],
+                        call=leaving[2],
+                        decisions=deciding,
+                        prints_input=False,
+                        ends_well=True,
+                        ends_badly=False,
+                    )
+                )
             for operation in block.operations:
                 name = self._printer(operation)
                 if name is None or not isinstance(operation, Call):
@@ -274,7 +362,7 @@ class _Outcomes:
         of the machine along with it, and the input is usually somewhere in there.
         """
         return any(
-            self._tainted(argument) or self.locations.of(argument) in self.memory
+            self._carries(argument)
             for argument in _parameters(call, self.convention.integer_parameters)
         )
 
@@ -283,12 +371,14 @@ class _Outcomes:
         if not isinstance(operation, Call):
             return None
         name = external_name(self.module, operation)
-        if name is None and isinstance(operation.target, DirectTarget):
-            callee = self.module.function_at(operation.target.address)
-            name = None if callee is None else callee.name
-        if name is None:
-            return None
-        return name if name in PRINTS or name in self.printing else None
+        if name is not None:
+            return name if name in PRINTS or name in self.printing else None
+        # A program that dispatches through a table calls its printer that way too.
+        for address in callee_addresses(operation.target):
+            callee = self.module.function_at(address)
+            if callee is not None and (callee.name in PRINTS or callee.name in self.printing):
+                return callee.name
+        return None
 
     # -- how the program ends ------------------------------------------------------------
 
@@ -296,18 +386,59 @@ class _Outcomes:
         """For each block, whether the ways on from it end well, badly, or both."""
         good: set[int] = set()
         bad: set[int] = set()
-        for block in self.function.blocks:
-            status = self._status_of(block)
-            if status is not None:
-                (good if status == 0 else bad).add(block.id)
+        for block_id, (status, _, _) in self.leaving().items():
+            (good if status == 0 else bad).add(block_id)
         result: list[tuple[bool, bool]] = []
         for block in self.function.blocks:
             reached = _reachable_from(self.function, block.id)
             result.append((bool(reached & good), bool(reached & bad)))
         return result
 
-    def _status_of(self, block: Block) -> int | None:
-        """The status the program leaves with here, when this block is where it ends."""
+    def leaving(self) -> dict[int, tuple[int, int, str]]:
+        """Blocks the program leaves from, with the status and what it leaves by.
+
+        A status the program *chooses* in one block and returns from another counts for
+        the block that chose it: `main` usually sets 0 or 1 and returns once.
+        """
+        if self._leaving_cache is not None:
+            return self._leaving_cache
+        found: dict[int, tuple[int, int, str]] = {}
+        for block in self.function.blocks:
+            item = self._leaving(block)
+            if item is not None:
+                found[block.id] = item
+        for block in self.function.blocks:
+            for chooser, status in self._chosen_status(block):
+                found.setdefault(
+                    chooser,
+                    (status, self.function.blocks[chooser].terminator.origin.address, "return"),
+                )
+        self._leaving_cache = found
+        return found
+
+    def _chosen_status(self, block: Block) -> list[tuple[int, int]]:
+        """(block, status) for a return of a value that earlier blocks picked between."""
+        terminator = block.terminator
+        if not isinstance(terminator, Return) or not self.entry:
+            return []
+        registers = list(self.function.output_registers)
+        returned = self.convention.integer_returns[0]
+        if returned not in registers or registers.index(returned) >= len(terminator.values):
+            return []
+        value = terminator.values[registers.index(returned)]
+        if not isinstance(value, Var):
+            return []
+        phi = self.locations.definitions.get(value.id)
+        if not isinstance(phi, Phi):
+            return []
+        return [
+            (predecessor, incoming.value & 0xFF)
+            for predecessor, incoming in phi.incoming
+            if isinstance(incoming, Const)
+        ]
+
+    def _leaving(self, block: Block) -> tuple[int, int, str] | None:
+        """The status the program leaves with here, where it does, and what it leaves by."""
         for operation in block.operations:
             if not isinstance(operation, Call):
                 continue
@@ -316,16 +447,19 @@ class _Outcomes:
                 continue
             settled = _LEAVES[name]
             if settled is not None:
-                return settled
+                return (settled, operation.origin.address, name or "exit")
             arguments = dict(zip(operation.argument_registers, operation.arguments, strict=True))
             value = arguments.get(self.convention.integer_parameters[0])
-            return value.value & 0xFF if isinstance(value, Const) else None
-        if isinstance(block.terminator, Return) and self.function.name == "main":
+            if not isinstance(value, Const):
+                return None
+            return (value.value & 0xFF, operation.origin.address, name or "exit")
+        if isinstance(block.terminator, Return) and self.entry:
             registers = list(self.function.output_registers)
             returned = self.convention.integer_returns[0]
             if returned in registers and registers.index(returned) < len(block.terminator.values):
                 value = block.terminator.values[registers.index(returned)]
-                return value.value & 0xFF if isinstance(value, Const) else None
+                if isinstance(value, Const):
+                    return (value.value & 0xFF, block.terminator.origin.address, "return")
         return None
 
 

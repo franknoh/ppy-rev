@@ -315,7 +315,7 @@ def solve_module(
             dict.fromkeys(
                 notes
                 + _unsat_notes(status, inputs)
-                + _goal_note(goal, status)
+                + goal_note(goal, status)
                 + _flag_format_note(module, request, solutions)
                 + _initializer_note(initialization)
             )
@@ -1015,7 +1015,7 @@ def _incomplete_notes(exploration: Exploration) -> list[str]:
     return notes
 
 
-def _goal_note(goal: GoalCandidate, status: SolveStatus) -> list[str]:
+def goal_note(goal: GoalCandidate, status: SolveStatus) -> list[str]:
     """Say when `unsat` is about a goal that was picked by its shape rather than its words.
 
     Such a goal is a guess about which outcome is the good one, so "no input reaches it"

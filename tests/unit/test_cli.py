@@ -92,10 +92,10 @@ def test_lift_modes_carry_more_of_the_analysis() -> None:
 def test_unsat_says_when_the_goal_itself_was_a_guess() -> None:
     """`unsat` about an outcome picked by its shape is a much smaller claim."""
     from ppy_rev.analysis.goals import GoalCandidate, Outcome
-    from ppy_rev.solve import SolveStatus, _goal_note
+    from ppy_rev.solve import SolveStatus, goal_note
 
     shaped = GoalCandidate(0x1234, Outcome.SUCCESS, "", "main", 0.45, ("passed to puts",))
     said = GoalCandidate(0x1234, Outcome.SUCCESS, "Correct!", "main", 0.95, ())
-    assert _goal_note(shaped, SolveStatus.UNSAT)
-    assert _goal_note(said, SolveStatus.UNSAT) == []
-    assert _goal_note(shaped, SolveStatus.SAT) == []
+    assert goal_note(shaped, SolveStatus.UNSAT)
+    assert goal_note(said, SolveStatus.UNSAT) == []
+    assert goal_note(shaped, SolveStatus.SAT) == []

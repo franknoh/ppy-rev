@@ -49,12 +49,19 @@ def _checker(*, gate: bool) -> ProgramBuilder:
 
 def test_an_output_the_input_decides_is_an_outcome() -> None:
     """The message says nothing — `putchar('!')` — but the branch on the input does."""
-    (site,) = _sites(_checker(gate=True))
-    address, decisions, prints_input, ends_well = site
-    assert address == 0x1014
+    found = {address: item for address, *item in _sites(_checker(gate=True))}
+    decisions, prints_input, ends_well = found[0x1014]
     assert decisions == (0x1004,)
     assert not prints_input  # the character is a constant: reaching it is what matters
     assert ends_well  # main returns zero from there
+
+
+def test_leaving_well_is_an_outcome_when_nothing_is_printed() -> None:
+    """Plenty of checkers say nothing at all: passing is leaving with a zero status."""
+    found = {address: item for address, *item in _sites(_checker(gate=True))}
+    returning = [address for address in found if address != 0x1014]
+    assert returning, "the return of zero the input decides is an outcome of its own"
+    assert found[returning[0]][0] == (0x1004,)
 
 
 def test_an_output_every_run_makes_is_not_one() -> None:
