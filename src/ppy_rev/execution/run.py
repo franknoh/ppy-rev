@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.execution.interpreter import ExecutionError, Interpreter, Limits
-from ppy_rev.execution.program import enter_main, program_memory
+from ppy_rev.execution.program import DEFAULT_CLOCK, enter_main, program_memory
 from ppy_rev.execution.startup import Initialization, run_initializers
 from ppy_rev.ir.model import Function, Module
 from ppy_rev.summaries.concrete import (
@@ -55,6 +55,7 @@ def run_program(
     reserve: dict[int, int] | None = None,
     traced: bool = False,
     files: dict[str, bytes] | None = None,
+    clock: int | None = None,
 ) -> ProgramRun:
     """Execute main until it returns, exits, fails, or triggers a watch.
 
@@ -69,6 +70,7 @@ def run_program(
         traced=traced,
         files=dict(files or {}),
         heap_next=initialization.heap_next,
+        clock=DEFAULT_CLOCK if clock is None else clock,
     )
     libc = ConcreteLibc(calling_convention(module.target), io)
     at_instruction = {watch.address: watch for watch in watches if watch.register is None}

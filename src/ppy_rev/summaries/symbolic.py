@@ -48,6 +48,9 @@ _ZERO_BYTE = sx.const(0, 8)
 _PTRACE_TRACEME = 0
 _TRACED = sx.const(0xFFFF_FFFF_FFFF_FFFF, 64)
 TRACED_SYMBOL = "__traced"
+CLOCK_SYMBOL = "__clock"
+_LATEST_CLOCK = 4_102_444_800
+"""2100-01-01: past any second a challenge was written to be run in."""
 """The environment value `ptrace(PTRACE_TRACEME)` returns: 0, or -1 under a debugger."""
 
 
@@ -144,6 +147,11 @@ class SymbolicLibc:
             "rewind": self._rewind,
             "gets": self._gets,
             "srand": self._srand,
+            "time": self._time,
+            "sleep": self._returns_zero,
+            "usleep": self._returns_zero,
+            "alarm": self._returns_zero,
+            "signal": self._returns_zero,
             "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
@@ -954,10 +962,60 @@ class SymbolicLibc:
         if note is not None:
             call.executor.approximate(call.state, note, may_hide_paths=True)
 
+    def _time(self, call: _Call) -> list[ExternalOutcome]:
+        """`time(t)`: the second this run happens in, which the solver chooses.
+
+        A program that reads the clock is solved for a time it could have been run at,
+        and the answer says which one — rather than a constant assumed here.
+        """
+        state = call.state
+        if state.io.clock is None:
+            clock = sx.symbol(CLOCK_SYMBOL, 64)
+            call.executor.add_constraint(
+                state,
+                sx.unsigned_less_equal(clock, sx.const(_LATEST_CLOCK, 64)),
+                ConstraintKind.ENVIRONMENT,
+                call.origin,
+                "the clock reads a second in this century",
+            )
+            state.io.clock = clock
+        destination = call.executor.unique_value(state, call.arguments[0])
+        if destination:
+            for index in range(8):
+                self._write(call, destination + index, sx.extract(state.io.clock, index * 8, 8))
+        return self._returns(call, state.io.clock)
+
     def _srand(self, call: _Call) -> list[ExternalOutcome]:
-        seed = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "srand seed")
+        """`srand(seed)`: the generator is modeled exactly, so the seed has to be a number.
+
+        A seed the input or the clock decides is settled here by picking one it could be
+        and saying so: the rest of the run then follows that choice, and a search that
+        finds nothing is reported as incomplete rather than as no answer existing.
+        """
+        wanted = sx.extract(call.arguments[0], 0, 32)
+        seed = call.executor.unique_value(call.state, wanted)
+        if seed is None:
+            seed = self._choose(call, wanted, "srand seed")
         call.state.io.random = glibc_random.seeded(seed)
         return self._returns_zero(call)
+
+    def _choose(self, call: _Call, value: Expr, what: str) -> int:
+        """Settle `value` on one of the values it could take, and record the choice."""
+        model = call.executor.solve_with(call.state, sx.symbols(value), [])
+        chosen = None if model is None else evaluate(value, model)
+        if chosen is None:
+            raise _Unsupported(f"{what} is symbolic ({sx.render(value, 80)})")
+        call.executor.add_constraint(
+            call.state,
+            sx.equal(value, sx.const(chosen, value.width)),
+            ConstraintKind.ENVIRONMENT,
+            call.origin,
+            f"{what} is {chosen}",
+        )
+        call.executor.approximate(
+            call.state, f"{what} was settled on {chosen}", may_hide_paths=True
+        )
+        return chosen
 
     def _rand(self, call: _Call) -> list[ExternalOutcome]:
         call.state.io.random, value = glibc_random.advance(call.state.io.random)

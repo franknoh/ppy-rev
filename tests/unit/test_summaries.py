@@ -389,9 +389,48 @@ def test_rand_follows_the_seed_in_both_models() -> None:
         assert isinstance(outcome, Returned)
         values.append(outcome.outputs["RAX"].value)
     assert values == expected
-    symbolic_seed = {"RDI": sx.symbol("seed", 64)}
-    (refused,) = libc.call(executor, state, "srand", symbolic_seed, Origin(0, 0)) or []
-    assert isinstance(refused, Failed) and refused.reason is StopReason.UNSUPPORTED
+
+
+def test_a_seed_the_run_decides_is_settled_and_said_so() -> None:
+    """`srand(time(NULL))`: the generator needs a number, so one it could be is picked.
+
+    The choice is a constraint on the path and an approximation that may hide paths, so a
+    search that finds nothing after it is incomplete rather than proof of no answer.
+    """
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+    libc = SymbolicLibc(SYSV_X86_64)
+    (clock,) = libc.call(executor, state, "time", {"RDI": sx.const(0, 64)}, Origin(0, 0)) or []
+    assert isinstance(clock, Returned)
+    seed = {"RDI": clock.outputs["RAX"]}
+    (settled,) = libc.call(executor, state, "srand", seed, Origin(0, 0)) or []
+    assert isinstance(settled, Returned)
+    chosen = executor.unique_value(state, clock.outputs["RAX"])
+    assert chosen is not None
+    assert executor.statistics.hiding_approximations == {f"srand seed was settled on {chosen}"}
+    (value,) = libc.call(executor, state, "rand", {}, Origin(0, 0)) or []
+    assert isinstance(value, Returned)
+    concrete_io = ConcreteIO(clock=chosen)
+    other = ConcreteLibc(SYSV_X86_64, concrete_io)
+    other("srand", {"RDI": chosen}, _image())
+    assert value.outputs["RAX"].value == other("rand", {}, _image())["RAX"]
+
+
+def test_the_clock_is_a_second_the_solver_picks() -> None:
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+    (outcome,) = (
+        SymbolicLibc(SYSV_X86_64).call(
+            executor, state, "time", {"RDI": sx.const(OUT, 64)}, Origin(0, 0)
+        )
+        or []
+    )
+    assert isinstance(outcome, Returned)
+    model = executor.solve_with(state, [outcome.outputs["RAX"]], [])
+    assert model is not None
+    chosen = evaluate(outcome.outputs["RAX"], model)
+    assert 0 <= chosen <= 4_102_444_800
+    assert evaluate(outcome.state.memory.load(OUT, 64), model) == chosen  # `time(&t)` stores it
 
 
 @settings(max_examples=60, deadline=None)

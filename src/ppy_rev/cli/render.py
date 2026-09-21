@@ -127,6 +127,8 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
         verdict = "passed" if solution.verified else "failed"
         if solution.traced:
             out.write("  needs a debugger: ptrace(PTRACE_TRACEME) must fail\n")
+        if solution.clock is not None:
+            out.write(f"  needs the clock to read {solution.clock} seconds\n")
         out.write(f"\nVerification:\n  RevIR execution: {verdict} ({solution.verification})\n")
         if solution.native is not None:
             passed = solution.native.passed

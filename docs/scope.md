@@ -54,6 +54,12 @@ it rather than guessing.
   image before solving starts, so a key table built by a global object, or a global
   `std::string`, is what main really reads. A constructor that would need the input — it
   reads, exits, or looks for a debugger — is not run, and is reported instead.
+- **Programs that read the clock**: `time` returns a second the solver picks, reported with
+  the answer (`needs the clock to read ...`) rather than assumed here, and `sleep`,
+  `usleep` and `alarm` pass. A seed the clock decides — `srand(time(NULL))` — is settled
+  on one value it could take, which is said in a note and turns a fruitless search into
+  `analysis incomplete` rather than `unsat`. `signal` installs a handler that is never
+  called, since nothing here raises one.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 
@@ -69,7 +75,7 @@ length, or a goal address).
 | Rust | the same: ten in the survey below, none solved |
 | Go | not represented in the survey; its runtime does not reach `main` the way this expects |
 | Input from a socket | `unsupported semantics` at the first call — there is no model |
-| `sleep`/`signal`/`alarm`/`setjmp`, `time`-dependent behaviour | `unsupported semantics`; nondeterminism is not modeled |
+| `setjmp`, and a signal actually being delivered | `unsupported semantics`; a handler that is installed but never runs is fine (see above), one the program raises is not |
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |
 | x87 80-bit long double | `unsupported semantics`; binary32 and binary64 are modeled exactly |
 | Programs that only print (no check) | `no likely success output found`: there is no input to recover |

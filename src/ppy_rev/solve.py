@@ -37,7 +37,7 @@ from ppy_rev.ir.model import Function, Module
 from ppy_rev.progress import Progress
 from ppy_rev.solver.backend import SolverBackend
 from ppy_rev.solver.z3_backend import Z3Backend
-from ppy_rev.summaries.symbolic import TRACED_SYMBOL, SymbolicLibc
+from ppy_rev.summaries.symbolic import CLOCK_SYMBOL, TRACED_SYMBOL, SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.concolic import ConcolicResult, concolic_search
 from ppy_rev.symbolic.executor import (
@@ -162,6 +162,8 @@ class Solution:
     """The sandboxed native run, when one was requested."""
     traced: bool = False
     """The answer only works while a debugger traces the program."""
+    clock: int | None = None
+    """The second the clock has to read, when the program asked it."""
     files: tuple[tuple[str, bytes], ...] = ()
     """What each file the program reads has to contain."""
 
@@ -660,8 +662,9 @@ def _solutions(
             traced_symbol = state.io.traced
             opened = dict(sorted(state.io.contents.items()))
             wanted = [*all_symbols, *(symbol for content in opened.values() for symbol in content)]
-            if traced_symbol is not None:
-                wanted.append(traced_symbol)
+            for chosen in (traced_symbol, state.io.clock):
+                if chosen is not None:
+                    wanted.append(chosen)
             model = executor.solve_with(state, wanted, [*blocking, *extra, *bounds])
             if model is None and bounds:
                 bounds = []  # other solutions may need longer strings
@@ -676,6 +679,7 @@ def _solutions(
                 stdin_solution(symbols.stdin, model, state.io.stdin_reads) if has_stdin else None
             )
             traced = traced_symbol is not None and model.get(TRACED_SYMBOL, 0) != 0
+            clock = model.get(CLOCK_SYMBOL) if state.io.clock is not None else None
             files = tuple(
                 (name, bytes(model.get(symbol.name, 0) for symbol in content).split(b"\0")[0])
                 for name, content in opened.items()
@@ -685,7 +689,17 @@ def _solutions(
                 seen.add((argv, stdin))
                 solutions.append(
                     _verify(
-                        module, main, request, goal, symbols, argv, stdin, watches, traced, files
+                        module,
+                        main,
+                        request,
+                        goal,
+                        symbols,
+                        argv,
+                        stdin,
+                        watches,
+                        traced,
+                        files,
+                        clock,
                     )
                 )
         return found
@@ -780,22 +794,27 @@ def _verify(
     watches: tuple[Watch, ...],
     traced: bool = False,
     files: tuple[tuple[str, bytes], ...] = (),
+    clock: int | None = None,
 ) -> Solution:
     reserve = {index: len(content) for index, content in symbols.argv.items()}
     arguments = _arguments(module, reserve, argv)
     verified, verification = _run_verification(
-        module, main, arguments, stdin, watches, reserve, traced, dict(files)
+        module, main, arguments, stdin, watches, reserve, traced, dict(files), clock
     )
     if request.native is None:
         native = None
     elif traced:
         native = NativeVerification(None, "not run: this answer needs a debugger attached")
+    elif clock is not None:
+        native = NativeVerification(
+            None, f"not run: this answer needs the clock to read {clock} seconds"
+        )
     elif files:
         named = ", ".join(name for name, _ in files)
         native = NativeVerification(None, f"not run: the answer is the contents of {named}")
     else:
         native = _run_native(request, arguments, stdin, goal)
-    return Solution(argv, stdin, verified, verification, native, traced, files)
+    return Solution(argv, stdin, verified, verification, native, traced, clock, files)
 
 
 def _arguments(module: Module, reserve: dict[int, int], argv: bytes | None) -> list[bytes]:
@@ -815,6 +834,7 @@ def _run_verification(
     reserve: dict[int, int],
     traced: bool = False,
     files: dict[str, bytes] | None = None,
+    clock: int | None = None,
 ) -> tuple[bool, str]:
     run = run_program(
         module,
@@ -825,6 +845,7 @@ def _run_verification(
         reserve=reserve,
         traced=traced,
         files=files,
+        clock=clock,
     )
     verified = run.first_watch is not None and run.first_watch.name == "goal"
     return verified, "reaches the goal" if verified else run.outcome

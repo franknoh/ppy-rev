@@ -33,6 +33,13 @@ STANDARD_STREAMS = {
 FILE_HANDLES = LIBC_DATA_START + 0x400
 """Where `fopen` hands out stand-ins for FILE objects, one 0x40 bytes after another."""
 FILE_HANDLE_STEP = 0x40
+DEFAULT_CLOCK = 1_700_000_000
+"""What the clock reads when nothing chose otherwise: a settled second in 2023.
+
+A program that asks the time gets an answer that does not change between runs, so two
+runs of the same input agree; when the answer depends on it, solving picks the second and
+says which one it picked.
+"""
 PROCESS_IDS = {
     "getuid": 1000,
     "geteuid": 1000,

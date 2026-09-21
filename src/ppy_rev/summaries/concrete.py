@@ -14,6 +14,7 @@ from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
+    DEFAULT_CLOCK,
     ERRNO_ADDRESS,
     FILE_HANDLE_STEP,
     FILE_HANDLES,
@@ -54,6 +55,8 @@ class ConcreteIO:
     random: RandomState = UNSEEDED
     traced: bool = False
     """Whether a debugger traces the program, so `ptrace(PTRACE_TRACEME)` fails."""
+    clock: int = DEFAULT_CLOCK
+    """What `time(NULL)` reads: the second the program is being run in."""
     files: dict[str, bytes] = field(default_factory=dict[str, bytes])
     """What each file the program opens contains."""
     open_files: dict[int, str] = field(default_factory=dict[int, str])
@@ -145,6 +148,11 @@ class ConcreteLibc:
             "rewind": self._rewind,
             "gets": self._gets,
             "srand": self._srand,
+            "time": self._time,
+            "sleep": lambda arguments, memory: 0,
+            "usleep": lambda arguments, memory: 0,
+            "alarm": lambda arguments, memory: 0,
+            "signal": lambda arguments, memory: 0,
             "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
@@ -580,6 +588,12 @@ class ConcreteLibc:
         memory.write(buffer, taken)
         self._advance(stream, len(taken))
         return len(taken) // size if size else 0
+
+    def _time(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`time(t)`: the second this run is happening in, stored too when asked."""
+        if arguments[0]:
+            memory.store(arguments[0], self.io.clock, 64)
+        return self.io.clock
 
     def _srand(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory

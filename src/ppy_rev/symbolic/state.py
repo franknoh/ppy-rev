@@ -69,6 +69,12 @@ class SymbolicIO:
     costs nothing while nothing reads the stream again — most programs read once — so the
     approximation is recorded here and only reported when a later read runs into it.
     """
+    clock: Expr | None = None
+    """What `time(NULL)` returned, once something asked: a second the solver picks.
+
+    A challenge that reads the clock is answered for the time it was run at, and which
+    time that was is part of the answer rather than a constant chosen here.
+    """
     traced: Expr | None = None
     """`ptrace(PTRACE_TRACEME)`'s result: 0, or -1 when a debugger already traces us.
 
@@ -89,6 +95,7 @@ class SymbolicIO:
             files=dict(self.files),
             positions=dict(self.positions),
             unknown_from=dict(self.unknown_from),
+            clock=self.clock,
             traced=self.traced,
         )
 
