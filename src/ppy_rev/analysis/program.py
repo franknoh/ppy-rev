@@ -10,6 +10,7 @@ from ppy_rev.abi import calling_convention
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.ir.model import (
     Call,
+    CallTarget,
     Const,
     DirectTarget,
     ExternalTarget,
@@ -76,17 +77,32 @@ def find_main(module: Module) -> Function:
 
 
 def reachable_functions(module: Module, root: Function) -> list[Function]:
-    """Functions reachable from `root` through direct calls, in discovery order."""
+    """Functions reachable from `root` through its calls, in discovery order.
+
+    A call through a function pointer counts when the target was recovered: a program
+    that dispatches through a table — a menu, a VM, an obfuscated checker — reaches most
+    of itself that way, and nothing it does there would otherwise be seen.
+    """
     seen = {root.entry}
     order = [root]
     for function in order:
         for call, _ in calls(function):
-            if isinstance(call.target, DirectTarget):
-                callee = module.function_at(call.target.address)
+            for address in _callees(call.target):
+                callee = module.function_at(address)
                 if callee is not None and callee.entry not in seen:
                     seen.add(callee.entry)
                     order.append(callee)
     return order
+
+
+def _callees(target: CallTarget) -> tuple[int, ...]:
+    match target:
+        case DirectTarget(address=address):
+            return (address,)
+        case IndirectTarget(candidates=candidates):
+            return candidates
+        case _:
+            return ()
 
 
 _BEFORE_MAIN = frozenset(

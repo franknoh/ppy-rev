@@ -6,7 +6,13 @@ from collections import Counter
 from dataclasses import dataclass
 
 from ppy_rev.analysis.flags import flag_prefixes
-from ppy_rev.analysis.goals import GoalCandidate, Outcome, printing_functions, rank_goals
+from ppy_rev.analysis.goals import (
+    GoalCandidate,
+    Outcome,
+    printing_functions,
+    rank_goals,
+    sibling_successes,
+)
 from ppy_rev.analysis.inputs import InputCandidate, discover_inputs
 from ppy_rev.analysis.program import (
     Initializer,
@@ -64,11 +70,13 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
         main = None
     reachable = reachable_functions(module, main) if main is not None else []
     reachable_entries = {function.entry for function in reachable}
-    ranked = (
-        rank_goals(string_references(module, reachable), printing_functions(module))
-        if reachable
-        else []
-    )
+    references = string_references(module, reachable) if reachable else []
+    ranked = rank_goals(references, printing_functions(module)) if reachable else []
+    if reachable and not any(candidate.outcome is Outcome.SUCCESS for candidate in ranked):
+        ranked = sorted(
+            [*ranked, *sibling_successes(module, reachable, ranked, references)],
+            key=lambda candidate: (-candidate.confidence, candidate.address),
+        )
     successes = tuple(item for item in ranked if item.outcome is Outcome.SUCCESS)
     failures = tuple(item for item in ranked if item.outcome is Outcome.FAILURE)
     goal = successes[0] if successes else None

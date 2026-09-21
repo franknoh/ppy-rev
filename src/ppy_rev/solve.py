@@ -11,7 +11,13 @@ from pathlib import Path
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.analysis.flags import flag_prefixes
-from ppy_rev.analysis.goals import GoalCandidate, Outcome, printing_functions, rank_goals
+from ppy_rev.analysis.goals import (
+    GoalCandidate,
+    Outcome,
+    printing_functions,
+    rank_goals,
+    sibling_successes,
+)
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import (
     executable_address,
@@ -410,7 +416,13 @@ def reach(module: Module, request: SolveRequest, address: int) -> State | None:
 def _select_goals(
     module: Module, reachable: list[Function], request: SolveRequest
 ) -> tuple[GoalCandidate, list[GoalCandidate]]:
-    ranked = rank_goals(string_references(module, reachable), printing_functions(module))
+    references = string_references(module, reachable)
+    ranked = rank_goals(references, printing_functions(module))
+    if not any(candidate.outcome is Outcome.SUCCESS for candidate in ranked):
+        ranked = sorted(
+            [*ranked, *sibling_successes(module, reachable, ranked, references)],
+            key=lambda candidate: (-candidate.confidence, candidate.address),
+        )
     goal: GoalCandidate
     if request.goal_address is not None:
         address = executable_address(module, request.goal_address)

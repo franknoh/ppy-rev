@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ppy_rev.analysis.program import StringReference, calls, external_name
-from ppy_rev.ir.model import DirectTarget, Module
+from ppy_rev.ir.model import Branch, DirectTarget, Function, Module
 
 _SUCCESS = (
     (re.compile(r"\bcorrect\b"), 0.9),
@@ -29,7 +29,10 @@ _SUCCESS = (
     (re.compile(r"\b(unlocked|solved|passed|activated|registered)\b"), 0.75),
     (re.compile(r"\b(matched|how did (you|u))\b"), 0.75),
     (re.compile(r"\byay+\b"), 0.8),
-    (re.compile(r"\b(nice|great|yes|right)\b"), 0.6),
+    (re.compile(r"\b(yippee|bingo|well played|you did it|there it is)\b"), 0.85),
+    (re.compile(r"\b(authenticated|welcome back|you'?re in|that'?s (it|right))\b"), 0.8),
+    (re.compile(r"\bpretty good\b"), 0.75),
+    (re.compile(r"\b(nice|great|yes|right|ok|okay)\b"), 0.6),
 )
 _FAILURE = (
     (re.compile(r"\bwrong\b"), 0.9),
@@ -88,6 +91,10 @@ class GoalCandidate:
     `string_address`, not merely reaching the call."""
     string_address: int | None = None
     call: str | None = None
+
+
+_FLAG_SHAPE = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^{}]{2,}\}")
+"""A flag as challenges write one. A program that prints it has already decided."""
 
 
 def _score(text: str, patterns: tuple[tuple[re.Pattern[str], float], ...]) -> tuple[float, str]:
@@ -150,6 +157,10 @@ def rank_goals(
         lowered = text.lower()
         success, success_word = _score(lowered, _SUCCESS)
         failure, failure_word = _score(lowered, _FAILURE)
+        flag = _FLAG_SHAPE.search(text)
+        if flag is not None and success < 0.95:
+            # Printing the flag itself is the outcome, whatever words surround it.
+            success, success_word = 0.95, flag.group(0)
         negated = _NEGATED.search(lowered)
         if negated is not None and failure < 0.9:
             failure, failure_word = 0.9, negated.group(0)
@@ -182,3 +193,73 @@ def rank_goals(
         )
     candidates.sort(key=lambda candidate: (-candidate.confidence, candidate.address))
     return candidates
+
+
+_SIBLING_CONFIDENCE = 0.6
+"""How much a failure on the other side of a branch is worth without a word of its own."""
+_CONFIDENT_FAILURE = 0.85
+
+
+def sibling_successes(
+    module: Module,
+    reachable: list[Function],
+    ranked: list[GoalCandidate],
+    references: list[StringReference],
+) -> list[GoalCandidate]:
+    """Messages whose branch decides between them and a failure: a verdict with no word.
+
+    `if (ok) print(x) else print("Wrong")` says which of the two is which even when `x`
+    holds nothing this would recognize — plenty of challenges answer in their own words,
+    or in another language. Only the two blocks the branch goes to are read, because that
+    is what makes the pairing evident rather than guessed.
+    """
+    failures = {
+        candidate.address
+        for candidate in ranked
+        if candidate.outcome is Outcome.FAILURE and candidate.confidence >= _CONFIDENT_FAILURE
+    }
+    if not failures:
+        return []
+    already = {candidate.address for candidate in ranked}
+    printed = {
+        reference.instruction: reference
+        for reference in references
+        if reference.call in _OUTPUT_FUNCTIONS and reference.instruction not in already
+    }
+    found: dict[int, GoalCandidate] = {}
+    for function in reachable:
+        blocks = {block.id: block for block in function.blocks}
+        in_block = {
+            start.address: block.id for block in function.blocks for start in block.instructions
+        }
+        for block in function.blocks:
+            if not isinstance(block.terminator, Branch):
+                continue
+            sides = (block.terminator.true_target, block.terminator.false_target)
+            if sides[0] == sides[1] or not all(side in blocks for side in sides):
+                continue
+            fails = [any(in_block.get(address) == side for address in failures) for side in sides]
+            if fails[0] == fails[1]:
+                continue
+            other = sides[1] if fails[0] else sides[0]
+            for address, reference in printed.items():
+                if in_block.get(address) != other or address in found:
+                    continue
+                text = reference.text.decode("latin-1")
+                found[address] = GoalCandidate(
+                    address=address,
+                    outcome=Outcome.SUCCESS,
+                    text=text,
+                    function=reference.function,
+                    confidence=_SIBLING_CONFIDENCE,
+                    evidence=(
+                        f"string {text!r} holds no verdict of its own",
+                        f"the other side of the branch at {block.terminator.origin.address:#x} "
+                        "prints a failure",
+                        f"passed to {reference.call}",
+                    ),
+                    register=reference.register,
+                    string_address=reference.address if reference.register is not None else None,
+                    call=reference.call,
+                )
+    return sorted(found.values(), key=lambda candidate: candidate.address)
