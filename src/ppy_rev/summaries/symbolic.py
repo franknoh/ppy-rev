@@ -30,6 +30,7 @@ from ppy_rev.solver.backend import Status
 from ppy_rev.summaries import ctype, cxx, formatting, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
+from ppy_rev.symbolic.bounds import unsigned_bounds
 from ppy_rev.symbolic.evaluate import evaluate
 from ppy_rev.symbolic.executor import (
     Executor,
@@ -105,6 +106,7 @@ class SymbolicLibc:
             "std::getline": self._getline,
             "std::allocator": lambda call: self._returns(call, call.arguments[0]),
             "std::string::string": self._string_new,
+            "std::string::string()": self._string_empty_new,
             "std::string::_M_local_data": self._string_local_data,
             "std::string::_M_data=": self._string_set_data,
             "std::string::_M_set_length": self._string_set_length,
@@ -361,9 +363,27 @@ class SymbolicLibc:
             self._write(call, destination + index, value)
 
     def _memcpy(self, call: _Call) -> list[ExternalOutcome]:
+        """`memcpy(dst, src, n)`, where `n` may be a length the input decides.
+
+        Optimized C++ copies a string that way. Each byte is then written only where it
+        is really part of the copy, for as far as the size can reach.
+        """
         destination = self._concrete(call, call.arguments[0], "destination")
         source = self._concrete(call, call.arguments[1], "source")
-        size = self._concrete(call, call.arguments[2], "size")
+        size = call.executor.unique_value(call.state, call.arguments[2])
+        if size is None:
+            count = call.arguments[2]
+            for offset in range(self._length_bound(call, count, "size")):
+                copied = sx.unsigned_less(sx.const(offset, 64), count)
+                if copied is sx.FALSE:
+                    continue
+                old_byte = self._byte(call, destination + offset)
+                self._write(
+                    call,
+                    destination + offset,
+                    sx.ite(copied, self._byte(call, source + offset), old_byte),
+                )
+            return self._returns(call, sx.const(destination, 64))
         if size > 1 << 20:
             raise _Unsupported(f"copy of {size} bytes")
         self._copy(call, destination, source, size)
@@ -421,6 +441,12 @@ class SymbolicLibc:
         source = call.executor.unique_value(call.state, call.arguments[1])
         bytes_ = self._string_bytes(call, source) if source else []
         self._store_string(call, call.state, object_at, bytes_)
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_empty_new(self, call: _Call) -> list[ExternalOutcome]:
+        """`std::string s;`: an empty object, whatever the registers happen to hold."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        self._store_string(call, call.state, object_at, [])
         return self._returns(call, sx.const(object_at, 64))
 
     def _store_string(
@@ -482,13 +508,32 @@ class SymbolicLibc:
         return self._returns(call, sx.const(object_at, 64))
 
     def _string_set_length(self, call: _Call) -> list[ExternalOutcome]:
-        """`_M_set_length(n)`: the length, and the terminator the string keeps after it."""
+        """`_M_set_length(n)`: the length, and the terminator the string keeps after it.
+
+        A length the input decides is kept as it is; the terminator then goes wherever it
+        lands, which is one conditional write per position it could take.
+        """
         object_at = self._concrete(call, call.arguments[0], "string")
         length = call.arguments[1]
         self._store(call, call.state, object_at + cxx.SIZE, length)
         data = self._concrete(call, self._string_field(call, cxx.DATA), "string data")
-        self._write(call, data + self._concrete(call, length, "length"), _ZERO_BYTE)
+        for offset in range(self._length_bound(call, length, "length") + 1):
+            here = sx.equal(length, sx.const(offset, length.width))
+            if here is sx.FALSE:
+                continue
+            old_byte = self._byte(call, data + offset)
+            self._write(call, data + offset, sx.ite(here, _ZERO_BYTE, old_byte))
         return self._returns(call, sx.const(object_at, 64))
+
+    def _length_bound(self, call: _Call, length: Expr, what: str) -> int:
+        """How long a string can be, for writing one condition per byte it may hold."""
+        known = call.executor.unique_value(call.state, length)
+        if known is not None:
+            return known
+        highest = unsigned_bounds(length)[1]
+        if highest > self.string_limit:
+            raise _Unsupported(f"{what} is symbolic ({sx.render(length, 80)})")
+        return highest
 
     def _string_set_capacity(self, call: _Call) -> list[ExternalOutcome]:
         object_at = self._concrete(call, call.arguments[0], "string")
@@ -496,19 +541,35 @@ class SymbolicLibc:
         return self._returns(call, sx.const(object_at, 64))
 
     def _string_copy_chars(self, call: _Call) -> list[ExternalOutcome]:
-        """`_S_copy_chars(destination, first, last)`: the copy a construction ends with."""
+        """`_S_copy_chars(destination, first, last)`: the copy a construction ends with.
+
+        How much is copied may be up to the input, in which case each byte is written
+        only where it is really part of the string.
+        """
         destination = self._concrete(call, call.arguments[0], "destination")
         first = self._concrete(call, call.arguments[1], "source")
-        last = self._concrete(call, call.arguments[2], "end of source")
-        for offset in range(max(0, last - first)):
-            self._write(call, destination + offset, self._byte(call, first + offset))
+        count = sx.sub(call.arguments[2], sx.const(first, 64))
+        for offset in range(self._length_bound(call, count, "end of source")):
+            copied = sx.unsigned_less(sx.const(offset, 64), count)
+            if copied is sx.FALSE:
+                continue
+            old_byte = self._byte(call, destination + offset)
+            self._write(
+                call,
+                destination + offset,
+                sx.ite(copied, self._byte(call, first + offset), old_byte),
+            )
         return self._returns(call, sx.const(destination, 64))
 
     def _string_create(self, call: _Call) -> list[ExternalOutcome]:
-        """`_M_create(capacity, old)`: a buffer for a string too long to live in the object."""
+        """`_M_create(capacity, old)`: a buffer for a string too long to live in the object.
+
+        A capacity the input decides gets the largest buffer it could ask for, which is
+        the one the real allocation would have to cover for that input.
+        """
         capacity_at = self._concrete(call, call.arguments[1], "capacity")
-        wanted = self._concrete(call, call.state.memory.load(capacity_at, 64), "capacity")
-        buffer = self._allocate(call, wanted + 1)
+        wanted = call.state.memory.load(capacity_at, 64)
+        buffer = self._allocate(call, self._length_bound(call, wanted, "capacity") + 1)
         if not buffer:
             raise _Unsupported("a std::string longer than the heap can hold")
         return self._returns(call, sx.const(buffer, 64))

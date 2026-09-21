@@ -30,25 +30,23 @@ SUCCESS = {
     "cpp_lambda_check": b"Correct!",
     "cpp_nested_helpers": b"Access granted",
     "cpp_static_constructor": b"Correct!",
+    "cpp_string_compare": b"Correct!",
     "cpp_string_data": b"Correct!",
     "cpp_string_index": b"Correct!",
     "cpp_string_loop": b"Correct!",
     "cpp_string_size": b"Access granted",
     "cpp_vector_check": b"Correct!",
 }
-"""What each fixture prints when the input is right; all of them read stdin."""
+"""What each fixture prints when the input is right."""
+ARGV = frozenset({"cpp_string_compare"})
+"""Fixtures that read `argv[1]`; the rest read stdin."""
 SOLVED = [
     (name, compiler, optimization)
     for compiler in ("g++", "clang++")
     for optimization in ("O0", "O2")
     for name in SUCCESS
 ]
-"""Every fixture, both compilers, with and without optimization.
-
-`cpp_string_compare` is not here: it builds a `std::string` from `argv[1]`, whose length
-the input decides, and the allocation that follows needs a size the analysis does not
-have. See docs/scope.md.
-"""
+"""Every fixture, both compilers, with and without optimization."""
 
 
 def _solve(binary: Path, *options: str, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
@@ -73,10 +71,17 @@ def test_solution_is_accepted_by_the_binary(
     assert code == 0, text
     assert "result: sat" in text
     assert "RevIR execution: passed (reaches the goal)" in text
-    assert "Input:\n  stdin\n" in text
-    completed = subprocess.run(
-        [str(binary)], input=output.read_bytes(), capture_output=True, timeout=30, check=False
-    )
+    answer = output.read_bytes()
+    if name in ARGV:
+        assert "Input:\n  argv[1]\n" in text
+        completed = subprocess.run(
+            [str(binary), answer.decode("latin-1")], capture_output=True, timeout=30, check=False
+        )
+    else:
+        assert "Input:\n  stdin\n" in text
+        completed = subprocess.run(
+            [str(binary)], input=answer, capture_output=True, timeout=30, check=False
+        )
     assert SUCCESS[name] in completed.stdout
 
 
@@ -102,20 +107,17 @@ def test_a_constructor_decides_the_answer(
 
 
 @pytest.mark.parametrize("compiler", ["g++", "clang++"])
-def test_a_string_of_unknown_length_is_refused_not_guessed(
+def test_a_string_built_from_the_argument_is_solved(
     analyzer: Analyzer,
     compile_fixture: type[FixtureCompiler],
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
     compiler: str,
 ) -> None:
-    """`std::string s(argv[1])` allocates for a length the input decides.
-
-    The honest answer is that the analysis stops there. It must not be `unsat`, which
-    would claim every path was explored.
-    """
+    """`std::string s(argv[1])`: the length is the input's, and so is every byte."""
     del analyzer
     binary = compile_fixture.build("cpp_string_compare", compiler, "O0")
-    code, text = _solve(binary, capsys=capsys)
-    assert code == 2, text
-    assert "result: unsupported semantics" in text
-    assert "is symbolic" in text
+    output = tmp_path / "solution"
+    code, text = _solve(binary, "--output", str(output), capsys=capsys)
+    assert code == 0, text
+    assert output.read_bytes() == b"fssbfrpsduh"

@@ -49,7 +49,9 @@ it rather than guessing.
   calls, so they are laid out too: a stream in good state, with the `ctype` facet that
   inlined `getline` widens its delimiter with. The 14 C++ fixtures in `tests/fixtures/src`
   are solved under `g++` and `clang++`, at `-O0` and `-O2`, and every answer is checked
-  against the compiled binary.
+  against the compiled binary. A string whose length the input decides — `std::string
+  s(argv[1])` — is built as such: the copy that follows writes each byte only where it is
+  really part of the string, so nothing has to be assumed about how long the input is.
 - **Code that runs before main**: the constructors in `.init_array` are executed on the
   image before solving starts, so a key table built by a global object, or a global
   `std::string`, is what main really reads. A constructor that would need the input — it
@@ -71,7 +73,6 @@ length, or a goal address).
 
 | Not solved | What you see |
 |---|---|
-| A `std::string` whose length the input decides — `std::string s(argv[1])` | `unsupported semantics`: the allocation that follows needs a size, and guessing one would answer for a different program. A line read with `getline` is fine, since the object it fills is laid out here |
 | Rust | the same: ten in the survey below, none solved |
 | Go | not represented in the survey; its runtime does not reach `main` the way this expects |
 | Input from a socket | `unsupported semantics` at the first call — there is no model |
@@ -180,10 +181,10 @@ the function as unliftable if it ever runs out anyway. Re-running the whole samp
 afterwards changed nothing else: seven of the eight now report `main` not found and one
 reports unsupported semantics, and every other binary landed where it had before.
 
-The other side of the same coin: the 14 C++ fixtures in `tests/fixtures/src` — `getline`,
+The other side of the same coin: the 15 C++ fixtures in `tests/fixtures/src` — `getline`,
 `cin >>`, indexing, sizing, comparison, `std::vector`, `std::array`, `std::transform`,
-lambdas, global constructors — are all solved under `g++` and `clang++`, at `-O0` and
-`-O2`, with every answer accepted by the compiled binary.
+lambdas, global constructors, a string built from `argv[1]` — are all solved under `g++`
+and `clang++`, at `-O0` and `-O2`, with every answer accepted by the compiled binary.
 
 ## What a failure is worth
 

@@ -92,6 +92,7 @@ class ConcreteLibc:
             "std::getline": self._getline,
             "std::allocator": lambda arguments, memory: arguments[0],
             "std::string::string": self._string_new,
+            "std::string::string()": self._string_empty_new,
             "std::string::_M_local_data": lambda arguments, memory: arguments[0] + cxx.BUFFER,
             "std::string::_M_data=": self._string_set_data,
             "std::string::_M_set_length": self._string_set_length,
@@ -450,6 +451,11 @@ class ConcreteLibc:
         data = self._string_field(memory, other, cxx.DATA)
         length = self._string_field(memory, other, cxx.SIZE)
         self._store_string(memory, arguments[0], memory.read(data, length))
+        return arguments[0]
+
+    def _string_empty_new(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`std::string s;`: an empty object, whatever the registers happen to hold."""
+        self._store_string(memory, arguments[0], b"")
         return arguments[0]
 
     def _string_new(self, arguments: list[int], memory: ConcreteMemory) -> int:

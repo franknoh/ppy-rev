@@ -17,6 +17,7 @@ from ppy_rev.summaries.symbolic import SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.evaluate import evaluate
 from ppy_rev.symbolic.executor import Executor, Goal, Returned
+from ppy_rev.symbolic.expr import Expr
 from ppy_rev.symbolic.memory import SymbolicMemory
 from ppy_rev.symbolic.state import State, SymbolicIO
 from support.revir import module_for
@@ -346,3 +347,45 @@ def test_assigning_a_string_keeps_both_engines_in_step() -> None:
     assert call_symbolic("std::string::size", other) == 8
     data = call_symbolic("std::string::data", other)
     assert bytes(evaluate(state.memory.read_byte(data + i), {}) for i in range(8)) == b"assigned"
+
+
+@settings(max_examples=40, deadline=None)
+@given(st.binary(min_size=0, max_size=5).map(lambda data: data.replace(b"\0", b"?")))
+def test_a_string_whose_length_the_input_decides(value: bytes) -> None:
+    """`std::string s(argv[1])`: strlen gives a length no number is known for.
+
+    The copy that follows then writes each byte only where it is really part of the
+    string, which has to leave memory exactly as a concrete run would.
+    """
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _memory()
+    image.write(OBJECT, b"\xff" * 16)
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO())
+    libc = SymbolicLibc(SYSV_X86_64)
+    symbols = [sx.symbol(f"in_{index}", 8) for index in range(6)]
+    for offset, symbol in enumerate(symbols):
+        state.memory.write_byte(TEXT + offset, symbol)
+    assignment = {
+        symbol.name: byte for symbol, byte in zip(symbols, (value + b"\0" * 6)[:6], strict=True)
+    }
+
+    def call(name: str, *arguments: Expr) -> Returned:
+        outcomes = libc.call(
+            executor,
+            state,
+            name,
+            dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False)),
+            Origin(0, 0),
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned), outcome
+        return outcome
+
+    length = call("strlen", sx.const(TEXT, 64)).outputs["RAX"]
+    assert evaluate(length, assignment) == len(value)
+    call("memcpy", sx.const(OBJECT, 64), sx.const(TEXT, 64), length)
+    copied = bytes(
+        evaluate(state.memory.read_byte(OBJECT + offset), assignment) for offset in range(6)
+    )
+    assert copied == value + b"\xff" * (6 - len(value))

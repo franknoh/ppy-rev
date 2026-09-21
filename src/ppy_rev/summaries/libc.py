@@ -94,6 +94,7 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("std::ostream::operator<<", 2),
         LibraryFunction("std::allocator", 1),
         LibraryFunction("std::string::string", 2),
+        LibraryFunction("std::string::string()", 1),
         LibraryFunction("std::string::_M_local_data", 1),
         LibraryFunction("std::string::_M_data=", 2),
         LibraryFunction("std::string::_M_set_length", 2),
