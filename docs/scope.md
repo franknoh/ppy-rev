@@ -128,17 +128,20 @@ options, and nothing executed.
 
 | share | outcome |
 |---|---|
-| 62.2% (281) | no success string could be ranked |
-| 12.2% (55) | unsupported semantics |
+| 62.4% (282) | no success string could be ranked |
+| 12.4% (56) | unsupported semantics |
 | 7.7% (35) | an answer |
-| 4.6% (21) | `main` not found |
-| 4.4% (20) | ran out of time |
+| 6.2% (28) | `main` not found |
+| 4.0% (18) | ran out of time |
 | 3.8% (17) | no input source found |
-| 1.8% (8) | a crash in `ppy-rev` itself |
 | 1.3% (6) | `unsat` |
-| 0.9% (4) | ran out of budget |
+| 1.1% (5) | ran out of budget |
 | 0.9% (4) | analysis incomplete |
 | 0.2% (1) | `unknown` |
+
+Nothing crashed. The first run of this sample did crash on 8 binaries, and those are what
+the paragraph below is about; the table is from the re-run afterwards, where each of them
+reports why it stopped instead.
 
 Of the 35 answers, 32 pass `ppy-rev`'s own re-execution check and 6 of those recovered
 nothing, because the goal turned out to be reachable with no input at all. The remaining
@@ -156,17 +159,20 @@ message. That is the same wall the whole sample hits, and it is now the first th
 working on. Behind it, the models still missing most often are `std::ifstream` (5 of the
 12 unsupported C++ runs), `std::string::erase`, `atof`, and C++ exceptions.
 
-The 8 crashes were the other actionable result, and every cause is fixed, so that row is
-history rather than current behaviour. The image setup wrote a stream pointer into
-read-only data, which is a relocation and so does not need the program's permission. Six
-were a function *entered inside its own loop*: the code before the entry falls into it, so
-the entry block had a predecessor and a value carried around that loop had nowhere to come
-from on the way in. The entry now gets an empty block of its own, as it already did when a
-branch targeted it — without one, the phi for such a value is replaced by a definition that
-reads it, which is both wrong and unbounded work for the simplifier. Should one still turn
-up with no incoming value at all, it is the value the caller left rather than an assertion.
-The last was a function whose branches nested deeper than Python's recursion limit, which
-lifting now raises, reporting the function as unliftable if it ever runs out anyway.
+The 8 crashes were the other actionable result, and every cause is fixed. The image setup
+wrote a stream pointer into read-only data, which is a relocation and so does not need the
+program's permission. Six were a function *entered inside its own loop*: the code before
+the entry falls into it, so the entry block had a predecessor, and a value carried around
+that loop had nowhere to come from on the way in. The entry now gets an empty block of its
+own, as it already did when a branch targeted it — without one, the phi for such a value is
+replaced by a definition that reads it, which is both wrong and unbounded work for the
+simplifier, so a 15 KB binary took minutes. Should a phi still turn up with no incoming
+value at all, it is the value the caller left rather than an assertion, and following an
+address through a value defined from itself now stops. The last crash was a function whose
+branches nested deeper than Python's recursion limit, which lifting now raises, reporting
+the function as unliftable if it ever runs out anyway. Re-running the whole sample
+afterwards changed nothing else: seven of the eight now report `main` not found and one
+reports unsupported semantics, and every other binary landed where it had before.
 
 The other side of the same coin: the 14 C++ fixtures in `tests/fixtures/src` — `getline`,
 `cin >>`, indexing, sizing, comparison, `std::vector`, `std::array`, `std::transform`,
