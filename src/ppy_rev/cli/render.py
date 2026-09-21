@@ -117,7 +117,8 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
             f"  states: {statistics.states}\n"
             f"  solver calls: {statistics.solver_calls}\n"
             f"  sliced operations: {statistics.sliced_operations}\n"
-            f"  seconds: {statistics.seconds:.2f}\n"
+            f"  seconds: {statistics.seconds:.2f}"
+            f" ({statistics.solver_seconds:.2f} in the solver)\n"
         )
     out.write(f"\nSolver:\n  backend: {result.backend}\n  result: {result.status}\n")
     hints = [note for note in result.notes if note.startswith(_ALWAYS_SHOWN)]
