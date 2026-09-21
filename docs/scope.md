@@ -65,6 +65,16 @@ it rather than guessing.
   on one value it could take, which is said in a note and turns a fruitless search into
   `analysis incomplete` rather than `unsat`. `signal` installs a handler that is never
   called, since nothing here raises one.
+- **An outcome with nothing to read in it**: when no message ranks as success, the goal
+  is looked for by shape instead — a call that prints, that the input decides the program
+  reaches, and that the program leaves well from. That is language-independent, so it
+  covers a flag spelled out with `putc`, a message built while running, and the runtimes
+  of Rust, Go and Nim, whose strings a C-string reader cannot see. The evidence is
+  printed with the candidate, and an answer that turns out to reach the goal without
+  reading the input at all says so.
+- **Messages given as a pointer and a length**, as Rust and Go give them: read to that
+  length rather than to the next zero byte, which in those binaries runs through several
+  messages at once.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 
@@ -76,8 +86,8 @@ length, or a goal address).
 
 | Not solved | What you see |
 |---|---|
-| Rust | the same: ten in the survey below, none solved |
-| Go | not represented in the survey; its runtime does not reach `main` the way this expects |
+| Rust | its `fmt::Arguments` machinery is not modeled, so a message assembled from pieces is not read; the outcome can still be found by its shape (see above) |
+| Go | its runtime does not reach `main` the way this expects |
 | Input from a socket | `unsupported semantics` at the first call — there is no model |
 | `setjmp`, and a signal actually being delivered | `unsupported semantics`; a handler that is installed but never runs is fine (see above), one the program raises is not |
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |

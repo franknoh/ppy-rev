@@ -267,6 +267,30 @@ def read_c_string(module: Module, address: int, limit: int = 512) -> bytes | Non
     return None
 
 
+def read_slice(module: Module, address: int, length: int) -> bytes | None:
+    """A string of exactly `length` printable bytes, with no terminator after it.
+
+    Rust and Go hand a pointer and a length together, and pack their messages one after
+    another with nothing between: reading to the next zero byte there gives a run of
+    several messages, or nothing at all.
+    """
+    if not 1 <= length <= _SLICE_LIMIT:
+        return None
+    for region in module.memory:
+        if region.data is None or region.executable or not region.start <= address < region.end:
+            continue
+        offset = address - region.start
+        text = region.data[offset : offset + length]
+        if len(text) != length or any(byte not in _PRINTABLE for byte in text):
+            return None
+        return text
+    return None
+
+
+_SLICE_LIMIT = 256
+"""Longest message read from a pointer and a length; beyond this it is data, not a word."""
+
+
 def string_references(
     module: Module, functions: list[Function] | None = None
 ) -> list[StringReference]:
@@ -321,13 +345,51 @@ class _FunctionStrings:
                 text, value, self.function.name, instruction, call, register, external
             )
 
+    def add_slice(
+        self,
+        call: Call,
+        register: str,
+        argument: Operand,
+        passed: dict[str, Operand],
+        parameters: tuple[str, ...],
+        receiver: str | None,
+        library: str | None,
+    ) -> None:
+        """A message given as a pointer and the length beside it, as Rust and Go give one."""
+        if register not in parameters:
+            return
+        index = parameters.index(register)
+        if index + 1 >= len(parameters):
+            return
+        beside = passed.get(parameters[index + 1])
+        if not isinstance(beside, Const):
+            return
+        for value in self.constants(argument):
+            if read_c_string(self.module, value) is not None:
+                continue  # an ordinary C string; the length beside it decides nothing
+            text = read_slice(self.module, value, beside.value)
+            key = (call.origin.address, value, register)
+            if text is not None and key not in self.found:
+                self.found[key] = StringReference(
+                    text,
+                    value,
+                    self.function.name,
+                    call.origin.address,
+                    receiver,
+                    register,
+                    library is not None,
+                )
+
     def collect(self) -> None:
+        parameters = calling_convention(self.module.target).integer_parameters
         for call, _ in calls(self.function):
             library = external_name(self.module, call)
             receiver = library or _callee_name(self.module, call)
+            passed = dict(zip(call.argument_registers, call.arguments, strict=True))
             for register, argument in zip(call.argument_registers, call.arguments, strict=True):
                 for value in self.constants(argument):
                     self.add(value, call.origin.address, receiver, register, library is not None)
+                self.add_slice(call, register, argument, passed, parameters, receiver, library)
         for block in self.function.blocks:
             for operation in block.operations:
                 if isinstance(operation, Call):
