@@ -20,6 +20,7 @@ from ppy_rev.ir.model import (
     DirectTarget,
     ExternalTarget,
     Function,
+    Halt,
     IndirectJump,
     IndirectTarget,
     Jump,
@@ -33,6 +34,7 @@ from ppy_rev.ir.model import (
     operation_inputs,
     operation_output,
     successors,
+    terminator_inputs,
 )
 
 MAX_REGION_BLOCKS = 32
@@ -59,7 +61,7 @@ class RegionFinder:
         self._flows: dict[int, ControlFlow] = {}
         self._regions: dict[tuple[int, int], MergeRegion | None] = {}
         self._addressing: dict[int, tuple[frozenset[int], frozenset[Location]]] = {}
-        self._definitions: dict[int, dict[int, int]] = {}
+        self._live: dict[int, tuple[frozenset[int], list[frozenset[int]]]] = {}
 
     def addressing(self, function: Function) -> frozenset[int]:
         """Values that flow into a memory address or a jump or call target.
@@ -80,31 +82,22 @@ class RegionFinder:
         return known
 
     def usable_after(self, function: Function, join: int) -> Callable[[int], bool]:
-        """Whether a value may be used at `join`: its definition dominates the join.
+        """Whether a value may still be used from `join` on: whether it is live there.
 
-        A frame also holds values from earlier trips round a loop; those are dead there.
+        A frame also holds values from earlier trips round a loop. Those are dead at the
+        join even when their block dominates it, as the block that makes a loop's counter
+        can: any later use goes back through that block, which makes the value anew, and
+        paths that disagree about the old one would otherwise never merge.
         """
-        flow = self._flow(function)
-        defined = self._definitions.get(function.entry)
-        if defined is None:
-            defined = {
-                output.id: block.id
-                for block in function.blocks
-                for output in (
-                    *(phi.output for phi in block.phis),
-                    *(
-                        item
-                        for operation in block.operations
-                        for item in operation_output(operation)
-                    ),
-                )
-            }
-            self._definitions[function.entry] = defined
-        known = defined
+        live = self._live.get(function.entry)
+        if live is None:
+            live = _live_at_entry(function)
+            self._live[function.entry] = live
+        defined, needed = live
+        wanted = needed[join]
 
         def usable(identifier: int) -> bool:
-            block = known.get(identifier)
-            return block is None or flow.dominates(block, join)
+            return identifier not in defined or identifier in wanted
 
         return usable
 
@@ -142,13 +135,22 @@ class RegionFinder:
         if loop is None:
             post_dominators = self._post_dominators.get(function.entry)
             if post_dominators is None:
-                post_dominators = immediate_post_dominators(function)
+                post_dominators = immediate_post_dominators(function, _never_returns(function))
                 self._post_dominators[function.entry] = post_dominators
             join = post_dominators[branch]
         else:
             header, body = loop
             live = _continuing(flow, header, body)
             join = _loop_join(flow, header, live, branch)
+            returning = _returning(flow, branch)
+            if any(
+                target in returning and target not in live for target in flow.successors[branch]
+            ):
+                # A side leaves this loop and comes back round an enclosing one. clang -O2
+                # splits a loop so, when a failed test must still call a helper that may
+                # exit: meet where every way back meets, or each failure is a path of its own.
+                live = returning
+                join = _loop_join(flow, branch, returning, branch)
         if join is None:
             return None
         blocks: set[int] = set()
@@ -162,7 +164,9 @@ class RegionFinder:
             if block_id == branch or len(blocks) >= self.max_blocks:
                 return None
             block = function.blocks[block_id]
-            if not isinstance(block.terminator, Jump | Branch | IndirectJump) or not all(
+            # A `Halt` ends a path inside the region - a guard that calls `exit`. It never
+            # arrives at the join, and the merge keeps only what arrives.
+            if not isinstance(block.terminator, Jump | Branch | IndirectJump | Halt) or not all(
                 self._callable(operation)
                 for operation in block.operations
                 if isinstance(operation, Call)
@@ -173,6 +177,21 @@ class RegionFinder:
         if not _acyclic(function, blocks):
             return None
         return MergeRegion(branch, join, frozenset(blocks))
+
+
+def _never_returns(function: Function) -> frozenset[int]:
+    """Blocks from which the function cannot come back: they end the path, or loop forever."""
+    returning = {
+        block.id for block in function.blocks if isinstance(block.terminator, Return | TailCall)
+    }
+    work = list(returning)
+    while work:
+        block_id = work.pop()
+        for predecessor in function.blocks:
+            if block_id in successors(predecessor.terminator) and predecessor.id not in returning:
+                returning.add(predecessor.id)
+                work.append(predecessor.id)
+    return frozenset(block.id for block in function.blocks if block.id not in returning)
 
 
 def _innermost_loop(flow: ControlFlow, block: int) -> tuple[int, set[int]] | None:
@@ -194,6 +213,73 @@ def _innermost_loop(flow: ControlFlow, block: int) -> tuple[int, set[int]] | Non
         if block in body and (best is None or len(body) < len(best[1])):
             best = (header, body)
     return best
+
+
+def _live_at_entry(function: Function) -> tuple[frozenset[int], list[frozenset[int]]]:
+    """The values the function defines, and for each block those still used from its entry.
+
+    A block's own phis count as live at its entry: they are assigned on the way in.
+    """
+    exposed: list[set[int]] = []
+    made_in: list[set[int]] = []
+    phi_uses: dict[tuple[int, int], set[int]] = {}
+    for block in function.blocks:
+        made = {phi.output.id for phi in block.phis}
+        used: set[int] = set()
+        for operation in block.operations:
+            used.update(
+                item.id
+                for item in operation_inputs(operation)
+                if isinstance(item, Var) and item.id not in made
+            )
+            made.update(item.id for item in operation_output(operation))
+        used.update(
+            item.id
+            for item in terminator_inputs(block.terminator)
+            if isinstance(item, Var) and item.id not in made
+        )
+        exposed.append(used)
+        made_in.append(made)
+        for phi in block.phis:
+            for predecessor, operand in phi.incoming:
+                if isinstance(operand, Var):
+                    phi_uses.setdefault((predecessor, block.id), set()).add(operand.id)
+    live = [set(item) for item in exposed]
+    changed = True
+    while changed:
+        changed = False
+        for block in reversed(function.blocks):
+            leaving: set[int] = set()
+            for target in successors(block.terminator):
+                leaving |= live[target] | phi_uses.get((block.id, target), set())
+            updated = exposed[block.id] | (leaving - made_in[block.id])
+            if updated != live[block.id]:
+                live[block.id] = updated
+                changed = True
+    defined = frozenset(identifier for made in made_in for identifier in made)
+    return defined, [
+        frozenset(live[block.id] | {phi.output.id for phi in block.phis})
+        for block in function.blocks
+    ]
+
+
+def _returning(flow: ControlFlow, branch: int) -> set[int]:
+    """Blocks on some way from `branch` round to `branch` again, and `branch` itself."""
+    reaches: set[int] = set()
+    work = list(flow.predecessors[branch])
+    while work:
+        current = work.pop()
+        if current not in reaches:
+            reaches.add(current)
+            work.extend(flow.predecessors[current])
+    reached = {branch}
+    work = list(flow.successors[branch])
+    while work:
+        current = work.pop()
+        if current not in reached:
+            reached.add(current)
+            work.extend(flow.successors[current])
+    return (reaches & reached) | {branch}
 
 
 def _continuing(flow: ControlFlow, header: int, body: set[int]) -> set[int]:
@@ -345,8 +431,19 @@ def _no_helpers(address: int) -> bool:
     return False
 
 
-def mergeable_helper(function: Function, max_blocks: int = 24) -> bool:
-    """A small function that cannot loop and calls nothing itself: it always returns."""
+def mergeable_helper(
+    function: Function,
+    max_blocks: int = 24,
+    lookup: Callable[[int], Function | None] | None = None,
+    depth: int = 2,
+) -> bool:
+    """A small function that cannot loop: every path through it returns or stops.
+
+    A path that stops - the range check that calls `exit` on a byte outside the printable
+    range, a failed stack guard - never arrives at the join, and the merge keeps only the
+    paths that did, so such a path costs the region nothing. What a helper may not do is
+    run forever, which is why it may not loop and may only call helpers of its own.
+    """
     if len(function.blocks) > max_blocks:
         return False
     flow = control_flow(function)
@@ -356,6 +453,27 @@ def mergeable_helper(function: Function, max_blocks: int = 24) -> bool:
         for target in targets
     ):
         return False
-    return not any(
-        isinstance(operation, Call) for block in function.blocks for operation in block.operations
-    ) and all(isinstance(block.terminator, Jump | Branch | Return) for block in function.blocks)
+    if not all(
+        isinstance(block.terminator, Jump | Branch | Return | Halt) for block in function.blocks
+    ):
+        return False
+    return all(
+        _helper_callable(operation, lookup, depth)
+        for block in function.blocks
+        for operation in block.operations
+        if isinstance(operation, Call)
+    )
+
+
+def _helper_callable(
+    call: Call, lookup: Callable[[int], Function | None] | None, depth: int
+) -> bool:
+    """Calls a helper may make: modelled externals, and smaller helpers of its own."""
+    match call.target:
+        case ExternalTarget():
+            return True
+        case DirectTarget(address=address):
+            callee = None if lookup is None or depth <= 0 else lookup(address)
+            return callee is not None and mergeable_helper(callee, lookup=lookup, depth=depth - 1)
+        case _:
+            return False

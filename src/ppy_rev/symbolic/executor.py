@@ -393,7 +393,9 @@ class Executor:
         known = self._helpers.get(address)
         if known is None:
             function = self._functions.get(address)
-            known = function is not None and mergeable_helper(function)
+            known = function is not None and mergeable_helper(
+                function, lookup=self._functions.get
+            )
             self._helpers[address] = known
         return known
 

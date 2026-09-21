@@ -39,8 +39,9 @@ SUCCESS = {
     "simple_vm": b"Accepted",
     "format_goal": b"Welcome back, 0pen!",
     "float_check": b"Correct!",
+    "guarded_bytes": b"Correct!",
 }
-STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
+STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check", "guarded_bytes"})
 SHORTEST = {
     "format_goal": b"0pen",
     "xor_check": b"rev_is_easy",
@@ -49,6 +50,7 @@ SHORTEST = {
     "recursive_check": b"recursive",
     "vm_check": b"Vm_0k!",
     "simple_vm": b"vM_l1ft!",
+    "guarded_bytes": b"m3rg3_th3_gu4rd!\n",  # stdin: the answer is a line
 }
 """Solutions that are unique once the shortest input is preferred."""
 VARIANTS = [(compiler, level) for compiler in ("gcc", "clang") for level in ("O0", "O2")]

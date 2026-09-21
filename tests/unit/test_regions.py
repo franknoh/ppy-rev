@@ -2,22 +2,36 @@ from __future__ import annotations
 
 from ppy_rev.ir.cfg import immediate_post_dominators
 from ppy_rev.ir.model import (
+    BinaryOp,
     BinaryOpcode,
+    Block,
     Branch,
     Call,
     Const,
     DirectTarget,
+    ExternalTarget,
     Function,
+    FunctionInput,
+    Halt,
     Jump,
+    Phi,
     Return,
     Terminator,
+    Var,
 )
 from ppy_rev.symbolic.regions import MergeRegion, RegionFinder, mergeable_helper
 from support.revir import ORIGIN, FunctionBuilder
 
 
-def _function(edges: dict[int, tuple[int, ...]], calls: frozenset[int] = frozenset()) -> Function:
-    """Blocks 0..n-1 with the given successors: two targets branch, one jumps, none return."""
+def _function(
+    edges: dict[int, tuple[int, ...]],
+    calls: frozenset[int] = frozenset(),
+    halts: frozenset[int] = frozenset(),
+) -> Function:
+    """Blocks 0..n-1 with the given successors: two targets branch, one jumps, none return.
+
+    A block in `halts` ends the path instead, the way a call to `exit` does.
+    """
     builder = FunctionBuilder([("RDI", 64)])
     condition = builder.input("RDI")
     for block_id in range(len(edges)):
@@ -25,6 +39,10 @@ def _function(edges: dict[int, tuple[int, ...]], calls: frozenset[int] = frozens
         if block_id in calls:
             block.operations.append(Call(DirectTarget(0x2000), (), (), (), (), ORIGIN))
         terminator: Terminator
+        if block_id in halts:
+            block.operations.append(Call(ExternalTarget("exit", 0x3000), (), (), (), (), ORIGIN))
+            builder.terminators[block_id] = Halt(ORIGIN)
+            continue
         match edges[block_id]:
             case (true_target, false_target):
                 terminator = Branch(condition, true_target, false_target, ORIGIN)
@@ -99,3 +117,77 @@ def test_a_small_leaf_helper_may_sit_inside_a_region() -> None:
     assert RegionFinder().region(calling, 0) is None
     allowed = RegionFinder(helpers=lambda address: True)
     assert allowed.region(calling, 0) == MergeRegion(0, 3, frozenset({1, 2}))
+
+
+GUARDED = {0: (1, 2), 1: (3, 2), 2: (), 3: ()}
+"""`if (c < 0x20 || c == 0x7f) exit(1);` before the work: block 2 never comes back."""
+
+
+def test_a_side_that_never_comes_back_does_not_hide_the_join() -> None:
+    """Every path that carries on goes through block 1, whatever the guard does."""
+    function = _function(GUARDED, halts=frozenset({2}))
+    assert immediate_post_dominators(function) == (None, None, None, None)
+    assert immediate_post_dominators(function, ignore=frozenset({2})) == (1, 3, None, None)
+
+
+def test_a_guard_that_exits_sits_inside_a_region() -> None:
+    finder = RegionFinder()
+    function = _function(GUARDED, halts=frozenset({2}))
+    assert finder.region(function, 0) == MergeRegion(0, 1, frozenset({2}))
+    assert finder.region(function, 1) == MergeRegion(1, 3, frozenset({2}))
+
+
+def test_a_helper_may_give_up_on_input_it_refuses() -> None:
+    """A per-character helper that rejects bytes out of range still merges around it."""
+    function = _function(GUARDED, halts=frozenset({2}))
+    assert mergeable_helper(function)
+    assert not mergeable_helper(_function(LOOP))  # might never come back at all
+
+
+def test_a_helper_may_call_another_helper_but_not_far() -> None:
+    leaf = _function(DIAMOND)
+    caller = _function(DIAMOND, calls=frozenset({2}))
+    assert not mergeable_helper(caller)  # nothing says what it calls
+    assert mergeable_helper(caller, lookup={0x2000: leaf}.get)
+    assert not mergeable_helper(caller, lookup={0x2000: caller}.get, depth=0)
+
+
+SPLIT_LOOP = {0: (2,), 1: (5, 2), 2: (3,), 3: (1, 4), 4: (1, 6), 5: (), 6: (3, 7), 7: ()}
+"""clang -O2's loop of two tests that must keep calling a helper after one fails.
+
+Block 3 is the first test, 4 the second, 6 the latch of the loop that runs while every
+test passed; a failure goes through 1, which may leave (5), and 2 back into that loop.
+"""
+
+
+def test_a_failure_that_comes_back_round_an_enclosing_loop_is_merged() -> None:
+    """Both ways from the first test come back to it, so that is where they meet."""
+    region = RegionFinder().region(_function(SPLIT_LOOP), 3)
+    assert region == MergeRegion(3, 3, frozenset({1, 2, 4, 6}))
+
+
+def test_values_from_an_earlier_trip_round_a_loop_do_not_stop_a_merge() -> None:
+    """Only what is live at the join has to agree, not all that the join's dominators made.
+
+    Block 1 makes the loop's counter from `old`, which nothing past block 1 reads. Two paths
+    arriving at block 2, one having come through block 1 more recently, disagree about
+    `old`; had that counted, clang's split loop would never merge at all.
+    """
+    condition, old, counter = Var(1, 64), Var(2, 64), Var(3, 64)
+    blocks = (
+        Block(0, 0x1000, (), (), Jump(1, ORIGIN)),
+        Block(
+            1,
+            0x1000,
+            (Phi(old, ((0, Const(0, 64)), (2, counter))),),
+            (BinaryOp(BinaryOpcode.ADD, counter, old, Const(1, 64), ORIGIN),),
+            Jump(2, ORIGIN),
+        ),
+        Block(2, 0x1000, (), (), Branch(condition, 1, 3, ORIGIN)),
+        Block(3, 0x1000, (), (), Return((counter,), None, ORIGIN)),
+    )
+    function = Function("f", 0x1000, (FunctionInput("RDI", condition),), ("RAX",), blocks)
+    usable = RegionFinder().usable_after(function, 2)
+    assert usable(counter.id)  # read again on the way round and on the way out
+    assert not usable(old.id)  # block 1 dominates the join, but `old` is dead there
+    assert usable(condition.id)  # not defined here at all: kept, whatever it is
