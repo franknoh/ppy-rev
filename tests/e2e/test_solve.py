@@ -41,7 +41,9 @@ SUCCESS = {
     "float_check": b"Correct!",
     "guarded_bytes": b"Correct!",
 }
-STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check", "guarded_bytes"})
+STDIN_FIXTURES = frozenset(
+    {"fgets_check", "stdin_read", "scanf_check", "guarded_bytes", "brute_pin"}
+)
 SHORTEST = {
     "format_goal": b"0pen",
     "xor_check": b"rev_is_easy",
@@ -259,6 +261,37 @@ def test_concolic_strategy(
     assert code == 0, text
     assert "note: concolic search:" in text
     assert SUCCESS["nested_branch"] in _native_output(binary, "nested_branch", output.read_bytes())
+
+
+def test_brute_force_solves_a_small_input_check(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A rolling-hash check over a tiny input: brute force runs every value and verifies."""
+    del analyzer
+    binary = compile_fixture.build("brute_pin", "gcc", "O0")
+    output = tmp_path / "solution"
+    code, text = _solve(
+        binary,
+        "--strategy",
+        "brute",
+        "--charset",
+        "digits",
+        "--length",
+        "4",
+        "-v",
+        "--output",
+        str(output),
+        capsys=capsys,
+    )
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "note: brute force:" in text
+    assert "RevIR execution: passed (reaches the goal)" in text
+    assert output.read_bytes() == b"4271"
+    assert b"Correct!" in _native_output(binary, "brute_pin", output.read_bytes())
 
 
 def test_analyze_reports_what_solving_uses(

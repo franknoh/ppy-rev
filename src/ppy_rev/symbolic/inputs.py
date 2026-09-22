@@ -36,6 +36,12 @@ _RANGES: dict[Charset, tuple[tuple[int, int], ...]] = {
 }
 
 
+def charset_values(charset: Charset | None) -> tuple[int, ...]:
+    """Every byte value the charset admits; printable ASCII when none is given."""
+    ranges = _RANGES[charset] if charset is not None else _RANGES[Charset.PRINTABLE]
+    return tuple(value for low, high in ranges for value in range(low, high + 1))
+
+
 def in_charset(byte: Expr, charset: Charset) -> Expr:
     return sx.bool_or(
         *(

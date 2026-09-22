@@ -256,5 +256,9 @@ and `clang++`, at `-O0` and `-O2`, with every answer accepted by the compiled bi
 3. No input found? `--stdin LENGTH` or `--argv 1`.
 4. Know the flag shape? `--flag-format 'ctf{*}'`, or `--prefix`/`--suffix`/`--length`.
 5. Slow? Watch it work with `--progress`, raise `--timeout`, or try `--strategy concolic`.
+   For a small input a check keeps opaque to the solver — a hash against a constant, a
+   table it cannot invert — `--strategy brute` runs every value concretely instead;
+   bound it with `--charset` and `--length` (four hex digits is 65k tries, a second or
+   two), since blind printable brute force only reaches two or three bytes in the budget.
 6. Unsupported semantics on a path that matters is a missing model, not a wall: the name of
    the function is in the message.

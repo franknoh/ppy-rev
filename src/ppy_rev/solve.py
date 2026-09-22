@@ -30,6 +30,7 @@ from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.analysis.strings import describe_messages, printed_messages
 from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.execution.brute import brute_force, feasible_space
 from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
@@ -111,6 +112,7 @@ class Strategy(StrEnum):
     """Symbolic search, then concolic search if that ends without an answer."""
     SYMBOLIC = "symbolic"
     CONCOLIC = "concolic"
+    BRUTE = "brute"
 
 
 class SolveStatus(StrEnum):
@@ -249,7 +251,7 @@ def solve_module(
     solutions: list[Solution] = []
     exploration: Exploration | None = None
     status = SolveStatus.INCOMPLETE
-    if request.strategy is not Strategy.CONCOLIC:
+    if request.strategy not in (Strategy.CONCOLIC, Strategy.BRUTE):
         exploration = search.explore(state, max_reached=max(1, request.solutions))
         solutions, notes = _solutions(
             search, module, main, request, inputs, symbols, exploration, goal, avoid
@@ -281,6 +283,21 @@ def solve_module(
             )
             notes += concolic_notes
             status = _concolic_status(result, solutions, initialization)
+    if request.strategy is Strategy.BRUTE:
+        # Brute force is offered only when asked for by name: without a charset and a length
+        # to bound it, blindly trying inputs pays for itself on almost nothing (measured),
+        # so it is a tool the user reaches for on a small, symex-hard input, not a default.
+        brute = _brute_force(
+            module, main, request, goal, avoid, inputs, symbols, _BRUTE_CANDIDATE_CAP
+        )
+        if brute is not None:
+            solution, tried = brute
+            solutions = [solution]
+            status = SolveStatus.SAT
+            notes.append(f"brute force: reached the goal after trying {tried} inputs")
+            exploration = None
+        elif not solutions:
+            notes.append("brute force: no input in the searched space reached the goal")
     reached = exploration.reached[0].state if exploration and exploration.reached else None
     smt2 = (
         search.session.smt2(reached.conditions())
@@ -809,6 +826,61 @@ def _file_content(
     if name in io.line_read and 0 <= newline < end:
         return raw[: newline + 1]
     return raw[:end]
+
+
+_BRUTE_MAX_LENGTH = 8
+"""Longest input brute force will try when the length is not pinned down."""
+_BRUTE_CANDIDATE_CAP = 8_000_000
+"""A ceiling on inputs tried, so a space too large is skipped rather than crawled."""
+
+
+def _brute_force(
+    module: Module,
+    main: Function,
+    request: SolveRequest,
+    goal: GoalCandidate,
+    avoid: list[GoalCandidate],
+    inputs: list[InputDescription],
+    symbols: _Symbols,
+    cap: int,
+) -> tuple[Solution, int] | None:
+    """Try every small input concretely; a Solution and the count tried, or None.
+
+    Only a single argv argument or stdin is handled - the whole-input check that a small
+    crackme makes and symbolic execution cannot invert. Nothing runs when the space is too
+    large for the candidate ceiling.
+    """
+    if len(inputs) != 1:
+        return None
+    only = inputs[0]
+    if only.kind not in (InputKind.ARGV, InputKind.STDIN):
+        return None
+    if request.length:
+        lengths: tuple[int, ...] = (request.length,)
+    else:
+        lengths = tuple(range(1, min(only.max_bytes, _BRUTE_MAX_LENGTH) + 1))
+    fitting: list[int] = []
+    for length in lengths:
+        if feasible_space(request.charset, (*fitting, length), cap):
+            fitting.append(length)
+    if not fitting:
+        return None
+    watches = (_watch("goal", goal), *(_watch("avoid", candidate) for candidate in avoid))
+    result = brute_force(
+        module,
+        main,
+        watches,
+        only.kind,
+        only.index,
+        tuple(fitting),
+        request.charset,
+        time.monotonic() + request.budget.max_seconds,
+        cap,
+    )
+    if result.solution is None:
+        return None
+    solution = _verify(module, main, request, goal, symbols, result.argv, result.stdin, watches)
+    return solution, result.candidates
 
 
 def _verify(
