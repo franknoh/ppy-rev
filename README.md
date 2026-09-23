@@ -115,10 +115,12 @@ standard input and calls the lifted `main`), and `out/metadata.json` (function i
 ```text
 $ echo | ppy out/program.ppy -- 'ais3{I_tak3_g00d_n0t3s}'
 Correct! that is the secret key!
-``` Values are masked machine integers with
-PPy fixed-width annotations; `--check-ppy` runs `ppy check` and fails if PPy reports
-an error or has to insert a runtime width check. Functions with more than one block use
-explicit block dispatch, so arbitrary control flow is preserved exactly.
+```
+
+Values are masked machine integers with PPy fixed-width annotations; `--check-ppy` runs
+`ppy check` and fails if PPy reports an error or has to insert a runtime width check.
+Functions with more than one block use explicit block dispatch, so arbitrary control flow
+is preserved exactly.
 
 Ghidra analysis runs headlessly in a throwaway project. Validated exports are
 cached under `$PPY_REV_CACHE_DIR` (default `~/.cache/ppy-rev`), keyed by the
