@@ -162,6 +162,12 @@ class SymbolicLibc:
             "usleep": self._returns_zero,
             "alarm": self._returns_zero,
             "signal": self._returns_zero,
+            "close": self._returns_zero,
+            "unlink": self._returns_zero,
+            "sigemptyset": self._returns_zero,
+            "getenv": self._returns_zero,
+            "access": lambda call: self._returns(call, sx.const((1 << 64) - 1, 64)),
+            "fileno": self._fileno,
             "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
@@ -248,6 +254,16 @@ class SymbolicLibc:
 
     def _returns_zero(self, call: _Call) -> list[ExternalOutcome]:
         return self._returns(call, sx.const(0, 64))
+
+    def _fileno(self, call: _Call) -> list[ExternalOutcome]:
+        """`fileno(stream)`: the descriptor behind a standard stream, else a generic one."""
+        stream = self._concrete(call, call.arguments[0], "stream")
+        fds = {
+            STANDARD_STREAMS["stdin"]: 0,
+            STANDARD_STREAMS["stdout"]: 1,
+            STANDARD_STREAMS["stderr"]: 2,
+        }
+        return self._returns(call, sx.const(fds.get(stream, 3), 64))
 
     @staticmethod
     def _concrete(call: _Call, value: Expr, what: str) -> int:

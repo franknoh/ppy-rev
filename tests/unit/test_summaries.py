@@ -488,3 +488,14 @@ def test_sscanf_reads_a_string_not_a_stream(template: bytes, value: bytes) -> No
 
 def test_write_goes_to_the_output_the_program_prints() -> None:
     _run_both("write", [1, LEFT, 5], b"hello", b"")
+
+
+def test_os_stubs_return_sensible_defaults() -> None:
+    """Small OS calls a crackme makes in passing: both engines agree on the default."""
+    _run_both("getenv", [LEFT], b"HOME", b"")  # the variable is unset: NULL
+    _run_both("access", [LEFT, 0], b"/flag", b"")  # not accessible: -1
+    _run_both("close", [3], b"", b"")
+    _run_both("unlink", [LEFT], b"/tmp/x", b"")
+    _run_both("sigemptyset", [OUT], b"", b"")
+    _run_both("fileno", [STANDARD_STREAMS["stdin"]], b"", b"")
+    _run_both("fileno", [STANDARD_STREAMS["stderr"]], b"", b"")

@@ -162,6 +162,12 @@ class ConcreteLibc:
             "usleep": lambda arguments, memory: 0,
             "alarm": lambda arguments, memory: 0,
             "signal": lambda arguments, memory: 0,
+            "close": lambda arguments, memory: 0,
+            "unlink": lambda arguments, memory: 0,
+            "sigemptyset": lambda arguments, memory: 0,
+            "getenv": lambda arguments, memory: 0,
+            "access": lambda arguments, memory: mask(64),
+            "fileno": self._fileno,
             "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
@@ -731,6 +737,16 @@ class ConcreteLibc:
         if end_pointer:
             memory.store(end_pointer, text + number.end, 64)
         return number.value & mask(64)
+
+    def _fileno(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`fileno(stream)`: the descriptor behind a standard stream, else a generic one."""
+        del memory
+        fds = {
+            STANDARD_STREAMS["stdin"]: 0,
+            STANDARD_STREAMS["stdout"]: 1,
+            STANDARD_STREAMS["stderr"]: 2,
+        }
+        return fds.get(arguments[0], 3)
 
     @staticmethod
     def _case(mapping: Callable[[int], int], arguments: list[int]) -> int:
