@@ -1377,6 +1377,14 @@ class SymbolicLibc:
 
     # -- numbers ---------------------------------------------------------------------------
 
+    def _parse_hex(self, call: _Call) -> list[tuple[State, Expr, Expr]]:
+        """strtoul(text, &end, 16): one state whose value is the exact hex scanner's."""
+        text = self._string_bytes(call, self._concrete(call, call.arguments[0], "string"))
+        if not text:
+            return [(call.state, sx.const(0, 64), sx.const(0, 64))]
+        result, end, any_digit = _strtoul_hex_expression(text)
+        return [(call.state, result, sx.ite(any_digit, end, sx.const(0, 64)))]
+
     def _parse(self, call: _Call) -> list[tuple[State, Expr, Expr]]:
         """strtol(text, &end, 10), split by the shape of the number.
 
@@ -1437,12 +1445,13 @@ class SymbolicLibc:
 
     def _strtol(self, call: _Call) -> list[ExternalOutcome]:
         base = self._concrete(call, sx.extract(call.arguments[2], 0, 32), "base")
-        if base != 10:
+        if base not in (10, 16):
             raise _Unsupported(f"base {base}")
         end_pointer = self._concrete(call, call.arguments[1], "end pointer")
         address = self._concrete(call, call.arguments[0], "string")
+        parses = self._parse(call) if base == 10 else self._parse_hex(call)
         outcomes: list[ExternalOutcome] = []
-        for state, result, end in self._parse(call):
+        for state, result, end in parses:
             if end_pointer:
                 stored = sx.add(sx.const(address, 64), end)
                 for index in range(8):
@@ -1680,6 +1689,67 @@ def _strtol_expression(text: list[Expr]) -> tuple[Expr, Expr, Expr]:
     )
     saturated = sx.ite(negative, limit, sx.const((1 << 63) - 1, 64))
     result = sx.ite(too_large, saturated, sx.ite(negative, sx.negate(value), value))
+    return result, end, any_digit
+
+
+def _strtoul_hex_expression(text: list[Expr]) -> tuple[Expr, Expr, Expr]:
+    """strtoul(text, &end, 16) over possibly symbolic bytes, exactly.
+
+    A small state machine carried in if-then-else expressions: leading whitespace, a sign,
+    an optional `0x` prefix consumed only when a hex digit follows it, then hex digits. The
+    magnitude saturates at ULONG_MAX and a `-` wraps modulo 2**64, as glibc does.
+    """
+    skipping, signed, zero, prefix, digits, done = (
+        sx.TRUE,
+        sx.FALSE,
+        sx.FALSE,
+        sx.FALSE,
+        sx.FALSE,
+        sx.FALSE,
+    )
+    negative, overflow, any_digit = sx.FALSE, sx.FALSE, sx.FALSE
+    value = sx.const(0, 64)
+    end = sx.const(0, 64)
+    cutoff = sx.const(1 << 60, 64)  # a value this large overflows when shifted by a hex digit
+    for index, byte in enumerate(text):
+        active = sx.bool_not(done)
+        space = sx.bool_or(*(sx.equal(byte, sx.const(code, 8)) for code in ctype.WHITESPACE))
+        sign = sx.bool_or(sx.equal(byte, sx.const(0x2B, 8)), sx.equal(byte, sx.const(0x2D, 8)))
+        minus = sx.equal(byte, sx.const(0x2D, 8))
+        hexd = _is_radix_digit(byte, 16)
+        is_zero = sx.equal(byte, sx.const(0x30, 8))
+        is_x = sx.bool_or(sx.equal(byte, sx.const(0x78, 8)), sx.equal(byte, sx.const(0x58, 8)))
+        digit = _radix_digit_value(byte, 16)
+        start = sx.bool_or(skipping, signed)
+        stay_skip = sx.bool_and(active, skipping, space)
+        take_sign = sx.bool_and(active, skipping, sign)
+        take_zero = sx.bool_and(active, start, is_zero)
+        take_first = sx.bool_and(active, start, hexd, sx.bool_not(is_zero))
+        to_prefix = sx.bool_and(active, zero, is_x)
+        take_after0 = sx.bool_and(active, zero, hexd)
+        take_pfirst = sx.bool_and(active, prefix, hexd)
+        take_more = sx.bool_and(active, digits, hexd)
+        took_digit = sx.bool_or(take_zero, take_first, take_after0, take_pfirst, take_more)
+        accumulate = sx.bool_or(take_after0, take_more)
+        overflow = sx.bool_or(
+            overflow, sx.bool_and(accumulate, sx.bool_not(sx.unsigned_less(value, cutoff)))
+        )
+        shifted = sx.add(sx.mul(value, sx.const(16, 64)), digit)
+        value = sx.ite(
+            sx.bool_or(take_first, take_pfirst),
+            digit,
+            sx.ite(take_zero, sx.const(0, 64), sx.ite(accumulate, shifted, value)),
+        )
+        end = sx.ite(took_digit, sx.const(index + 1, 64), end)
+        any_digit = sx.bool_or(any_digit, took_digit)
+        negative = sx.ite(take_sign, minus, negative)
+        done = sx.bool_or(
+            done, sx.bool_not(sx.bool_or(stay_skip, take_sign, took_digit, to_prefix))
+        )
+        skipping, signed, zero, prefix = stay_skip, take_sign, take_zero, to_prefix
+        digits = sx.bool_or(take_first, take_after0, take_pfirst, take_more)
+    magnitude = sx.ite(overflow, sx.const((1 << 64) - 1, 64), value)
+    result = sx.ite(negative, sx.negate(magnitude), magnitude)
     return result, end, any_digit
 
 

@@ -731,9 +731,12 @@ class ConcreteLibc:
 
     def _strtol(self, arguments: list[int], memory: ConcreteMemory) -> int:
         text, end_pointer, base = arguments[0], arguments[1], to_signed(arguments[2], 32)
-        if base != 10:
+        if base == 10:
+            number = scanning.parse_long(self._string(memory, text))
+        elif base == 16:
+            number = scanning.parse_hex(self._string(memory, text))
+        else:
             raise UnsupportedLibraryCallError(f"strtol with base {base}")
-        number = scanning.parse_long(self._string(memory, text))
         if end_pointer:
             memory.store(end_pointer, text + number.end, 64)
         return number.value & mask(64)

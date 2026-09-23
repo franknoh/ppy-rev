@@ -499,3 +499,26 @@ def test_os_stubs_return_sensible_defaults() -> None:
     _run_both("sigemptyset", [OUT], b"", b"")
     _run_both("fileno", [STANDARD_STREAMS["stdin"]], b"", b"")
     _run_both("fileno", [STANDARD_STREAMS["stderr"]], b"", b"")
+
+
+hex_input = st.lists(st.sampled_from(b" +-0123456789abcdefABCDEFxXgG"), max_size=18).map(bytes)
+
+
+@example(b"0x1f")
+@example(b"0X1F")
+@example(b"-1f")
+@example(b"+0xabc")
+@example(b"0x")
+@example(b"0")
+@example(b"0xg")
+@example(b"  1f")
+@example(b"01f")
+@example(b"ffffffffffffffff")  # 16 hex digits: the largest that fits
+@example(b"fffffffffffffffff")  # 17 digits: overflow saturates to ULONG_MAX
+@example(b"-0x10")
+@settings(max_examples=250, deadline=None)
+@given(hex_input)
+def test_strtoul_base16(value: bytes) -> None:
+    """Base-16 strtoul/strtoull: the symbolic scanner matches the concrete one exactly."""
+    _run_both("strtoul", [LEFT, OUT, 16], value, b"")
+    _run_both("strtoull", [LEFT, OUT, 16], value, b"")

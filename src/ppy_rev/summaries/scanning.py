@@ -160,6 +160,38 @@ def clamp_decimal(negative: bool, magnitude: int) -> int:
     return min(magnitude, LONG_MAX)
 
 
+def parse_hex(data: bytes, start: int = 0) -> Number:
+    """strtoul(data + start, &end, 16): whitespace, a sign, an optional `0x`, hex digits.
+
+    The `0x`/`0X` prefix is consumed only when a hex digit follows it, exactly as glibc
+    does; the magnitude saturates at `ULONG_MAX`, and a leading `-` wraps modulo 2**64.
+    """
+    mask64 = (1 << 64) - 1
+    position = start
+    while position < len(data) and data[position] in WHITESPACE:
+        position += 1
+    negative = False
+    if position < len(data) and data[position] in b"+-":
+        negative = data[position] == ord("-")
+        position += 1
+    if (
+        position + 2 < len(data)
+        and data[position] == 0x30
+        and data[position + 1] in b"xX"
+        and _is_base_digit(data[position + 2], 16)
+    ):
+        position += 2
+    first = position
+    value = 0
+    while position < len(data) and _is_base_digit(data[position], 16):
+        value = value * 16 + int(chr(data[position]), 16)
+        position += 1
+    if position == first:
+        return Number(0, start)
+    value = min(value, mask64)
+    return Number((-value) & mask64 if negative else value, position)
+
+
 @dataclass(frozen=True, slots=True)
 class Number:
     value: int
