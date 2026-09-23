@@ -499,6 +499,9 @@ def test_os_stubs_return_sensible_defaults() -> None:
     _run_both("sigemptyset", [OUT], b"", b"")
     _run_both("fileno", [STANDARD_STREAMS["stdin"]], b"", b"")
     _run_both("fileno", [STANDARD_STREAMS["stderr"]], b"", b"")
+    _run_both("perror", [LEFT], b"oops", b"")
+    _run_both("sigaction", [2, OUT, 0], b"", b"")
+    _run_both("clock", [], b"", b"")
 
 
 hex_input = st.lists(st.sampled_from(b" +-0123456789abcdefABCDEFxXgG"), max_size=18).map(bytes)
