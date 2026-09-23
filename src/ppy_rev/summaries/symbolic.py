@@ -1842,6 +1842,41 @@ def _is_digit(byte: Expr) -> Expr:
     return _in_range(byte, 0x30, 0x39)
 
 
+def _is_radix_digit(byte: Expr, base: int) -> Expr:
+    """Whether `byte` is a digit in the given radix (16 or 8; 10 as a fallback)."""
+    if base == 16:
+        return sx.bool_or(
+            _in_range(byte, 0x30, 0x39), _in_range(byte, 0x41, 0x46), _in_range(byte, 0x61, 0x66)
+        )
+    if base == 8:
+        return _in_range(byte, 0x30, 0x37)
+    return _in_range(byte, 0x30, 0x39)
+
+
+def _radix_digit_value(byte: Expr, base: int) -> Expr:
+    """The 0..base-1 value of a digit byte, as a 64-bit expression."""
+    decimal = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+    if base != 16:
+        return decimal
+    return sx.ite(
+        _in_range(byte, 0x30, 0x39),
+        decimal,
+        sx.ite(
+            _in_range(byte, 0x41, 0x46),
+            sx.zero_extend(sx.sub(byte, sx.const(0x37, 8)), 64),
+            sx.zero_extend(sx.sub(byte, sx.const(0x57, 8)), 64),
+        ),
+    )
+
+
+def _radix_value(digits: list[Expr], base: int) -> Expr:
+    """The value of a run of `digits` in `base`, wrapping at 64 bits."""
+    value = sx.const(0, 64)
+    for byte in digits:
+        value = sx.add(sx.mul(value, sx.const(base, 64)), _radix_digit_value(byte, base))
+    return value
+
+
 def _scanset_ranges(charset: frozenset[int]) -> list[tuple[int, int]]:
     """The scanset's bytes as contiguous ranges, so the predicate stays compact."""
     ranges: list[tuple[int, int]] = []
@@ -2081,7 +2116,58 @@ class _Scanner:
         scan.position = start + len(content)
         return scan
 
+    def _radix(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        """`%x`/`%o`: a hex or octal token, read like `%d` but over the radix's digits.
+
+        The value wraps at 64 bits rather than saturating; a crackme's hex fits, and only
+        the low `store_size` bytes are kept anyway.
+        """
+        data = self.content(scan.state)
+        start = scan.position
+        available = len(data) - start
+        limit = available if directive.width is None else min(available, directive.width)
+        base = directive.base
+        first = data[start]
+        sign = sx.bool_or(sx.equal(first, sx.const(0x2B, 8)), sx.equal(first, sx.const(0x2D, 8)))
+        options: list[tuple[Expr, tuple[int, int]]] = []
+        for signed in (0, 1):
+            head = sign if signed else sx.bool_not(sign)
+            if signed + 1 > limit:
+                options.append((head, (signed, 0)))
+                continue
+            here = _is_radix_digit(data[start + signed], base)
+            options.append((sx.bool_and(head, sx.bool_not(here)), (signed, 0)))
+            digits = sx.TRUE
+            for count in range(1, limit - signed + 1):
+                seen = _is_radix_digit(data[start + signed + count - 1], base)
+                digits = sx.bool_and(digits, seen)
+                after = self._byte(scan, start + signed + count)
+                if signed + count == directive.width or after is None:
+                    ends = sx.TRUE
+                else:
+                    ends = sx.bool_not(_is_radix_digit(after, base))
+                options.append((sx.bool_and(head, digits, ends), (signed, count)))
+        result: list[_Scan] = []
+        for branch, (signed, count) in self._fork(scan, options):
+            if count == 0:
+                branch.position = start + signed
+                branch.result = branch.assigned
+                result.append(branch)
+                continue
+            negative = sx.equal(first, sx.const(0x2D, 8)) if signed else sx.FALSE
+            value = _radix_value(list(data[start + signed : start + signed + count]), base)
+            value = sx.ite(negative, sx.negate(value), value)
+            size = directive.store_size
+            self._store(
+                branch, directive, [sx.extract(value, 8 * index, 8) for index in range(size)]
+            )
+            branch.position = start + signed + count
+            result.append(branch)
+        return result
+
     def _decimal(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        if directive.base != 10:
+            return self._radix(scan, directive)
         data = self.content(scan.state)
         start = scan.position
         available = len(data) - start
