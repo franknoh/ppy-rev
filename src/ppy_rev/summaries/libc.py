@@ -80,6 +80,8 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("atoll", 1),
         LibraryFunction("strtol", 3),
         LibraryFunction("strtoll", 3),
+        LibraryFunction("strtoul", 3),
+        LibraryFunction("strtoull", 3),
         LibraryFunction("scanf", 1, variadic=True),
         LibraryFunction("sscanf", 2, variadic=True),
         LibraryFunction("fscanf", 2, variadic=True),
@@ -163,6 +165,8 @@ ALIASES = {
     "__isoc23_scanf": "scanf",
     "__isoc23_strtol": "strtol",
     "__isoc23_strtoll": "strtoll",
+    "__isoc23_strtoul": "strtoul",
+    "__isoc23_strtoull": "strtoull",
 }
 """Fortified and standard-revision variants whose leading parameters match the plain
 function exactly (and whose behaviour does too, for what the models support)."""

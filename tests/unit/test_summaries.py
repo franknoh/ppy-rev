@@ -268,11 +268,34 @@ def test_number_parsing(value: bytes) -> None:
     _run_both("atoi", [LEFT], value, b"")
     _run_both("atol", [LEFT], value, b"")
     _run_both("strtol", [LEFT, OUT, 10], value, b"")
+    _run_both("strtoul", [LEFT, OUT, 10], value, b"")
+    _run_both("strtoull", [LEFT, OUT, 10], value, b"")
 
 
 @settings(max_examples=120, deadline=None)
 @given(
-    st.sampled_from([b"%s", b"%3s", b"%d", b"%d %d", b"%c", b"x%d", b"%hhd", b"%*d %s", b"%d,%d"]),
+    st.sampled_from(
+        [
+            b"%s",
+            b"%3s",
+            b"%d",
+            b"%d %d",
+            b"%c",
+            b"x%d",
+            b"%hhd",
+            b"%*d %s",
+            b"%d,%d",
+            b"%u",
+            b"%llu",
+            b"%hu",
+            b"%[0-9]",
+            b"%[^,]",
+            b"%[a-z]",
+            b"%3[0-9]",
+            b"%[]0-9]",
+            b"%[0-9]-%[0-9]",
+        ]
+    ),
     scan_input,
 )
 def test_scanf(template: bytes, data: bytes) -> None:

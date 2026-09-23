@@ -1,8 +1,8 @@
 """Decimal number parsing and `scanf` formats, as glibc performs them in the C locale.
 
 Supported `scanf` directives: whitespace, ordinary characters, and the conversions `%s`,
-`%c`, and `%d` with an optional `*`, width, and integer length modifier (`hh`, `h`, `l`,
-`ll`). Anything else is rejected rather than approximated.
+`%c`, `%d`, and `%u` with an optional `*`, width, and integer length modifier (`hh`, `h`,
+`l`, `ll`). Anything else is rejected rather than approximated.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ class DirectiveKind(StrEnum):
     STRING = "s"
     CHARACTERS = "c"
     DECIMAL = "d"
+    SCANSET = "["
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,10 @@ class Directive:
     """Bytes of the integer a `%d` conversion stores."""
     assigns: bool = True
     """False for conversions suppressed with `*`."""
+    charset: frozenset[int] = frozenset()
+    """The byte values a `%[` scanset matches (before negation)."""
+    negated: bool = False
+    """True for `%[^...]`: the scanset matches bytes NOT in `charset`."""
 
 
 def parse_format(template: bytes) -> list[Directive]:
@@ -73,7 +78,9 @@ def parse_format(template: bytes) -> list[Directive]:
         elif conversion in (b"s", b"c") and length is None:
             kind = DirectiveKind.STRING if conversion == b"s" else DirectiveKind.CHARACTERS
             directives.append(Directive(kind, width=width, assigns=not suppressed))
-        elif conversion == b"d":
+        elif conversion in (b"d", b"u"):
+            # `%u` reads the same decimal token as `%d`; it stores an unsigned value, but the
+            # low bytes written for a crackme's input are the same either way.
             directives.append(
                 Directive(
                     DirectiveKind.DECIMAL,
@@ -82,9 +89,56 @@ def parse_format(template: bytes) -> list[Directive]:
                     assigns=not suppressed,
                 )
             )
+        elif conversion == b"[" and length is None:
+            charset, negated, position = _parse_scanset(template, position)
+            directives.append(
+                Directive(
+                    DirectiveKind.SCANSET,
+                    width=width,
+                    charset=charset,
+                    negated=negated,
+                    assigns=not suppressed,
+                )
+            )
         else:
             raise FormatError(f"unsupported conversion {match.group(0)!r}")
     return directives
+
+
+def _parse_scanset(template: bytes, position: int) -> tuple[frozenset[int], bool, int]:
+    """Parse a `%[...]` set body, starting just past the `[`; return (bytes, negated, end).
+
+    Follows the C rules: a leading `^` negates, a `]` right after the `[` (or the `^`) is an
+    ordinary member, and `a-z` is a range. The set ends at the next `]`.
+    """
+    negated = position < len(template) and template[position] == ord("^")
+    if negated:
+        position += 1
+    members: set[int] = set()
+    if position < len(template) and template[position] == ord("]"):
+        members.add(ord("]"))
+        position += 1
+    previous: int | None = None
+    while position < len(template) and template[position] != ord("]"):
+        byte = template[position]
+        if (
+            byte == ord("-")
+            and previous is not None
+            and position + 1 < len(template)
+            and template[position + 1] != ord("]")
+        ):
+            high = template[position + 1]
+            low, high = (previous, high) if previous <= high else (high, previous)
+            members.update(range(low, high + 1))
+            previous = None
+            position += 2
+        else:
+            members.add(byte)
+            previous = byte
+            position += 1
+    if position >= len(template):
+        raise FormatError("a scanset with no closing ]")
+    return frozenset(members), negated, position + 1
 
 
 def clamp_decimal(negative: bool, magnitude: int) -> int:
@@ -177,6 +231,17 @@ def scan(directives: list[Directive], data: bytes) -> ScanResult:
                 # Ending the input part way still assigns the characters that were read.
                 content = data[position : position + (directive.width or 1)]
                 position += len(content)
+            case DirectiveKind.SCANSET:
+                end = position
+                limit = len(data) if directive.width is None else position + directive.width
+                while end < min(limit, len(data)) and (
+                    (data[end] in directive.charset) != directive.negated
+                ):
+                    end += 1
+                if end == position:
+                    return finish(input_failure=False)  # nothing matched: a matching failure
+                content = data[position:end]
+                position = end
             case DirectiveKind.DECIMAL:
                 limit = len(data) if directive.width is None else position + directive.width
                 limit = min(limit, len(data))

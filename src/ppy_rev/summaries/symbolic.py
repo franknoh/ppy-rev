@@ -196,6 +196,8 @@ class SymbolicLibc:
             "atoll": self._atol,
             "strtol": self._strtol,
             "strtoll": self._strtol,
+            "strtoul": self._strtol,
+            "strtoull": self._strtol,
             "scanf": self._scanf,
             "fscanf": self._fscanf,
             "toupper": lambda call: self._case(call, 0x61, 0x7A, -0x20),
@@ -1824,6 +1826,26 @@ def _is_digit(byte: Expr) -> Expr:
     return _in_range(byte, 0x30, 0x39)
 
 
+def _scanset_ranges(charset: frozenset[int]) -> list[tuple[int, int]]:
+    """The scanset's bytes as contiguous ranges, so the predicate stays compact."""
+    ranges: list[tuple[int, int]] = []
+    for value in sorted(charset):
+        if ranges and value == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], value)
+        else:
+            ranges.append((value, value))
+    return ranges
+
+
+def _in_scanset(byte: Expr, directive: scanning.Directive) -> Expr:
+    """Whether `byte` is matched by a `%[` scanset, honouring its negation."""
+    ranges = _scanset_ranges(directive.charset)
+    inside = (
+        sx.bool_or(*(_in_range(byte, low, high) for low, high in ranges)) if ranges else sx.FALSE
+    )
+    return sx.bool_not(inside) if directive.negated else inside
+
+
 def _converts(directive: scanning.Directive) -> bool:
     return directive.kind not in (scanning.DirectiveKind.SPACE, scanning.DirectiveKind.LITERAL)
 
@@ -1952,6 +1974,8 @@ class _Scanner:
                 result.extend(self._literal(branch, directive, byte))
             elif kind is scanning.DirectiveKind.STRING:
                 result.extend(self._string(branch, directive))
+            elif kind is scanning.DirectiveKind.SCANSET:
+                result.extend(self._scanset(branch, directive))
             elif kind is scanning.DirectiveKind.CHARACTERS:
                 result.append(self._characters(branch, directive))
             else:
@@ -1994,6 +2018,40 @@ class _Scanner:
             options.append((sx.bool_and(prefix, ends), length))
         branches = self._fork(scan, options)
         for branch, length in branches:
+            content = list(data[start : start + length])
+            self._store(branch, directive, [*content, _ZERO_BYTE])
+            branch.position = start + length
+        return [branch for branch, _ in branches]
+
+    def _scanset(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        """`%[set]`: a maximal run of bytes in the set, with no leading whitespace skipped.
+
+        A first byte outside the set is a matching failure that assigns nothing and leaves
+        the byte unread, exactly as `%d` fails on a non-digit.
+        """
+        start = scan.position
+        data = self.content(scan.state)
+        longest = len(data) - start
+        if directive.width is not None:
+            longest = min(longest, directive.width)
+        options: list[tuple[Expr, int]] = [
+            (sx.bool_not(_in_scanset(data[start], directive)), 0)
+        ]
+        prefix = sx.TRUE
+        for length in range(1, longest + 1):
+            prefix = sx.bool_and(prefix, _in_scanset(data[start + length - 1], directive))
+            after = self._byte(scan, start + length)
+            ends = (
+                sx.TRUE
+                if length == directive.width or after is None
+                else sx.bool_not(_in_scanset(after, directive))
+            )
+            options.append((sx.bool_and(prefix, ends), length))
+        branches = self._fork(scan, options)
+        for branch, length in branches:
+            if length == 0:
+                branch.result = branch.assigned  # nothing matched: a matching failure
+                continue
             content = list(data[start : start + length])
             self._store(branch, directive, [*content, _ZERO_BYTE])
             branch.position = start + length

@@ -194,6 +194,8 @@ class ConcreteLibc:
             "atoll": self._atol,
             "strtol": self._strtol,
             "strtoll": self._strtol,
+            "strtoul": self._strtol,
+            "strtoull": self._strtol,
             "scanf": self._scanf,
             "fscanf": self._fscanf,
             "__errno_location": lambda arguments, memory: ERRNO_ADDRESS,
@@ -693,8 +695,9 @@ class ConcreteLibc:
         for index, assignment in enumerate(scanned.assignments):
             destination = self._variadic(arguments, format_index + 1 + index, memory)
             match assignment.content:
-                case bytes() as content if (
-                    assignment.directive.kind is scanning.DirectiveKind.STRING
+                case bytes() as content if assignment.directive.kind in (
+                    scanning.DirectiveKind.STRING,
+                    scanning.DirectiveKind.SCANSET,
                 ):
                     memory.write(destination, content + b"\0")
                 case bytes() as content:
