@@ -323,6 +323,47 @@ def test_from_function_solves_a_check_in_isolation(
     assert output.read_bytes() == b"sesame"
 
 
+def test_chain_defuses_a_staged_driver(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """`--chain` finds a bomb's phases and the sink, solves each, and chains the lines."""
+    del analyzer
+    binary = compile_fixture.build("staged_phases", "gcc", "O0")
+    output = tmp_path / "chain"
+    code, text = _solve(
+        binary, "--chain", "-v", "--max-length", "16", "--output", str(output), capsys=capsys
+    )
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "staged driver: 3 phases" in text
+    assert "phase_1" in text and "phase_2" in text and "phase_3" in text
+    assert "RevIR execution: passed (reaches the goal)" in text
+    combined = output.read_bytes()
+    assert combined.startswith(b"open sesame\n") and combined.endswith(b"\n")
+    assert combined.count(b"\n") == 3  # one line per phase, nothing merged
+    completed = subprocess.run(
+        [str(binary)], input=combined, capture_output=True, timeout=30, check=False
+    )
+    assert b"Congratulations! All phases defused." in completed.stdout
+
+
+def test_chain_declines_a_plain_check(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A single-check crackme has no shared failure sink, so `--chain` says so and stops."""
+    del analyzer
+    binary = compile_fixture.build("xor_check", "gcc", "O0")
+    code = main(["solve", str(binary), "--chain", "--cache-dir", str(BUILD_ROOT / "cache")])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "no staged driver" in captured.err
+
+
 def test_analyze_reports_what_solving_uses(
     analyzer: Analyzer, compile_fixture: type[FixtureCompiler], capsys: pytest.CaptureFixture[str]
 ) -> None:

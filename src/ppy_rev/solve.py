@@ -10,6 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from ppy_rev.abi import calling_convention
+from ppy_rev.analysis.chain import ChainPlan, detect_chain
 from ppy_rev.analysis.flags import flag_prefixes
 from ppy_rev.analysis.goals import (
     GoalCandidate,
@@ -89,6 +90,12 @@ class SolveRequest:
     from_function: int | None = None
     """Solve a function in isolation, starting at this address with a symbolic input
     buffer in the first argument - the way a check or a bomb phase is cracked."""
+    chain: bool = False
+    """Detect a staged driver (a bomb's phases) and solve every stage, chaining the
+    answers into one input, instead of solving the whole program at once."""
+    line_input: bool = False
+    """When solving a function in isolation, forbid a newline in the symbolic buffer, so
+    its answer is a single line that a line-at-a-time driver keeps whole."""
     avoid_addresses: tuple[int, ...] = ()
     avoid_strings: tuple[str, ...] = ()
     length: int | None = None
@@ -225,6 +232,8 @@ def solve_module(
 ) -> SolveResult:
     started = time.monotonic()
     backend = backend or Z3Backend()
+    if request.chain:
+        return _solve_chain(module, request, backend, progress, started)
     if request.from_function is not None:
         return _solve_from_function(
             module, request.from_function, request, backend, progress, started
@@ -650,6 +659,11 @@ def _solve_from_function(
         terminated, request.length, request.prefix, request.suffix, request.charset
     ):
         executor.add_constraint(state, condition, ConstraintKind.INPUT, None, "input")
+    if request.line_input:
+        # One line for a line-at-a-time driver: no embedded newline would split the answer.
+        for symbol in buffer:
+            no_newline = sx.bool_not(sx.equal(symbol, sx.const(NEWLINE, 8)))
+            executor.add_constraint(state, no_newline, ConstraintKind.INPUT, None, "line")
     exploration = executor.explore(state, max_reached=max(1, request.solutions))
     solutions: list[Solution] = []
     if exploration.reached:
@@ -689,6 +703,121 @@ def _solve_from_function(
             *_incomplete_notes(exploration),
         ),
     )
+
+
+def _solve_chain(
+    module: Module,
+    request: SolveRequest,
+    backend: SolverBackend,
+    progress: Progress | None,
+    started: float,
+) -> SolveResult:
+    """Detect a staged driver and solve every phase, chaining the answers into one input.
+
+    Each phase is solved the way `--from` solves a function in isolation - a symbolic line
+    in the first argument, returning without reaching the shared failure sink - and the per
+    phase lines are joined with newlines into the input the whole program takes. A phase the
+    solver cannot crack stops the chain, and the phases solved so far are still reported.
+    """
+    plan = detect_chain(module)
+    if plan is None:
+        raise PpyRevError(
+            "no staged driver found: expected a main calling several phases that share a "
+            "failure sink. Solve a single function with --from instead."
+        )
+    main = find_main(module)
+    reader = f", reading each line with {plan.reader_name}" if plan.reader_name else ""
+    notes = [
+        f"staged driver: {len(plan.stages)} phases, sink {plan.sink_name} at {plan.sink:#x}{reader}"
+    ]
+    lines: list[bytes] = []
+    status = SolveStatus.SAT
+    states = solver_calls = operations = branches = 0
+    solver_seconds = 0.0
+    for stage in plan.stages:
+        phase_request = replace(
+            request,
+            chain=False,
+            from_function=stage.entry,
+            line_input=True,
+            goal_address=None,
+            goal_string=None,
+            avoid_addresses=(plan.sink, *request.avoid_addresses),
+        )
+        result = _solve_from_function(
+            module, stage.entry, phase_request, backend, progress, time.monotonic()
+        )
+        statistics = result.statistics
+        states += statistics.states
+        solver_calls += statistics.solver_calls
+        operations += statistics.symbolic_operations
+        branches += statistics.symbolic_branches
+        solver_seconds += statistics.solver_seconds
+        answer = result.solutions[0].stdin if result.solutions else None
+        if result.status is SolveStatus.SAT and answer is not None:
+            lines.append(answer)
+            notes.append(f"{stage.name} at {stage.entry:#x}: solved, line {answer!r}")
+        else:
+            notes.append(
+                f"{stage.name} at {stage.entry:#x}: {result.status.value}; chain stops here"
+            )
+            status = result.status
+            break
+    combined = b"\n".join(lines) + b"\n" if lines else b""
+    solved = bool(lines) and status is SolveStatus.SAT
+    goal, avoid = _chain_goal(module, main, request, plan)
+    solutions = (
+        (Solution(None, combined, False, "chained from each phase solved in isolation"),)
+        if solved
+        else ()
+    )
+    statistics = SolveStatistics(
+        functions_lifted=len(module.functions),
+        relevant_blocks=len(plan.stages),
+        symbolic_operations=operations,
+        symbolic_branches=branches,
+        states=states,
+        solver_calls=solver_calls,
+        seconds=time.monotonic() - started,
+        solver_seconds=solver_seconds,
+    )
+    outcome = SolveResult(
+        target=f"{module.target.architecture} Linux ELF",
+        entry=main.name,
+        inputs=(InputDescription(InputKind.STDIN, None, len(combined), True, ()),),
+        goal=goal,
+        avoid=avoid,
+        status=SolveStatus.SAT if solved else status,
+        backend=backend.name,
+        solutions=solutions,
+        constraints=(),
+        statistics=statistics,
+        notes=tuple(notes),
+    )
+    return verify_on(module, outcome) if solved else outcome
+
+
+def _chain_goal(
+    module: Module, main: Function, request: SolveRequest, plan: ChainPlan
+) -> tuple[GoalCandidate, tuple[GoalCandidate, ...]]:
+    """The whole-program success goal and the sink to avoid, for verifying the chain.
+
+    Discovered the ordinary way so verification re-runs the program to that success; when no
+    success message is found, the last phase returning stands in and only the sink is avoided.
+    """
+    sink = GoalCandidate(plan.sink, Outcome.FAILURE, "", plan.sink_name, 1.0, ("failure sink",))
+    reachable = reachable_functions(module, main)
+    discovery = replace(
+        request, chain=False, from_function=None, goal_address=None, goal_string=None
+    )
+    try:
+        goal, avoid = _select_goals(module, reachable, discovery)
+    except PpyRevError:
+        fallback = GoalCandidate(
+            plan.stages[-1].entry, Outcome.SUCCESS, "", main.name, 1.0, ("every phase solved",)
+        )
+        return fallback, (sink,)
+    return goal, (sink, *(item for item in avoid if item.address != plan.sink))
 
 
 def _initial_state(

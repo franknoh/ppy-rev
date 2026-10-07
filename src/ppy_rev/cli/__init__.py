@@ -133,6 +133,12 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
         metavar="ADDRESS",
         help="solve this function in isolation with a symbolic input buffer",
     )
+    goals.add_argument(
+        "--chain",
+        action="store_true",
+        help="detect a staged driver (a bomb's phases) and solve each phase, chaining the "
+        "answers into one input",
+    )
     goals.add_argument("--goal-string", metavar="TEXT")
     goals.add_argument("--avoid-address", type=_address, action="append", metavar="ADDRESS")
     goals.add_argument("--avoid-string", action="append", metavar="TEXT")

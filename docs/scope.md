@@ -281,5 +281,13 @@ and `clang++`, at `-O0` and `-O2`, with every answer accepted by the compiled bi
    solves one stage at a time with `--from ADDRESS`: execution starts at that function
    with a symbolic buffer in its first argument, so the stage's condition is solved on
    its own. Pair it with `--avoid-address` for the failure handler (the `explode_bomb`).
+   `--chain` does the whole thing on its own: it finds the driver's phases and the shared
+   failure sink they all call, solves each phase the `--from` way (keeping every answer to
+   one line), and joins the lines into the input the program reads, then re-runs the whole
+   program on that input to confirm it reaches the success message. A phase the solver
+   cannot crack stops the chain, and the phases solved before it are still reported. It
+   expects the bomb shape — one line read per phase, phases sharing a sink that ends the
+   program — and treats the phases as independent, so a phase that depends on a global a
+   previous phase set is out of scope.
 7. Unsupported semantics on a path that matters is a missing model, not a wall: the name
    of the function is in the message.
