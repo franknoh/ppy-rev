@@ -2025,6 +2025,9 @@ class _Scanner:
         return state.io.positions.get(self.stream, 0)
 
     def run(self) -> list[ExternalOutcome]:
+        numeric = self._numeric_sequence()
+        if numeric is not None:
+            return [self._scan_numbers(numeric)]
         pending = [_Scan(self.call.state, self.position(self.call.state))]
         outcomes: list[ExternalOutcome] = []
         while pending:
@@ -2161,9 +2164,7 @@ class _Scanner:
         longest = len(data) - start
         if directive.width is not None:
             longest = min(longest, directive.width)
-        options: list[tuple[Expr, int]] = [
-            (sx.bool_not(_in_scanset(data[start], directive)), 0)
-        ]
+        options: list[tuple[Expr, int]] = [(sx.bool_not(_in_scanset(data[start], directive)), 0)]
         prefix = sx.TRUE
         for length in range(1, longest + 1):
             prefix = sx.bool_and(prefix, _in_scanset(data[start + length - 1], directive))
@@ -2289,6 +2290,168 @@ class _Scanner:
             branch.position = start + signed + count
             result.append(branch)
         return result
+
+    # -- the non-forking number sequence -----------------------------------------------------
+
+    def _numeric_sequence(self) -> list[scanning.Directive] | None:
+        """The `%d` conversions when the whole format is a plain base-10 number sequence.
+
+        Used only for `sscanf`, where nothing is consumed from a stream, so the symbolic
+        end position that a single pass computes never has to become a concrete stream
+        offset. Two or more unmodified `%d`/`%u` conversions are the case `_decimal` would
+        fork on per number, multiplying combinatorially; here they are read in one state.
+        """
+        if self.data is None or self.result is not None:
+            return None
+        numeric: list[scanning.Directive] = []
+        for directive in self.directives:
+            if directive.kind is scanning.DirectiveKind.SPACE:
+                continue
+            if (
+                directive.kind is scanning.DirectiveKind.DECIMAL
+                and directive.base == 10
+                and directive.width is None
+                and directive.assigns
+            ):
+                numeric.append(directive)
+                continue
+            return None
+        return numeric if len(numeric) >= 2 else None
+
+    def _scan_numbers(self, numeric: list[scanning.Directive]) -> ExternalOutcome:
+        """Parse a plain sequence of base-10 numbers in one pass, without forking.
+
+        A small state machine, carried in if-then-else expressions over every byte, counts
+        the conversions that succeed and accumulates each number's saturated value, exactly
+        as `scanning.scan` does (the differential tests check this against `_decimal`). One
+        state replaces the `L**N` the per-number digit-count fork would make for `N`
+        numbers over `L` bytes, which is what lets the solver reach past a `scanf`.
+        """
+        state = self.call.state
+        data = self.content(state)
+        start = self.position(state)
+        count = len(numeric)
+        zero, one = sx.const(0, 64), sx.const(1, 64)
+        cutoff = sx.const((1 << 64) // 10, 64)
+        last_digit = sx.const(((1 << 64) - 1) % 10, 64)
+
+        done, field, in_digits, pend_sign = sx.FALSE, zero, sx.FALSE, sx.FALSE
+        magnitude = [sx.const(0, 64) for _ in range(count)]
+        overflow = [sx.FALSE for _ in range(count)]
+        negative = [sx.FALSE for _ in range(count)]
+
+        def at(which: Expr, index: int) -> Expr:
+            return sx.equal(which, sx.const(index, 64))
+
+        for byte in data[start:]:
+            active = sx.bool_not(done)
+            digit = _is_digit(byte)
+            space = _is_space(byte)
+            sign = sx.bool_or(sx.equal(byte, sx.const(0x2B, 8)), sx.equal(byte, sx.const(0x2D, 8)))
+            minus = sx.equal(byte, sx.const(0x2D, 8))
+            value = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+
+            digit_cont = sx.bool_and(active, in_digits, digit)
+            num_end = sx.bool_and(active, in_digits, sx.bool_not(digit))
+            field_after = sx.add(field, one)
+            all_done = sx.bool_and(num_end, at(field_after, count))
+            # Start processing (leading whitespace, a sign, the first digit) happens while
+            # not in digits, or on the same byte that ends a number before the last one.
+            do_start = sx.bool_or(
+                sx.bool_and(active, sx.bool_not(in_digits)),
+                sx.bool_and(num_end, sx.bool_not(all_done)),
+            )
+            sfield = sx.ite(num_end, field_after, field)  # field the start acts on
+            spend = sx.bool_and(sx.bool_not(num_end), pend_sign)  # a fresh field has no sign
+            awaited = sx.bool_and(do_start, spend)
+            take_after_sign = sx.bool_and(awaited, digit)
+            fail_after_sign = sx.bool_and(awaited, sx.bool_not(digit))
+            # A leading space (not awaiting a sign) is skipped: it stays out of digits and
+            # starts nothing, so only a non-space fresh byte can begin or fail a number.
+            fresh = sx.bool_and(do_start, sx.bool_not(spend), sx.bool_not(space))
+            take_sign = sx.bool_and(fresh, sign)
+            take_first = sx.bool_and(fresh, sx.bool_not(sign), digit)
+            fail_start = sx.bool_and(fresh, sx.bool_not(sign), sx.bool_not(digit))
+            started = sx.bool_or(take_after_sign, take_first)
+
+            for index in range(count):
+                here = sx.bool_and(digit_cont, at(field, index))
+                starts_here = sx.bool_and(started, at(sfield, index))
+                too_big = sx.bool_or(
+                    sx.unsigned_less(cutoff, magnitude[index]),
+                    sx.bool_and(
+                        sx.equal(magnitude[index], cutoff), sx.unsigned_less(last_digit, value)
+                    ),
+                )
+                overflow[index] = sx.bool_or(overflow[index], sx.bool_and(here, too_big))
+                grown = sx.add(sx.mul(magnitude[index], sx.const(10, 64)), value)
+                magnitude[index] = sx.ite(
+                    starts_here,
+                    value,
+                    sx.ite(sx.bool_and(here, sx.bool_not(too_big)), grown, magnitude[index]),
+                )
+                takes_sign = sx.bool_and(take_sign, at(sfield, index))
+                negative[index] = sx.bool_or(
+                    sx.bool_and(takes_sign, minus),
+                    sx.bool_and(sx.bool_not(takes_sign), negative[index]),
+                )
+
+            done = sx.bool_or(done, all_done, fail_after_sign, fail_start)
+            field = sx.ite(num_end, field_after, field)
+            in_digits = sx.bool_or(
+                sx.bool_and(active, sx.bool_or(digit_cont, started)),
+                sx.bool_and(sx.bool_not(active), in_digits),
+            )
+            pend_sign = sx.bool_or(take_sign, sx.bool_and(sx.bool_not(do_start), pend_sign))
+
+        ongoing = sx.bool_not(done)
+        ends_at_eof = sx.bool_and(ongoing, in_digits)  # the last number ran to end of input
+        field_final = sx.ite(ends_at_eof, sx.add(field, one), field)
+        # Only running out of input while still skipping toward a number is an input
+        # failure; a bare sign or a non-digit is a matching failure that returns the count.
+        input_failure = sx.bool_and(ongoing, sx.bool_not(in_digits), sx.bool_not(pend_sign))
+        for index, directive in enumerate(numeric):
+            guard = sx.unsigned_less(sx.const(index, 64), field_final)  # this field succeeded
+            value = _saturated(magnitude[index], negative[index], overflow[index])
+            self._store_guarded(state, self.destinations[index], directive, guard, value)
+        result = sx.ite(
+            sx.bool_and(input_failure, at(field_final, 0)),
+            sx.const(0xFFFFFFFF, 64),  # EOF, masked to 32 bits as a conversion count would be
+            sx.zero_extend(sx.extract(field_final, 0, 32), 64),
+        )
+        outputs = dict(self.call.registers)
+        outputs[self.libc.convention.integer_returns[0]] = result
+        return Returned(state, outputs)
+
+    def _store_guarded(
+        self,
+        state: State,
+        destination: int,
+        directive: scanning.Directive,
+        guard: Expr,
+        value: Expr,
+    ) -> None:
+        """Write a field's saturated value only where `guard` holds, else leave memory."""
+        for offset in range(directive.store_size):
+            address = destination + offset
+            if not state.memory.accessible(address, 1, write=True):
+                raise _Fault(f"scanf writes to unwritable memory at {address:#x}")
+            existing = state.memory.read_byte(address)
+            state.memory.write_byte(
+                address, sx.ite(guard, sx.extract(value, 8 * offset, 8), existing)
+            )
+
+
+def _saturated(magnitude: Expr, negative: Expr, overflow: Expr) -> Expr:
+    """strtol's saturated signed value for a magnitude, its sign, and an overflow flag."""
+    limit = sx.const(1 << 63, 64)
+    too_large = sx.bool_or(
+        overflow,
+        sx.bool_and(negative, sx.unsigned_less(limit, magnitude)),
+        sx.bool_and(sx.bool_not(negative), sx.unsigned_less_equal(limit, magnitude)),
+    )
+    saturated = sx.ite(negative, limit, sx.const((1 << 63) - 1, 64))
+    return sx.ite(too_large, saturated, sx.ite(negative, sx.negate(magnitude), magnitude))
 
 
 def _hex_digit(nibble: Expr, upper: bool) -> Expr:

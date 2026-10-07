@@ -108,6 +108,23 @@ hundred solve now, every answer accepted by the program's own re-execution. On a
 40-binary sample of unrelated challenges the change is neutral: the same outcomes, nothing
 lost.
 
+## Reading several numbers with one `sscanf`
+
+A phase that reads a handful of integers at once — `sscanf(line, "%d %d %d %d %d %d", …)`,
+the shape every *Bomb Lab* number phase uses — would otherwise fork on how many digits each
+number has, and those counts multiply: six numbers over a short line is tens of thousands of
+states, and the search runs out of budget before the comparison that follows is ever
+reached. A plain sequence of unmodified `%d`/`%u` conversions handed to `sscanf` is now read
+in a single state instead, a small digit-by-digit machine carried in if-then-else
+expressions that counts the conversions that succeed and accumulates each number, saturating
+exactly as `strtol` does. The solver then works out the numbers from the comparison against
+them. A three-number check that exhausted 77k states before solves in five; isolating a
+six-number phase with `--from` (below) now reaches its recurrence. The form is checked
+field-for-field against the plain C library on thousands of mixed inputs. Reading numbers
+straight from stdin with `scanf` still forks — the single pass leaves the stream position
+symbolic, which a later read could not use — so a program that scans stdin directly rather
+than a line it already read is the remaining case.
+
 ## It does not solve
 
 | Not solved | What you see |

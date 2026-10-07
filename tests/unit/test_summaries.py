@@ -486,6 +486,28 @@ def test_sscanf_reads_a_string_not_a_stream(template: bytes, value: bytes) -> No
     )
 
 
+@settings(max_examples=250, deadline=None)
+@given(
+    st.sampled_from([b"%d %d", b"%d %d %d", b"%d %d %d %d", b"%ld %ld", b"%d%d", b"%d %ld %d"]),
+    st.text(alphabet="0123456789 \t+-abx", min_size=0, max_size=16).map(str.encode),
+)
+def test_sscanf_number_sequence_parses_without_forking(template: bytes, value: bytes) -> None:
+    """A plain `%d` sequence is read in one state; it must still match `scanf` exactly.
+
+    The single-pass scanner replaces the per-number digit-count fork, so this checks the
+    return value, each field's saturated value, and that nothing beyond the successful
+    fields is written, against the concrete model over a rich mix of inputs.
+    """
+    _run_both(
+        "sscanf",
+        [LEFT, RIGHT, OUT, OUT + 0x40, OUT + 0x80, OUT + 0xC0],
+        value,
+        template,
+        stdin=b"untouched\n",
+        concrete_right=True,
+    )
+
+
 def test_write_goes_to_the_output_the_program_prints() -> None:
     _run_both("write", [1, LEFT, 5], b"hello", b"")
 
