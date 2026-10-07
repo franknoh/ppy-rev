@@ -126,6 +126,13 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
     inputs.add_argument("--stdin", type=int, metavar="LENGTH", help="solve for LENGTH stdin bytes")
     goals = solve.add_argument_group("goals (default: discovered from output strings)")
     goals.add_argument("--goal-address", type=_address, metavar="ADDRESS")
+    goals.add_argument(
+        "--from",
+        dest="from_function",
+        type=_address,
+        metavar="ADDRESS",
+        help="solve this function in isolation with a symbolic input buffer",
+    )
     goals.add_argument("--goal-string", metavar="TEXT")
     goals.add_argument("--avoid-address", type=_address, action="append", metavar="ADDRESS")
     goals.add_argument("--avoid-string", action="append", metavar="TEXT")

@@ -260,5 +260,9 @@ and `clang++`, at `-O0` and `-O2`, with every answer accepted by the compiled bi
    table it cannot invert — `--strategy brute` runs every value concretely instead;
    bound it with `--charset` and `--length` (four hex digits is 65k tries, a second or
    two), since blind printable brute force only reaches two or three bytes in the budget.
-6. Unsupported semantics on a path that matters is a missing model, not a wall: the name of
-   the function is in the message.
+6. A multi-stage check - a bomb's phases, a function reached only past input parsing -
+   solves one stage at a time with `--from ADDRESS`: execution starts at that function
+   with a symbolic buffer in its first argument, so the stage's condition is solved on
+   its own. Pair it with `--avoid-address` for the failure handler (the `explode_bomb`).
+7. Unsupported semantics on a path that matters is a missing model, not a wall: the name
+   of the function is in the message.

@@ -31,7 +31,8 @@ from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.analysis.strings import describe_messages, printed_messages
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.execution.brute import brute_force, feasible_space
-from ppy_rev.execution.memory import ConcreteMemory
+from ppy_rev.execution.memory import ConcreteMemory, Mapping
+from ppy_rev.execution.process import enter_call, standard_memory
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
 from ppy_rev.execution.startup import Initialization, run_initializers
@@ -85,6 +86,9 @@ class SolveRequest:
     """Treat this many bytes of standard input as the input (default: discover)."""
     goal_address: int | None = None
     goal_string: str | None = None
+    from_function: int | None = None
+    """Solve a function in isolation, starting at this address with a symbolic input
+    buffer in the first argument - the way a check or a bomb phase is cracked."""
     avoid_addresses: tuple[int, ...] = ()
     avoid_strings: tuple[str, ...] = ()
     length: int | None = None
@@ -221,6 +225,10 @@ def solve_module(
 ) -> SolveResult:
     started = time.monotonic()
     backend = backend or Z3Backend()
+    if request.from_function is not None:
+        return _solve_from_function(
+            module, request.from_function, request, backend, progress, started
+        )
     main = find_main(module)
     reachable = reachable_functions(module, main)
     goal, avoid = _select_goals(module, reachable, request)
@@ -353,7 +361,7 @@ _CONCOLIC_FALLBACK = frozenset(
 
 
 def _concolic_status(
-    result: ConcolicResult, solutions: list[Solution], initialization: Initialization
+    result: ConcolicResult, solutions: list[Solution], initialization: Initialization | None
 ) -> SolveStatus:
     if solutions:
         return SolveStatus.SAT
@@ -366,7 +374,8 @@ def _concolic_status(
     # was approximated or cut short on the way.
     if exploration.statistics.hiding_approximations or exploration.incomplete:
         return SolveStatus.INCOMPLETE
-    return SolveStatus.UNSAT if initialization.complete else SolveStatus.INCOMPLETE
+    complete = initialization is None or initialization.complete
+    return SolveStatus.UNSAT if complete else SolveStatus.INCOMPLETE
 
 
 def _seed(
@@ -562,6 +571,124 @@ def started_image(module: Module) -> tuple[ConcreteMemory, Initialization]:
     """The image main really starts from: the program plus whatever its constructors wrote."""
     memory = program_memory(module)
     return memory, run_initializers(module, memory)
+
+
+_INPUT_BUFFER = 0x10000000
+"""Where a `--from` solve lays out the symbolic buffer the function is handed."""
+
+
+def _solve_from_function(
+    module: Module,
+    address: int,
+    request: SolveRequest,
+    backend: SolverBackend,
+    progress: Progress | None,
+    started: float,
+) -> SolveResult:
+    """Solve a function in isolation: start at it with a symbolic input buffer in arg 1.
+
+    This is how a check or a bomb phase is cracked - skip `main` and its input parsing, and
+    ask directly what the function has to be given to return without reaching a failure.
+    """
+    function = module.function_at(address)
+    if function is None:
+        raise PpyRevError(f"no function begins at {address:#x}")
+    length = request.length or request.max_length
+    convention = calling_convention(module.target)
+    first = convention.integer_parameters[0]
+    image = standard_memory(module)
+    image.map(Mapping("[input]", _INPUT_BUFFER, max(length + 16, 0x1000), True, True, None))
+    frame = enter_call(module, image, {first: _INPUT_BUFFER})
+    avoid = frozenset(request.avoid_addresses)
+    target = request.goal_address
+    goal = Goal(
+        addresses=frozenset({target}) if target is not None else frozenset(),
+        avoid=avoid,
+        on_return=None if target is not None else (lambda outputs: sx.TRUE),
+    )
+    reachability = GoalReachability(module, goal.addresses) if goal.addresses else None
+    executor = Executor(
+        module,
+        backend,
+        goal,
+        SymbolicLibc(convention),
+        request.budget,
+        reachability,
+        None,
+        progress,
+    )
+    registers: dict[str, Expr] = {
+        name: sx.const(value, module.register(name).width)
+        for name, value in frame.registers.items()
+        if any(register.name == name for register in module.registers)
+    }
+    values: dict[int, Expr] = {
+        item.value.id: registers.get(item.register, sx.const(0, item.value.width))
+        for item in function.inputs
+    }
+    memory = SymbolicMemory(image)
+    state = State(
+        id=executor.new_state_id(),
+        frames=[
+            Frame(
+                function=function,
+                block=0,
+                position=0,
+                values=values,
+                expected_return=sx.const(frame.return_address, module.target.pointer_width),
+                resume=None,
+            )
+        ],
+        memory=memory,
+    )
+    buffer = tuple(sx.symbol(f"input_{index:04}", 8) for index in range(length))
+    for index, symbol in enumerate(buffer):
+        memory.write_byte(_INPUT_BUFFER + index, symbol)
+    memory.write_byte(_INPUT_BUFFER + length, sx.const(0, 8))
+    terminated = (*buffer, sx.const(0, 8))
+    for condition in argv_constraints(
+        terminated, request.length, request.prefix, request.suffix, request.charset
+    ):
+        executor.add_constraint(state, condition, ConstraintKind.INPUT, None, "input")
+    exploration = executor.explore(state, max_reached=max(1, request.solutions))
+    solutions: list[Solution] = []
+    if exploration.reached:
+        model = executor.solve(exploration.reached[0].state, list(buffer))
+        if model is not None:
+            answer = argv_solution(terminated, model)
+            solutions.append(Solution(None, answer, False, "a function solved in isolation"))
+    status = SolveStatus.SAT if solutions else _status(exploration, solutions, None)
+    goal_candidate = GoalCandidate(
+        address, Outcome.SUCCESS, "", function.name, 1.0, ("solved in isolation",)
+    )
+    statistics = executor.statistics
+    return SolveResult(
+        target=f"{module.target.architecture} Linux ELF",
+        entry=function.name,
+        inputs=(InputDescription(InputKind.STDIN, None, length, True, ()),),
+        goal=goal_candidate,
+        avoid=tuple(GoalCandidate(a, Outcome.FAILURE, "", "", 1.0, ("given",)) for a in avoid),
+        status=status,
+        backend=backend.name,
+        solutions=tuple(solutions),
+        constraints=(),
+        statistics=SolveStatistics(
+            functions_lifted=len(module.functions),
+            relevant_blocks=len(statistics.blocks),
+            symbolic_operations=statistics.steps,
+            symbolic_branches=statistics.forks,
+            states=statistics.states,
+            solver_calls=statistics.solver_calls,
+            seconds=time.monotonic() - started,
+            sliced_operations=statistics.sliced,
+            solver_seconds=statistics.solver_seconds,
+        ),
+        notes=(
+            f"solved {function.name} in isolation from {address:#x} with a "
+            f"{length}-byte symbolic input buffer; the answer is those bytes",
+            *_incomplete_notes(exploration),
+        ),
+    )
 
 
 def _initial_state(
@@ -1011,7 +1138,7 @@ def _printed_fragments(text: str) -> list[bytes]:
 
 
 def _status(
-    exploration: Exploration, solutions: list[Solution], initialization: Initialization
+    exploration: Exploration, solutions: list[Solution], initialization: Initialization | None
 ) -> SolveStatus:
     if solutions:
         return SolveStatus.SAT
@@ -1034,7 +1161,8 @@ def _status(
         return SolveStatus.INCOMPLETE
     # `unsat` claims every path was explored; a constructor that would not run means
     # main started from an image the real program never has.
-    return SolveStatus.UNSAT if initialization.complete else SolveStatus.INCOMPLETE
+    complete = initialization is None or initialization.complete
+    return SolveStatus.UNSAT if complete else SolveStatus.INCOMPLETE
 
 
 def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:

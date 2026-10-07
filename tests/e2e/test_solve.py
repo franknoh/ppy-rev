@@ -294,6 +294,35 @@ def test_brute_force_solves_a_small_input_check(
     assert b"Correct!" in _native_output(binary, "brute_pin", output.read_bytes())
 
 
+def test_from_function_solves_a_check_in_isolation(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """`--from` starts at a function with a symbolic buffer, the way a bomb phase is solved."""
+    binary = compile_fixture.build("isolated_check", "gcc", "O0")
+    module = analyzer.simplified(binary)
+    check = module.function_named("check")
+    boom = module.function_named("boom")
+    assert check is not None and boom is not None
+    output = tmp_path / "answer"
+    code, text = _solve(
+        binary,
+        "--from",
+        hex(check.entry),
+        "--avoid-address",
+        hex(boom.entry),
+        "--output",
+        str(output),
+        capsys=capsys,
+    )
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "in isolation" in text
+    assert output.read_bytes() == b"sesame"
+
+
 def test_analyze_reports_what_solving_uses(
     analyzer: Analyzer, compile_fixture: type[FixtureCompiler], capsys: pytest.CaptureFixture[str]
 ) -> None:
