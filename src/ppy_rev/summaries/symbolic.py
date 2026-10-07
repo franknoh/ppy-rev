@@ -168,6 +168,7 @@ class SymbolicLibc:
             "getenv": self._returns_zero,
             "access": lambda call: self._returns(call, sx.const((1 << 64) - 1, 64)),
             "fileno": self._fileno,
+            "dup2": lambda call: self._returns(call, call.arguments[1]),
             "perror": self._returns_zero,
             "sigaction": self._returns_zero,
             "clock": self._returns_zero,
@@ -858,8 +859,10 @@ class SymbolicLibc:
 
     def _read(self, call: _Call) -> list[ExternalOutcome]:
         descriptor = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "descriptor")
-        if descriptor != 0:
+        if descriptor in (1, 2):
             raise _Unsupported(f"read from file descriptor {descriptor}")
+        # stdin, or an input redirected onto another descriptor (a `dup2` of it to a socket,
+        # say): either way the bytes read are the program's input.
         buffer = self._concrete(call, call.arguments[1], "buffer")
         count = self._concrete(call, call.arguments[2], "count")
         io = call.state.io

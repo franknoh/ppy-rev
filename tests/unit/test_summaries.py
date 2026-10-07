@@ -502,6 +502,7 @@ def test_os_stubs_return_sensible_defaults() -> None:
     _run_both("perror", [LEFT], b"oops", b"")
     _run_both("sigaction", [2, OUT, 0], b"", b"")
     _run_both("clock", [], b"", b"")
+    _run_both("dup2", [3, 1337], b"", b"")  # returns the new descriptor
 
 
 hex_input = st.lists(st.sampled_from(b" +-0123456789abcdefABCDEFxXgG"), max_size=18).map(bytes)
@@ -525,3 +526,10 @@ def test_strtoul_base16(value: bytes) -> None:
     """Base-16 strtoul/strtoull: the symbolic scanner matches the concrete one exactly."""
     _run_both("strtoul", [LEFT, OUT, 16], value, b"")
     _run_both("strtoull", [LEFT, OUT, 16], value, b"")
+
+
+@settings(max_examples=30, deadline=None)
+@given(st.binary(min_size=1, max_size=12), st.integers(1, 16))
+def test_read_from_a_redirected_descriptor_is_input(stdin: bytes, size: int) -> None:
+    """A read from a non-standard fd (a dup2'd socket, say) reads the program's input."""
+    _run_both("read", [1337, OUT, size], b"", b"", stdin=stdin)

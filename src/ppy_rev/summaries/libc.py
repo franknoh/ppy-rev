@@ -42,6 +42,7 @@ FUNCTIONS: dict[str, LibraryFunction] = {
         LibraryFunction("unlink", 1),
         LibraryFunction("sigemptyset", 1),
         LibraryFunction("fileno", 1),
+        LibraryFunction("dup2", 2),
         LibraryFunction("perror", 1),
         LibraryFunction("sigaction", 3),
         LibraryFunction("clock", 0),

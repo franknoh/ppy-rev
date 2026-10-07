@@ -168,6 +168,7 @@ class ConcreteLibc:
             "getenv": lambda arguments, memory: 0,
             "access": lambda arguments, memory: mask(64),
             "fileno": self._fileno,
+            "dup2": lambda arguments, memory: arguments[1],
             "perror": lambda arguments, memory: 0,
             "sigaction": lambda arguments, memory: 0,
             "clock": lambda arguments, memory: 0,
@@ -341,7 +342,7 @@ class ConcreteLibc:
 
     def _read(self, arguments: list[int], memory: ConcreteMemory) -> int:
         descriptor, buffer, count = arguments[0] & 0xFFFFFFFF, arguments[1], arguments[2]
-        if descriptor != 0:
+        if descriptor in (1, 2):
             raise UnsupportedLibraryCallError(f"read from file descriptor {descriptor}")
         data = self.io.stdin[self.io.stdin_position : self.io.stdin_position + count]
         memory.write(buffer, data)
