@@ -6,7 +6,7 @@
 | Binary | `angry_patched_skill_issues`, x86-64 PIE ELF, not stripped |
 | Input | stdin (`fgets`) |
 | Hints needed | `--flag-format 'L3AK{*}'` |
-| Answer | `L3AK{angr_4_ldf3_d0nt_do_i"_m4nU4lly}` |
+| Answer | `L3AK{angr_4_l@f3_d0nt_do_i@_m4nU4lly}` |
 
 ## The challenge
 
@@ -42,21 +42,20 @@ Solver:
   result: sat
 
 Solution:
-  L3AK{angr_4_ldf3_d0nt_do_i"_m4nU4lly}
+  L3AK{angr_4_l@f3_d0nt_do_i@_m4nU4lly}
 
 Verification:
   RevIR execution: passed (reaches the goal)
 ```
 
-## Why the hint, and why two characters differ
+## Why the hint, and the two free characters
 
 The relations do not pin every character: without a hint `solve` answers with a string that
 passes the check but is not the flag. The flag shape fills in most of what the conditions
-leave open — but not positions 13 and 26, where any of several characters satisfies the
-xors. The answer above is what the solver picks there, and the original binary accepts it:
-`--verify` prints `native (sandboxed): passed (exit status 0, prints "Congratulations !")`.
-The string the authors meant, `L3AK{angr_4_l@f3_d0nt_do_i@_m4nU4lly}`, passes the same
-check.
+leave open — all but positions 13 and 26, where any of several characters satisfies the
+xors. The solver picks `@` at both, which is the string the authors meant, and the original
+binary accepts it: `--verify` prints `native (sandboxed): passed (exit status 0, prints
+"Congratulations !")`.
 
 ## How ppy-rev gets there
 

@@ -152,6 +152,18 @@ class ConcreteMemory:
         for index, byte in enumerate(data):
             self._writes[address + index] = byte
 
+    def relocate(self, address: int, value: int, width: int) -> None:
+        """Fill in a pointer the way the loader does, before the program runs.
+
+        Relocations land in memory the program itself may not write — the GOT, once it is
+        made read-only again — so this writes without asking for write permission. It is
+        part of loading the image, not of executing it.
+        """
+        order = "little" if self.endianness is Endianness.LITTLE else "big"
+        self._checked(address, width // 8, write=False)
+        for index, byte in enumerate(value.to_bytes(width // 8, order)):
+            self._writes[address + index] = byte
+
     def load(self, address: int, width: int) -> int:
         order = "little" if self.endianness is Endianness.LITTLE else "big"
         return int.from_bytes(self.read(address, width // 8), order)

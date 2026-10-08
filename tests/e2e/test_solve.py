@@ -39,8 +39,11 @@ SUCCESS = {
     "simple_vm": b"Accepted",
     "format_goal": b"Welcome back, 0pen!",
     "float_check": b"Correct!",
+    "guarded_bytes": b"Correct!",
 }
-STDIN_FIXTURES = frozenset({"fgets_check", "stdin_read", "scanf_check"})
+STDIN_FIXTURES = frozenset(
+    {"fgets_check", "stdin_read", "scanf_check", "guarded_bytes", "brute_pin"}
+)
 SHORTEST = {
     "format_goal": b"0pen",
     "xor_check": b"rev_is_easy",
@@ -49,6 +52,7 @@ SHORTEST = {
     "recursive_check": b"recursive",
     "vm_check": b"Vm_0k!",
     "simple_vm": b"vM_l1ft!",
+    "guarded_bytes": b"m3rg3_th3_gu4rd!\n",  # stdin: the answer is a line
 }
 """Solutions that are unique once the shortest input is preferred."""
 VARIANTS = [(compiler, level) for compiler in ("gcc", "clang") for level in ("O0", "O2")]
@@ -257,6 +261,111 @@ def test_concolic_strategy(
     assert code == 0, text
     assert "note: concolic search:" in text
     assert SUCCESS["nested_branch"] in _native_output(binary, "nested_branch", output.read_bytes())
+
+
+def test_brute_force_solves_a_small_input_check(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A rolling-hash check over a tiny input: brute force runs every value and verifies."""
+    del analyzer
+    binary = compile_fixture.build("brute_pin", "gcc", "O0")
+    output = tmp_path / "solution"
+    code, text = _solve(
+        binary,
+        "--strategy",
+        "brute",
+        "--charset",
+        "digits",
+        "--length",
+        "4",
+        "-v",
+        "--output",
+        str(output),
+        capsys=capsys,
+    )
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "note: brute force:" in text
+    assert "RevIR execution: passed (reaches the goal)" in text
+    assert output.read_bytes() == b"4271"
+    assert b"Correct!" in _native_output(binary, "brute_pin", output.read_bytes())
+
+
+def test_from_function_solves_a_check_in_isolation(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """`--from` starts at a function with a symbolic buffer, the way a bomb phase is solved."""
+    binary = compile_fixture.build("isolated_check", "gcc", "O0")
+    module = analyzer.simplified(binary)
+    check = module.function_named("check")
+    boom = module.function_named("boom")
+    assert check is not None and boom is not None
+    output = tmp_path / "answer"
+    code, text = _solve(
+        binary,
+        "--from",
+        hex(check.entry),
+        "--avoid-address",
+        hex(boom.entry),
+        "--output",
+        str(output),
+        capsys=capsys,
+    )
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "in isolation" in text
+    assert output.read_bytes() == b"sesame"
+
+
+def test_chain_defuses_a_staged_driver(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """`--chain` finds a bomb's phases and the sink, solves each, and chains the lines.
+
+    The last phase reads six numbers in a recurrence: the single-pass parser would make one
+    heavy query for it, so the chain hands it fresh symbolic integers and renders a decimal
+    line instead, and the whole chain still has to drive the real program to its success.
+    """
+    del analyzer
+    binary = compile_fixture.build("staged_phases", "gcc", "O0")
+    output = tmp_path / "chain"
+    code, text = _solve(binary, "--chain", "-v", "--output", str(output), capsys=capsys)
+    assert code == 0, text
+    assert "result: sat" in text
+    assert "staged driver: 4 phases" in text
+    assert all(f"phase_{index}" in text for index in (1, 2, 3, 4))
+    assert "RevIR execution: passed (reaches the goal)" in text
+    combined = output.read_bytes()
+    assert combined.startswith(b"open sesame\n") and combined.endswith(b"\n")
+    assert combined.count(b"\n") == 4  # one line per phase, nothing merged
+    assert b"2 4 8 16 32 64\n" in combined  # the recurrence phase, solved as arithmetic
+    completed = subprocess.run(
+        [str(binary)], input=combined, capture_output=True, timeout=30, check=False
+    )
+    assert b"Congratulations! All phases defused." in completed.stdout
+
+
+def test_chain_declines_a_plain_check(
+    analyzer: Analyzer,
+    compile_fixture: type[FixtureCompiler],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A single-check crackme has no shared failure sink, so `--chain` says so and stops."""
+    del analyzer
+    binary = compile_fixture.build("xor_check", "gcc", "O0")
+    code = main(["solve", str(binary), "--chain", "--cache-dir", str(BUILD_ROOT / "cache")])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "no staged driver" in captured.err
 
 
 def test_analyze_reports_what_solving_uses(

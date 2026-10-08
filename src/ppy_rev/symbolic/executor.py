@@ -17,6 +17,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from ppy_rev.analysis.locations import Location
+from ppy_rev.analysis.program import external_objects
 from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import Slice
 from ppy_rev.diagnostics import DiagnosticCode
@@ -273,6 +274,7 @@ class Executor:
             for external in module.externals
             for address in external.addresses
         }
+        self._library_objects = external_objects(module)
         self._stack_pointer = module.target.stack_pointer
         self._pointer_width = module.target.pointer_width
         self._next_state = 0
@@ -286,6 +288,8 @@ class Executor:
         self._exploration = Exploration([], [], self.statistics)
         self._report_at = _REPORT_EVERY_STEPS
         self._helpers: dict[int, bool] = {}
+        self._deferred = 0
+        """Depth of branch regions whose forks are checked at the join, not as they fork."""
         self._created = time.monotonic()
         """When this executor was made: what the reported solver share is measured against."""
 
@@ -391,7 +395,7 @@ class Executor:
         known = self._helpers.get(address)
         if known is None:
             function = self._functions.get(address)
-            known = function is not None and mergeable_helper(function)
+            known = function is not None and mergeable_helper(function, lookup=self._functions.get)
             self._helpers[address] = known
         return known
 
@@ -712,13 +716,41 @@ class Executor:
         if self.feasible(state) is Status.UNSAT:
             raise _Stop(StopReason.FAULT, f"symbolic pointer at {origin.address:#x} faults")
 
+    def _fault_stop(self, address: int, fault: MemoryFaultError, origin: Origin) -> _Stop:
+        """A fault, unless it is an unmodeled library object the program is reading.
+
+        A program that really dereferences a bad pointer crashes, and a path that crashes
+        reaches nothing. But the same access happens when a library object ppy-rev does
+        not model — `std::cin`, say — is read: either as zeros, through a null pointer, or
+        at the address Ghidra gave the import. Calling those "no path reaches the goal"
+        would report a gap as a proof, so they stop the path as unsupported instead.
+        """
+        if address in self._library_objects:
+            name = self._library_objects.name_at(address)
+            described = (
+                f"the library object {name}" if name else f"a library object at {address:#x}"
+            )
+            return _Stop(
+                StopReason.UNSUPPORTED,
+                f"no model for {described}",
+                DiagnosticCode.UNSUPPORTED_OPERATION,
+            )
+        if address < _NULL_PAGE or address >= (1 << 64) - _NULL_PAGE:
+            return _Stop(
+                StopReason.UNSUPPORTED,
+                "null pointer dereference: a library object with no model, "
+                "or a pointer this analysis lost",
+                DiagnosticCode.UNSUPPORTED_OPERATION,
+            )
+        return _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}")
+
     def load(self, state: State, address: Expr, width: int, origin: Origin) -> Expr:
         size = width // 8
         if address.is_const:
             try:
                 return state.memory.load(address.value, width)
             except MemoryFaultError as fault:
-                raise _fault_stop(address.value, fault, origin) from fault
+                raise self._fault_stop(address.value, fault, origin) from fault
         candidates = self._candidates(state, address, size, False, self.budget.pointer_range)
         if not candidates:
             raise _Stop(StopReason.FAULT, f"symbolic load at {origin.address:#x} faults")
@@ -738,7 +770,7 @@ class Executor:
             try:
                 state.memory.store(address.value, value)
             except MemoryFaultError as fault:
-                raise _fault_stop(address.value, fault, origin) from fault
+                raise self._fault_stop(address.value, fault, origin) from fault
             return
         candidates = self._candidates(state, address, size, True, self.budget.store_range)
         if not candidates:
@@ -1119,6 +1151,8 @@ class Executor:
             self.add_constraint(child, condition, ConstraintKind.BRANCH, origin)
             if last and unsatisfiable == len(choices) - 1:
                 status = Status.SAT  # the parent was feasible and every other side was not
+            elif self._deferred:
+                status = Status.SAT  # asked at the join instead, where one answer covers all
             else:
                 status = self.feasible(child)
             if status is Status.UNSAT:
@@ -1201,7 +1235,33 @@ class Executor:
         shared_constraints = len(state.constraints)
         decisions = state.decisions
         checkpoint = state.memory.checkpoint()
-        pending, stopped = self._fork(state, choices, origin)
+        # Paths inside the region are not checked as they fork: the merge keeps only the
+        # ones that arrive, under the disjunction of their conditions, so an impossible
+        # one costs nothing there. Every path that leaves the region is checked below.
+        noted = set(self.statistics.hiding_approximations)
+        self._deferred += 1
+        try:
+            pending, stopped = self._fork(state, choices, origin)
+            arrived, escaped = self._run_region(pending, stopped, depth, region)
+        finally:
+            self._deferred -= 1
+        stopped = [stop for stop in stopped if self._possible(stop.state) is not Status.UNSAT]
+        escaped = self._possible_states(escaped)
+        if len(arrived) > 1:
+            merged = self._merge(arrived, shared_constraints, checkpoint, origin, region.join)
+            if merged is not None:
+                merged.decisions = decisions + 1
+                arrived = [merged]
+        successors = self._possible_states(arrived) + escaped
+        if not successors and not stopped:
+            # Nothing here can happen, so nothing an unchecked path approximated did.
+            self.statistics.hiding_approximations &= noted
+        return successors, stopped
+
+    def _run_region(
+        self, pending: list[State], stopped: list[Stopped], depth: int, region: MergeRegion
+    ) -> tuple[list[State], list[State]]:
+        """Run every forked path to the region's join; report the arrivals and the leavers."""
         arrived: list[State] = []
         escaped: list[State] = []
         while pending:
@@ -1228,13 +1288,22 @@ class Executor:
             else:
                 pending.extend(outcome[0])
                 stopped.extend(outcome[1])
-        if len(arrived) <= 1:
-            return arrived + escaped, stopped
-        merged = self._merge(arrived, shared_constraints, checkpoint, origin, region.join)
-        if merged is None:
-            return arrived + escaped, stopped
-        merged.decisions = decisions + 1
-        return [merged, *escaped], stopped
+        return arrived, escaped
+
+    def _possible(self, state: State) -> Status:
+        """Whether a path whose forks went unchecked can happen after all.
+
+        Only a definite `unsat` drops a path. When the solver cannot decide - it timed out
+        on the region's whole condition at once - the path is kept: dropping it would let
+        the search report "no path reaches the goal" when it had merely given up on one.
+        """
+        status = self.feasible(state)
+        if status is Status.UNSAT:
+            self.statistics.stops[StopReason.INFEASIBLE] += 1
+        return status
+
+    def _possible_states(self, states: list[State]) -> list[State]:
+        return [state for state in states if self._possible(state) is not Status.UNSAT]
 
     def _address_cells(self, state: State) -> set[int]:
         """Bytes of memory the current function loads addresses from, where known now.
@@ -1404,21 +1473,3 @@ def constant_choices(value: Expr, limit: int) -> list[int] | None:
         if len(found) > limit:
             return None
     return sorted(found)
-
-
-def _fault_stop(address: int, fault: MemoryFaultError, origin: Origin) -> _Stop:
-    """A fault, unless it is the null dereference an unmodeled library object leads to.
-
-    A program that really dereferences a null pointer crashes, and a path that crashes
-    reaches nothing. But the same access happens when a library object ppy-rev does not
-    model — `std::cin`, say — is read as zeros, and calling that "no path reaches the
-    goal" would report a gap as a proof.
-    """
-    if address < _NULL_PAGE or address >= (1 << 64) - _NULL_PAGE:
-        return _Stop(
-            StopReason.UNSUPPORTED,
-            "null pointer dereference: a library object with no model, "
-            "or a pointer this analysis lost",
-            DiagnosticCode.UNSUPPORTED_OPERATION,
-        )
-    return _Stop(StopReason.FAULT, f"{fault} at {origin.address:#x}")

@@ -10,13 +10,20 @@ from enum import StrEnum
 from pathlib import Path
 
 from ppy_rev.abi import calling_convention
+from ppy_rev.analysis.chain import ChainPlan, detect_chain
 from ppy_rev.analysis.flags import flag_prefixes
-from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
+from ppy_rev.analysis.goals import (
+    GoalCandidate,
+    Outcome,
+    printing_functions,
+    rank_goals,
+    shaped_successes,
+    sibling_successes,
+)
 from ppy_rev.analysis.inputs import InputCandidate, InputKind, discover_inputs
 from ppy_rev.analysis.program import (
     executable_address,
     find_main,
-    initializers,
     reachable_functions,
     string_references,
 )
@@ -24,13 +31,17 @@ from ppy_rev.analysis.reachability import GoalReachability
 from ppy_rev.analysis.slicing import backward_slice
 from ppy_rev.analysis.strings import describe_messages, printed_messages
 from ppy_rev.diagnostics import PpyRevError
+from ppy_rev.execution.brute import brute_force, feasible_space
+from ppy_rev.execution.memory import ConcreteMemory, Mapping
+from ppy_rev.execution.process import enter_call, standard_memory
 from ppy_rev.execution.program import enter_main, program_memory
 from ppy_rev.execution.run import Watch, run_program
+from ppy_rev.execution.startup import Initialization, run_initializers
 from ppy_rev.ir.model import Function, Module
 from ppy_rev.progress import Progress
 from ppy_rev.solver.backend import SolverBackend
 from ppy_rev.solver.z3_backend import Z3Backend
-from ppy_rev.summaries.symbolic import TRACED_SYMBOL, SymbolicLibc
+from ppy_rev.summaries.symbolic import CLOCK_SYMBOL, TRACED_SYMBOL, SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.concolic import ConcolicResult, concolic_search
 from ppy_rev.symbolic.executor import (
@@ -76,6 +87,19 @@ class SolveRequest:
     """Treat this many bytes of standard input as the input (default: discover)."""
     goal_address: int | None = None
     goal_string: str | None = None
+    from_function: int | None = None
+    """Solve a function in isolation, starting at this address with a symbolic input
+    buffer in the first argument - the way a check or a bomb phase is cracked."""
+    chain: bool = False
+    """Detect a staged driver (a bomb's phases) and solve every stage, chaining the
+    answers into one input, instead of solving the whole program at once."""
+    line_input: bool = False
+    """When solving a function in isolation, forbid a newline in the symbolic buffer, so
+    its answer is a single line that a line-at-a-time driver keeps whole."""
+    havoc_scanf: bool = False
+    """When solving a function in isolation, hand a numeric `sscanf` fresh symbolic
+    integers rather than parsing its buffer, and render the answer as a decimal line -
+    so a stage that reads several numbers is solved as arithmetic, not a byte search."""
     avoid_addresses: tuple[int, ...] = ()
     avoid_strings: tuple[str, ...] = ()
     length: int | None = None
@@ -103,6 +127,7 @@ class Strategy(StrEnum):
     """Symbolic search, then concolic search if that ends without an answer."""
     SYMBOLIC = "symbolic"
     CONCOLIC = "concolic"
+    BRUTE = "brute"
 
 
 class SolveStatus(StrEnum):
@@ -155,6 +180,8 @@ class Solution:
     """The sandboxed native run, when one was requested."""
     traced: bool = False
     """The answer only works while a debugger traces the program."""
+    clock: int | None = None
+    """The second the clock has to read, when the program asked it."""
     files: tuple[tuple[str, bytes], ...] = ()
     """What each file the program reads has to contain."""
 
@@ -209,6 +236,12 @@ def solve_module(
 ) -> SolveResult:
     started = time.monotonic()
     backend = backend or Z3Backend()
+    if request.chain:
+        return _solve_chain(module, request, backend, progress, started)
+    if request.from_function is not None:
+        return _solve_from_function(
+            module, request.from_function, request, backend, progress, started
+        )
     main = find_main(module)
     reachable = reachable_functions(module, main)
     goal, avoid = _select_goals(module, reachable, request)
@@ -233,17 +266,18 @@ def solve_module(
         )
 
     search = executor()
+    _, initialization = started_image(module)
     state, symbols = _initial_state(search, module, main, inputs, request)
     notes: list[str] = []
     solutions: list[Solution] = []
     exploration: Exploration | None = None
     status = SolveStatus.INCOMPLETE
-    if request.strategy is not Strategy.CONCOLIC:
+    if request.strategy not in (Strategy.CONCOLIC, Strategy.BRUTE):
         exploration = search.explore(state, max_reached=max(1, request.solutions))
         solutions, notes = _solutions(
             search, module, main, request, inputs, symbols, exploration, goal, avoid
         )
-        status = _status(exploration, solutions)
+        status = _status(exploration, solutions, initialization)
         notes += _incomplete_notes(exploration)
     if request.strategy is Strategy.CONCOLIC or (
         request.strategy is Strategy.AUTO and status in _CONCOLIC_FALLBACK
@@ -269,7 +303,22 @@ def solve_module(
                 search, module, main, request, inputs, symbols, exploration, goal, avoid
             )
             notes += concolic_notes
-            status = _concolic_status(result, solutions)
+            status = _concolic_status(result, solutions, initialization)
+    if request.strategy is Strategy.BRUTE:
+        # Brute force is offered only when asked for by name: without a charset and a length
+        # to bound it, blindly trying inputs pays for itself on almost nothing (measured),
+        # so it is a tool the user reaches for on a small, symex-hard input, not a default.
+        brute = _brute_force(
+            module, main, request, goal, avoid, inputs, symbols, _BRUTE_CANDIDATE_CAP
+        )
+        if brute is not None:
+            solution, tried = brute
+            solutions = [solution]
+            status = SolveStatus.SAT
+            notes.append(f"brute force: reached the goal after trying {tried} inputs")
+            exploration = None
+        elif not solutions:
+            notes.append("brute force: no input in the searched space reached the goal")
     reached = exploration.reached[0].state if exploration and exploration.reached else None
     smt2 = (
         search.session.smt2(reached.conditions())
@@ -304,8 +353,9 @@ def solve_module(
             dict.fromkeys(
                 notes
                 + _unsat_notes(status, inputs)
+                + goal_note(goal, status)
                 + _flag_format_note(module, request, solutions)
-                + _initializer_note(module)
+                + _initializer_note(initialization)
             )
         ),
         smt2=smt2,
@@ -323,7 +373,9 @@ _CONCOLIC_FALLBACK = frozenset(
 )
 
 
-def _concolic_status(result: ConcolicResult, solutions: list[Solution]) -> SolveStatus:
+def _concolic_status(
+    result: ConcolicResult, solutions: list[Solution], initialization: Initialization | None
+) -> SolveStatus:
     if solutions:
         return SolveStatus.SAT
     exploration = result.exploration
@@ -335,7 +387,8 @@ def _concolic_status(result: ConcolicResult, solutions: list[Solution]) -> Solve
     # was approximated or cut short on the way.
     if exploration.statistics.hiding_approximations or exploration.incomplete:
         return SolveStatus.INCOMPLETE
-    return SolveStatus.UNSAT
+    complete = initialization is None or initialization.complete
+    return SolveStatus.UNSAT if complete else SolveStatus.INCOMPLETE
 
 
 def _seed(
@@ -406,7 +459,16 @@ def reach(module: Module, request: SolveRequest, address: int) -> State | None:
 def _select_goals(
     module: Module, reachable: list[Function], request: SolveRequest
 ) -> tuple[GoalCandidate, list[GoalCandidate]]:
-    ranked = rank_goals(string_references(module, reachable))
+    references = string_references(module, reachable)
+    ranked = rank_goals(references, printing_functions(module))
+    if not any(candidate.outcome is Outcome.SUCCESS for candidate in ranked):
+        found = sibling_successes(module, reachable, ranked, references)
+        if not found:
+            found = shaped_successes(module, reachable, ranked)
+        ranked = sorted(
+            [*ranked, *found],
+            key=lambda candidate: (-candidate.confidence, candidate.address),
+        )
     goal: GoalCandidate
     if request.goal_address is not None:
         address = executable_address(module, request.goal_address)
@@ -430,7 +492,15 @@ def _select_goals(
         _by_string(module, reachable, text, Outcome.FAILURE) for text in request.avoid_strings
     )
     if request.goal_address is None and request.goal_string is None and not avoid:
-        avoid = [candidate for candidate in ranked if candidate.outcome is Outcome.FAILURE]
+        # Only a message the program hands to something else is a failure branch. An
+        # address that merely computes a pointer into the data is not: a table with no
+        # terminator reads as the literal after it, and avoiding the instruction that
+        # indexes that table would cut the loop the answer runs through.
+        avoid = [
+            candidate
+            for candidate in ranked
+            if candidate.outcome is Outcome.FAILURE and candidate.call is not None
+        ]
     return goal, [candidate for candidate in avoid if candidate.address != goal.address]
 
 
@@ -510,6 +580,271 @@ class _Symbols:
         ]
 
 
+def started_image(module: Module) -> tuple[ConcreteMemory, Initialization]:
+    """The image main really starts from: the program plus whatever its constructors wrote."""
+    memory = program_memory(module)
+    return memory, run_initializers(module, memory)
+
+
+_INPUT_BUFFER = 0x10000000
+"""Where a `--from` solve lays out the symbolic buffer the function is handed."""
+
+
+def _solve_from_function(
+    module: Module,
+    address: int,
+    request: SolveRequest,
+    backend: SolverBackend,
+    progress: Progress | None,
+    started: float,
+) -> SolveResult:
+    """Solve a function in isolation: start at it with a symbolic input buffer in arg 1.
+
+    This is how a check or a bomb phase is cracked - skip `main` and its input parsing, and
+    ask directly what the function has to be given to return without reaching a failure.
+    """
+    function = module.function_at(address)
+    if function is None:
+        raise PpyRevError(f"no function begins at {address:#x}")
+    length = request.length or request.max_length
+    convention = calling_convention(module.target)
+    first = convention.integer_parameters[0]
+    image = standard_memory(module)
+    image.map(Mapping("[input]", _INPUT_BUFFER, max(length + 16, 0x1000), True, True, None))
+    frame = enter_call(module, image, {first: _INPUT_BUFFER})
+    avoid = frozenset(request.avoid_addresses)
+    target = request.goal_address
+    goal = Goal(
+        addresses=frozenset({target}) if target is not None else frozenset(),
+        avoid=avoid,
+        on_return=None if target is not None else (lambda outputs: sx.TRUE),
+    )
+    reachability = GoalReachability(module, goal.addresses) if goal.addresses else None
+    libc = SymbolicLibc(convention)
+    libc.numeric_scanf_havoc = request.havoc_scanf
+    executor = Executor(
+        module,
+        backend,
+        goal,
+        libc,
+        request.budget,
+        reachability,
+        None,
+        progress,
+    )
+    registers: dict[str, Expr] = {
+        name: sx.const(value, module.register(name).width)
+        for name, value in frame.registers.items()
+        if any(register.name == name for register in module.registers)
+    }
+    values: dict[int, Expr] = {
+        item.value.id: registers.get(item.register, sx.const(0, item.value.width))
+        for item in function.inputs
+    }
+    memory = SymbolicMemory(image)
+    state = State(
+        id=executor.new_state_id(),
+        frames=[
+            Frame(
+                function=function,
+                block=0,
+                position=0,
+                values=values,
+                expected_return=sx.const(frame.return_address, module.target.pointer_width),
+                resume=None,
+            )
+        ],
+        memory=memory,
+    )
+    buffer = tuple(sx.symbol(f"input_{index:04}", 8) for index in range(length))
+    for index, symbol in enumerate(buffer):
+        memory.write_byte(_INPUT_BUFFER + index, symbol)
+    memory.write_byte(_INPUT_BUFFER + length, sx.const(0, 8))
+    terminated = (*buffer, sx.const(0, 8))
+    for condition in argv_constraints(
+        terminated, request.length, request.prefix, request.suffix, request.charset
+    ):
+        executor.add_constraint(state, condition, ConstraintKind.INPUT, None, "input")
+    if request.line_input:
+        # One line for a line-at-a-time driver: no embedded newline would split the answer.
+        for symbol in buffer:
+            no_newline = sx.bool_not(sx.equal(symbol, sx.const(NEWLINE, 8)))
+            executor.add_constraint(state, no_newline, ConstraintKind.INPUT, None, "line")
+    exploration = executor.explore(state, max_reached=max(1, request.solutions))
+    solutions: list[Solution] = []
+    if exploration.reached:
+        reached = exploration.reached[0].state
+        numbers = reached.io.scanf_values
+        model = executor.solve(reached, [*buffer, *(symbol for symbol, _ in numbers)])
+        if model is not None:
+            answer = (
+                _render_numbers(numbers, model) if numbers else argv_solution(terminated, model)
+            )
+            solutions.append(Solution(None, answer, False, "a function solved in isolation"))
+    status = SolveStatus.SAT if solutions else _status(exploration, solutions, None)
+    goal_candidate = GoalCandidate(
+        address, Outcome.SUCCESS, "", function.name, 1.0, ("solved in isolation",)
+    )
+    statistics = executor.statistics
+    return SolveResult(
+        target=f"{module.target.architecture} Linux ELF",
+        entry=function.name,
+        inputs=(InputDescription(InputKind.STDIN, None, length, True, ()),),
+        goal=goal_candidate,
+        avoid=tuple(GoalCandidate(a, Outcome.FAILURE, "", "", 1.0, ("given",)) for a in avoid),
+        status=status,
+        backend=backend.name,
+        solutions=tuple(solutions),
+        constraints=(),
+        statistics=SolveStatistics(
+            functions_lifted=len(module.functions),
+            relevant_blocks=len(statistics.blocks),
+            symbolic_operations=statistics.steps,
+            symbolic_branches=statistics.forks,
+            states=statistics.states,
+            solver_calls=statistics.solver_calls,
+            seconds=time.monotonic() - started,
+            sliced_operations=statistics.sliced,
+            solver_seconds=statistics.solver_seconds,
+        ),
+        notes=(
+            f"solved {function.name} in isolation from {address:#x} with a "
+            f"{length}-byte symbolic input buffer; the answer is those bytes",
+            *_incomplete_notes(exploration),
+        ),
+    )
+
+
+def _render_numbers(values: list[tuple[Expr, int]], model: dict[str, int]) -> bytes:
+    """A decimal line for the integers a numeric `sscanf` was handed, in read order.
+
+    Space-separated so any `%d` sequence parses it back, each read as signed at its width,
+    so re-running the real program on the line reproduces exactly the values solved for.
+    """
+    parts: list[str] = []
+    for symbol, store_size in values:
+        raw = model.get(symbol.name, 0)
+        bits = store_size * 8
+        parts.append(str(raw - (1 << bits) if raw >> (bits - 1) else raw))
+    return " ".join(parts).encode("ascii")
+
+
+def _solve_chain(
+    module: Module,
+    request: SolveRequest,
+    backend: SolverBackend,
+    progress: Progress | None,
+    started: float,
+) -> SolveResult:
+    """Detect a staged driver and solve every phase, chaining the answers into one input.
+
+    Each phase is solved the way `--from` solves a function in isolation - a symbolic line
+    in the first argument, returning without reaching the shared failure sink - and the per
+    phase lines are joined with newlines into the input the whole program takes. A phase the
+    solver cannot crack stops the chain, and the phases solved so far are still reported.
+    """
+    plan = detect_chain(module)
+    if plan is None:
+        raise PpyRevError(
+            "no staged driver found: expected a main calling several phases that share a "
+            "failure sink. Solve a single function with --from instead."
+        )
+    main = find_main(module)
+    reader = f", reading each line with {plan.reader_name}" if plan.reader_name else ""
+    notes = [
+        f"staged driver: {len(plan.stages)} phases, sink {plan.sink_name} at {plan.sink:#x}{reader}"
+    ]
+    lines: list[bytes] = []
+    status = SolveStatus.SAT
+    states = solver_calls = operations = branches = 0
+    solver_seconds = 0.0
+    for stage in plan.stages:
+        phase_request = replace(
+            request,
+            chain=False,
+            from_function=stage.entry,
+            line_input=True,
+            havoc_scanf=True,
+            goal_address=None,
+            goal_string=None,
+            avoid_addresses=(plan.sink, *request.avoid_addresses),
+        )
+        result = _solve_from_function(
+            module, stage.entry, phase_request, backend, progress, time.monotonic()
+        )
+        statistics = result.statistics
+        states += statistics.states
+        solver_calls += statistics.solver_calls
+        operations += statistics.symbolic_operations
+        branches += statistics.symbolic_branches
+        solver_seconds += statistics.solver_seconds
+        answer = result.solutions[0].stdin if result.solutions else None
+        if result.status is SolveStatus.SAT and answer is not None:
+            lines.append(answer)
+            notes.append(f"{stage.name} at {stage.entry:#x}: solved, line {answer!r}")
+        else:
+            notes.append(
+                f"{stage.name} at {stage.entry:#x}: {result.status.value}; chain stops here"
+            )
+            status = result.status
+            break
+    combined = b"\n".join(lines) + b"\n" if lines else b""
+    solved = bool(lines) and status is SolveStatus.SAT
+    goal, avoid = _chain_goal(module, main, request, plan)
+    solutions = (
+        (Solution(None, combined, False, "chained from each phase solved in isolation"),)
+        if solved
+        else ()
+    )
+    statistics = SolveStatistics(
+        functions_lifted=len(module.functions),
+        relevant_blocks=len(plan.stages),
+        symbolic_operations=operations,
+        symbolic_branches=branches,
+        states=states,
+        solver_calls=solver_calls,
+        seconds=time.monotonic() - started,
+        solver_seconds=solver_seconds,
+    )
+    outcome = SolveResult(
+        target=f"{module.target.architecture} Linux ELF",
+        entry=main.name,
+        inputs=(InputDescription(InputKind.STDIN, None, len(combined), True, ()),),
+        goal=goal,
+        avoid=avoid,
+        status=SolveStatus.SAT if solved else status,
+        backend=backend.name,
+        solutions=solutions,
+        constraints=(),
+        statistics=statistics,
+        notes=tuple(notes),
+    )
+    return verify_on(module, outcome) if solved else outcome
+
+
+def _chain_goal(
+    module: Module, main: Function, request: SolveRequest, plan: ChainPlan
+) -> tuple[GoalCandidate, tuple[GoalCandidate, ...]]:
+    """The whole-program success goal and the sink to avoid, for verifying the chain.
+
+    Discovered the ordinary way so verification re-runs the program to that success; when no
+    success message is found, the last phase returning stands in and only the sink is avoided.
+    """
+    sink = GoalCandidate(plan.sink, Outcome.FAILURE, "", plan.sink_name, 1.0, ("failure sink",))
+    reachable = reachable_functions(module, main)
+    discovery = replace(
+        request, chain=False, from_function=None, goal_address=None, goal_string=None
+    )
+    try:
+        goal, avoid = _select_goals(module, reachable, discovery)
+    except PpyRevError:
+        fallback = GoalCandidate(
+            plan.stages[-1].entry, Outcome.SUCCESS, "", main.name, 1.0, ("every phase solved",)
+        )
+        return fallback, (sink,)
+    return goal, (sink, *(item for item in avoid if item.address != plan.sink))
+
+
 def _initial_state(
     executor: Executor,
     module: Module,
@@ -522,7 +857,7 @@ def _initial_state(
     }
     count = max([0, *argv_inputs]) + 1
     arguments = [f"./{module.name}".encode()] + [b"" for _ in range(1, count)]
-    image = program_memory(module)
+    image, started = started_image(module)
     entry = enter_main(
         module,
         image,
@@ -537,6 +872,7 @@ def _initial_state(
         frames=[],
         memory=memory,
         io=SymbolicIO(
+            heap_next=started.heap_next,
             stdin=stdin_symbols(stdin_length),
             contents={
                 item.name: file_symbols(item.name, item.capacity)
@@ -627,7 +963,11 @@ def _solutions(
         found = False
         while len(solutions) < request.solutions:
             traced_symbol = state.io.traced
-            wanted = all_symbols if traced_symbol is None else [*all_symbols, traced_symbol]
+            opened = dict(sorted(state.io.contents.items()))
+            wanted = [*all_symbols, *(symbol for content in opened.values() for symbol in content)]
+            for chosen in (traced_symbol, state.io.clock):
+                if chosen is not None:
+                    wanted.append(chosen)
             model = executor.solve_with(state, wanted, [*blocking, *extra, *bounds])
             if model is None and bounds:
                 bounds = []  # other solutions may need longer strings
@@ -642,16 +982,32 @@ def _solutions(
                 stdin_solution(symbols.stdin, model, state.io.stdin_reads) if has_stdin else None
             )
             traced = traced_symbol is not None and model.get(TRACED_SYMBOL, 0) != 0
+            clock = model.get(CLOCK_SYMBOL) if state.io.clock is not None else None
             files = tuple(
-                (name, bytes(model.get(symbol.name, 0) for symbol in content).split(b"\0")[0])
-                for name, content in sorted(symbols.files.items())
+                (name, _file_content(name, content, model, state.io))
+                for name, content in opened.items()
             )
+            if not argv and not stdin and not any(content for _, content in files):
+                notes.append(
+                    "the goal is reached without reading the input: this answer says "
+                    "nothing about what the program wants"
+                )
             blocking.append(_block(symbols, argv, stdin))
             if (argv, stdin) not in seen:
                 seen.add((argv, stdin))
                 solutions.append(
                     _verify(
-                        module, main, request, goal, symbols, argv, stdin, watches, traced, files
+                        module,
+                        main,
+                        request,
+                        goal,
+                        symbols,
+                        argv,
+                        stdin,
+                        watches,
+                        traced,
+                        files,
+                        clock,
                     )
                 )
         return found
@@ -735,6 +1091,79 @@ def _block(symbols: _Symbols, argv: bytes | None, stdin: bytes | None) -> Expr:
     return sx.bool_or(*differences) if differences else sx.FALSE
 
 
+def _file_content(
+    name: str, content: tuple[Expr, ...], model: dict[str, int], io: SymbolicIO
+) -> bytes:
+    """What a file has to contain: as far as the program read it.
+
+    A file is not NUL-terminated, so cutting at the first zero byte would drop whatever
+    the program went on to read — the newline ending a line, say. A file read a line at a
+    time ends with that line, since nothing past it was ever looked at.
+    """
+    raw = bytes(model.get(symbol.name, 0) for symbol in content)
+    terminator = raw.find(b"\0")
+    end = max(len(raw) if terminator < 0 else terminator, io.read_to.get(name, 0))
+    newline = raw.find(b"\n")
+    if name in io.line_read and 0 <= newline < end:
+        return raw[: newline + 1]
+    return raw[:end]
+
+
+_BRUTE_MAX_LENGTH = 8
+"""Longest input brute force will try when the length is not pinned down."""
+_BRUTE_CANDIDATE_CAP = 8_000_000
+"""A ceiling on inputs tried, so a space too large is skipped rather than crawled."""
+
+
+def _brute_force(
+    module: Module,
+    main: Function,
+    request: SolveRequest,
+    goal: GoalCandidate,
+    avoid: list[GoalCandidate],
+    inputs: list[InputDescription],
+    symbols: _Symbols,
+    cap: int,
+) -> tuple[Solution, int] | None:
+    """Try every small input concretely; a Solution and the count tried, or None.
+
+    Only a single argv argument or stdin is handled - the whole-input check that a small
+    crackme makes and symbolic execution cannot invert. Nothing runs when the space is too
+    large for the candidate ceiling.
+    """
+    if len(inputs) != 1:
+        return None
+    only = inputs[0]
+    if only.kind not in (InputKind.ARGV, InputKind.STDIN):
+        return None
+    if request.length:
+        lengths: tuple[int, ...] = (request.length,)
+    else:
+        lengths = tuple(range(1, min(only.max_bytes, _BRUTE_MAX_LENGTH) + 1))
+    fitting: list[int] = []
+    for length in lengths:
+        if feasible_space(request.charset, (*fitting, length), cap):
+            fitting.append(length)
+    if not fitting:
+        return None
+    watches = (_watch("goal", goal), *(_watch("avoid", candidate) for candidate in avoid))
+    result = brute_force(
+        module,
+        main,
+        watches,
+        only.kind,
+        only.index,
+        tuple(fitting),
+        request.charset,
+        time.monotonic() + request.budget.max_seconds,
+        cap,
+    )
+    if result.solution is None:
+        return None
+    solution = _verify(module, main, request, goal, symbols, result.argv, result.stdin, watches)
+    return solution, result.candidates
+
+
 def _verify(
     module: Module,
     main: Function,
@@ -746,22 +1175,27 @@ def _verify(
     watches: tuple[Watch, ...],
     traced: bool = False,
     files: tuple[tuple[str, bytes], ...] = (),
+    clock: int | None = None,
 ) -> Solution:
     reserve = {index: len(content) for index, content in symbols.argv.items()}
     arguments = _arguments(module, reserve, argv)
     verified, verification = _run_verification(
-        module, main, arguments, stdin, watches, reserve, traced, dict(files)
+        module, main, arguments, stdin, watches, reserve, traced, dict(files), clock
     )
     if request.native is None:
         native = None
     elif traced:
         native = NativeVerification(None, "not run: this answer needs a debugger attached")
+    elif clock is not None:
+        native = NativeVerification(
+            None, f"not run: this answer needs the clock to read {clock} seconds"
+        )
     elif files:
         named = ", ".join(name for name, _ in files)
         native = NativeVerification(None, f"not run: the answer is the contents of {named}")
     else:
         native = _run_native(request, arguments, stdin, goal)
-    return Solution(argv, stdin, verified, verification, native, traced, files)
+    return Solution(argv, stdin, verified, verification, native, traced, clock, files)
 
 
 def _arguments(module: Module, reserve: dict[int, int], argv: bytes | None) -> list[bytes]:
@@ -781,6 +1215,7 @@ def _run_verification(
     reserve: dict[int, int],
     traced: bool = False,
     files: dict[str, bytes] | None = None,
+    clock: int | None = None,
 ) -> tuple[bool, str]:
     run = run_program(
         module,
@@ -791,6 +1226,7 @@ def _run_verification(
         reserve=reserve,
         traced=traced,
         files=files,
+        clock=clock,
     )
     verified = run.first_watch is not None and run.first_watch.name == "goal"
     return verified, "reaches the goal" if verified else run.outcome
@@ -855,7 +1291,9 @@ def _printed_fragments(text: str) -> list[bytes]:
     ]
 
 
-def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:
+def _status(
+    exploration: Exploration, solutions: list[Solution], initialization: Initialization | None
+) -> SolveStatus:
     if solutions:
         return SolveStatus.SAT
     if exploration.reached:
@@ -875,7 +1313,10 @@ def _status(exploration: Exploration, solutions: list[Solution]) -> SolveStatus:
         return SolveStatus.UNSUPPORTED
     if reasons & INCOMPLETE_REASONS:
         return SolveStatus.INCOMPLETE
-    return SolveStatus.UNSAT
+    # `unsat` claims every path was explored; a constructor that would not run means
+    # main started from an image the real program never has.
+    complete = initialization is None or initialization.complete
+    return SolveStatus.UNSAT if complete else SolveStatus.INCOMPLETE
 
 
 def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
@@ -893,12 +1334,9 @@ def _constraints(state: State | None) -> tuple[ConstraintRecord, ...]:
     )
 
 
-def _initializer_note(module: Module) -> list[str]:
-    """Say when a constructor runs before main, since solving does not model it."""
-    return [
-        f"code runs before main: {item.name} calls {', '.join(item.library_calls)} (not modeled)"
-        for item in initializers(module)
-    ]
+def _initializer_note(initialization: Initialization) -> list[str]:
+    """Say which constructors could not be run, since main then starts from less."""
+    return [f"code runs before main: {note} (not modeled)" for note in initialization.notes()]
 
 
 def _flag_format_note(
@@ -929,6 +1367,23 @@ def _incomplete_notes(exploration: Exploration) -> list[str]:
     for stop in exploration.incomplete[:10]:
         notes.append(_describe_stop(stop))
     return notes
+
+
+def goal_note(goal: GoalCandidate, status: SolveStatus) -> list[str]:
+    """Say when `unsat` is about a goal that was picked by its shape rather than its words.
+
+    Such a goal is a guess about which outcome is the good one, so "no input reaches it"
+    is a much smaller claim than it looks.
+    """
+    if status is not SolveStatus.UNSAT or goal.confidence >= _CONFIDENT_GOAL:
+        return []
+    return [
+        f"the goal at {goal.address:#x} was chosen by how it is reached rather than by "
+        "what it says: another outcome may be the one worth solving for"
+    ]
+
+
+_CONFIDENT_GOAL = 0.7
 
 
 def _unsat_notes(status: SolveStatus, inputs: list[InputDescription]) -> list[str]:

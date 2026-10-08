@@ -6,12 +6,19 @@ from collections import Counter
 from dataclasses import dataclass
 
 from ppy_rev.analysis.flags import flag_prefixes
-from ppy_rev.analysis.goals import GoalCandidate, Outcome, rank_goals
+from ppy_rev.analysis.goals import (
+    GoalCandidate,
+    Outcome,
+    printing_functions,
+    rank_goals,
+    shaped_successes,
+    sibling_successes,
+)
 from ppy_rev.analysis.inputs import InputCandidate, discover_inputs
 from ppy_rev.analysis.program import (
     Initializer,
+    deferred_initializers,
     find_main,
-    initializers,
     reachable_functions,
     string_references,
 )
@@ -51,7 +58,7 @@ class AnalysisReport:
     printed: tuple[tuple[int, str], ...]
     """(instruction, message) for what the program prints, when nothing ranked as success."""
     initializers: tuple[Initializer, ...]
-    """Constructors that run before main and are not modeled."""
+    """Constructors that run before main and cannot be run without the input."""
     dispatchers: tuple[Dispatcher, ...]
     diagnostics: tuple[tuple[str, int], ...]
     """Lifting diagnostic codes in functions reachable from main, with their counts."""
@@ -64,7 +71,16 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
         main = None
     reachable = reachable_functions(module, main) if main is not None else []
     reachable_entries = {function.entry for function in reachable}
-    ranked = rank_goals(string_references(module, reachable)) if reachable else []
+    references = string_references(module, reachable) if reachable else []
+    ranked = rank_goals(references, printing_functions(module)) if reachable else []
+    if reachable and not any(candidate.outcome is Outcome.SUCCESS for candidate in ranked):
+        found = sibling_successes(module, reachable, ranked, references)
+        if not found:
+            found = shaped_successes(module, reachable, ranked)
+        ranked = sorted(
+            [*ranked, *found],
+            key=lambda candidate: (-candidate.confidence, candidate.address),
+        )
     successes = tuple(item for item in ranked if item.outcome is Outcome.SUCCESS)
     failures = tuple(item for item in ranked if item.outcome is Outcome.FAILURE)
     goal = successes[0] if successes else None
@@ -98,7 +114,7 @@ def analyze_module(module: Module, diagnostics: tuple[Diagnostic, ...]) -> Analy
         ),
         flag_formats=tuple(flag_prefixes(module)),
         printed=() if successes else printed_messages(module, reachable),
-        initializers=initializers(module),
+        initializers=deferred_initializers(module),
         dispatchers=tuple(
             item for item in detect_dispatchers(module) if item.confidence >= LIKELY_DISPATCHER
         ),

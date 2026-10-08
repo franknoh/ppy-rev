@@ -14,7 +14,11 @@ from ppy_rev.vm.detect import Dispatcher
 from ppy_rev.vm.lift import LiftedVm
 
 _PRINTABLE = frozenset(range(0x20, 0x7F))
-_ALWAYS_SHOWN = ("the program mentions", "code runs before main")
+_ALWAYS_SHOWN = (
+    "the program mentions",
+    "code runs before main",
+    "the goal is reached without reading the input",
+)
 """Notes worth printing even when an answer was found."""
 
 
@@ -43,7 +47,14 @@ def render_info(info: ProgramInfo, out: TextIO) -> None:
 
 
 def solution_bytes(solution: Solution) -> bytes:
-    return solution.argv if solution.argv is not None else solution.stdin or b""
+    """What `--output` writes: the input the program reads, whichever kind it is."""
+    if solution.argv is not None:
+        return solution.argv
+    if solution.stdin:
+        return solution.stdin
+    if solution.files:
+        return solution.files[0][1]
+    return solution.stdin or b""
 
 
 def _content(data: bytes, indent: str = "  ") -> str:
@@ -106,7 +117,8 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
             f"  states: {statistics.states}\n"
             f"  solver calls: {statistics.solver_calls}\n"
             f"  sliced operations: {statistics.sliced_operations}\n"
-            f"  seconds: {statistics.seconds:.2f}\n"
+            f"  seconds: {statistics.seconds:.2f}"
+            f" ({statistics.solver_seconds:.2f} in the solver)\n"
         )
     out.write(f"\nSolver:\n  backend: {result.backend}\n  result: {result.status}\n")
     hints = [note for note in result.notes if note.startswith(_ALWAYS_SHOWN)]
@@ -127,6 +139,8 @@ def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
         verdict = "passed" if solution.verified else "failed"
         if solution.traced:
             out.write("  needs a debugger: ptrace(PTRACE_TRACEME) must fail\n")
+        if solution.clock is not None:
+            out.write(f"  needs the clock to read {solution.clock} seconds\n")
         out.write(f"\nVerification:\n  RevIR execution: {verdict} ({solution.verification})\n")
         if solution.native is not None:
             passed = solution.native.passed
@@ -227,7 +241,14 @@ def render_lifted_vm(target: str, lifted: LiftedVm, out: TextIO) -> None:
 
 def _outcome(candidate: GoalCandidate) -> str:
     text = json.dumps(candidate.text)
-    use = f"{candidate.call}({text})" if candidate.call else f"uses {text}"
+    if not candidate.text:
+        # An outcome recognized by its shape: nothing here can be read as a message.
+        if candidate.call in ("return", "exit", "_exit"):
+            use = f"leaves well by {candidate.call}"
+        else:
+            use = f"calls {candidate.call}" if candidate.call else "runs"
+    else:
+        use = f"{candidate.call}({text})" if candidate.call else f"uses {text}"
     return f"  {candidate.confidence:.2f}  {candidate.address:#x}  {use} in {candidate.function}\n"
 
 
@@ -277,7 +298,7 @@ def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
         calls = ", ".join(item.library_calls)
         out.write(
             f"\nRuns before main:\n  {item.name} at {item.address:#x} calls {calls}\n"
-            "  not modeled: solving starts at main\n"
+            "  not run: what it does depends on the input\n"
         )
     if verbose:
         for item in reachable:

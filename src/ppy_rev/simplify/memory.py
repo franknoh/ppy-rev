@@ -122,14 +122,19 @@ def canonical_address(
 ) -> CanonicalAddress:
     offset = 0
     current = address
+    seen: set[int] = set()
     while not isinstance(current, Const):
         definition = definitions.get(current.id)
         if (
             definition is None
             or definition.opcode not in (BinaryOpcode.ADD, BinaryOpcode.SUB)
             or not isinstance(definition.right, Const)
+            or current.id in seen
         ):
+            # A value defined from itself is not RevIR a lifter should produce, but
+            # following one would not end: it is a base like any other value here.
             return CanonicalAddress(current.id, offset & mask(width))
+        seen.add(current.id)
         delta = definition.right.value
         offset += delta if definition.opcode is BinaryOpcode.ADD else -delta
         current = definition.left

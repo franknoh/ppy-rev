@@ -24,6 +24,8 @@ from ppy_rev.ir.model import (
     Unsupported,
     UserOp,
     Var,
+    operation_inputs,
+    operation_output,
 )
 from ppy_rev.ir.validate import validate_module
 from ppy_rev.lift.lifter import LiftResult, lift_export
@@ -360,3 +362,69 @@ def test_lifting_is_deterministic() -> None:
         return format_module(lift_export(program.build()).module)
 
     assert build() == build()
+
+
+def test_a_loop_back_to_the_entry_reads_the_register_the_caller_left() -> None:
+    """A function entered inside its own loop, reading a register nothing writes.
+
+    The code before the entry falls into it, so the entry block has a predecessor and no
+    value comes from outside. Nothing defines RAX on that path either, so the value is
+    the one the caller left, and it is a function input. Building this used to raise.
+    """
+    program = ProgramBuilder()
+    program.code(0x1000, [op("STORE", [reg("RSP"), reg("RAX")])])  # falls into the entry
+    entry = program.code(
+        0x1004,
+        [
+            op("INT_EQUAL", [reg("RDI"), const(0, 8)], reg("ZF")),
+            op("CBRANCH", [ram(0x1000), reg("ZF")]),
+        ],
+    )
+    program.code(entry, ret(), length=1)
+    program.function("f", 0x1004)
+    result = _lift(program)
+    function = _function(result.module, "f")
+    assert "RAX" in [item.register for item in function.inputs]
+    assert result.diagnostics == ()
+    # The entry gets a block of its own with nothing in it, so that the value carried
+    # around the loop has somewhere to come from on the way in. Without it, the phi for
+    # that value is replaced by a definition that reads it, and the simplifier walks
+    # that definition for ever.
+    entry, *rest = function.blocks
+    assert entry.operations == () and entry.phis == ()
+    assert isinstance(entry.terminator, Jump)
+    assert all(block.id != 0 for block in rest)
+    for block in function.blocks:
+        for operation in block.operations:
+            outputs = {output.id for output in operation_output(operation)}
+            assert not outputs & {
+                value.id for value in operation_inputs(operation) if isinstance(value, Var)
+            }, operation
+
+
+def test_deeply_nested_branches_lift() -> None:
+    """SSA construction follows one predecessor edge per few frames.
+
+    Python's default recursion limit runs out after a few hundred nested branches, which
+    is well within what an unrolled checker reaches.
+    """
+    program = ProgramBuilder()
+    address = 0x1000
+    depth = 400
+    for _ in range(depth):
+        skip = address + 8
+        program.code(
+            address,
+            [
+                op("INT_ADD", [reg("RAX"), const(1, 8)], reg("RAX")),
+                op("INT_EQUAL", [reg("RDI"), reg("RAX")], reg("ZF")),
+                op("CBRANCH", [ram(skip), reg("ZF")]),
+            ],
+            length=4,
+        )
+        program.code(address + 4, [op("INT_ADD", [reg("RCX"), const(1, 8)], reg("RCX"))], length=4)
+        address = skip
+    program.code(address, ret(), length=1)
+    program.function("f", 0x1000)
+    function = _function(_lift(program).module, "f")
+    assert len(function.blocks) > depth

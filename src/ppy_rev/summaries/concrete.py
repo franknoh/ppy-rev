@@ -8,16 +8,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import ConcreteMemory
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
+    CXX_CTYPE,
+    CXX_IOS_VTABLE,
+    DEFAULT_CLOCK,
     ERRNO_ADDRESS,
     FILE_HANDLE_STEP,
     FILE_HANDLES,
     HEAP_SIZE,
     HEAP_START,
+    PROCESS_IDS,
     STANDARD_STREAMS,
 )
 from ppy_rev.ir.model import mask
@@ -52,6 +57,8 @@ class ConcreteIO:
     random: RandomState = UNSEEDED
     traced: bool = False
     """Whether a debugger traces the program, so `ptrace(PTRACE_TRACEME)` fails."""
+    clock: int = DEFAULT_CLOCK
+    """What `time(NULL)` reads: the second the program is being run in."""
     files: dict[str, bytes] = field(default_factory=dict[str, bytes])
     """What each file the program opens contains."""
     open_files: dict[int, str] = field(default_factory=dict[int, str])
@@ -69,6 +76,10 @@ class ConcreteLibc:
         self.io = io or ConcreteIO()
         self._handlers: dict[str, _Handler] = {
             "strlen": self._strlen,
+            "strnlen": self._strnlen,
+            "sscanf": self._sscanf,
+            "write": self._write_descriptor,
+            **{name: partial(self._process_id, name=name) for name in PROCESS_IDS},
             "strcmp": self._strcmp,
             "strncmp": self._strncmp,
             "memcmp": self._memcmp,
@@ -79,8 +90,26 @@ class ConcreteLibc:
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "strchr": self._strchr,
+            "memchr": self._memchr,
             "std::getline": self._getline,
+            "std::ifstream::ifstream": self._ifstream_open,
+            "std::ifstream::is_open": self._ifstream_is_open,
+            "std::ifstream::close": self._ifstream_close,
+            "std::ios::fail": lambda arguments, memory: 0,
+            "std::ios::good": lambda arguments, memory: 1,
+            "std::ios::eof": self._ios_eof,
+            "std::allocator": lambda arguments, memory: arguments[0],
             "std::string::string": self._string_new,
+            "std::string::string()": self._string_empty_new,
+            "std::string::_M_local_data": lambda arguments, memory: arguments[0] + cxx.BUFFER,
+            "std::string::_M_data=": self._string_set_data,
+            "std::string::_M_set_length": self._string_set_length,
+            "std::string::_M_capacity": self._string_set_capacity,
+            "std::string::_S_copy_chars": self._string_copy_chars,
+            "std::string::_M_create": self._string_create,
+            "std::string::operator+=": self._string_append,
+            "std::string::operator=": self._string_assign,
+            "std::string::operator=copy": self._string_assign_copy,
             "std::string::~string": lambda arguments, memory: 0,
             "std::string::size": lambda arguments, memory: self._string_field(
                 memory, arguments[0], cxx.SIZE
@@ -93,6 +122,10 @@ class ConcreteLibc:
             ),
             "std::ostream::operator<<": self._ostream_write,
             "std::istream::operator>>": self._istream_read,
+            **{
+                name: partial(self._istream_number, width=width)
+                for name, width in cxx.NUMBER_WIDTHS.items()
+            },
             "std::endl": self._endl,
             "std::string::at": lambda arguments, memory: (
                 (self._string_field(memory, arguments[0], cxx.DATA) + arguments[1]) & mask(64)
@@ -124,6 +157,21 @@ class ConcreteLibc:
             "rewind": self._rewind,
             "gets": self._gets,
             "srand": self._srand,
+            "time": self._time,
+            "sleep": lambda arguments, memory: 0,
+            "usleep": lambda arguments, memory: 0,
+            "alarm": lambda arguments, memory: 0,
+            "signal": lambda arguments, memory: 0,
+            "close": lambda arguments, memory: 0,
+            "unlink": lambda arguments, memory: 0,
+            "sigemptyset": lambda arguments, memory: 0,
+            "getenv": lambda arguments, memory: 0,
+            "access": lambda arguments, memory: mask(64),
+            "fileno": self._fileno,
+            "dup2": lambda arguments, memory: arguments[1],
+            "perror": lambda arguments, memory: 0,
+            "sigaction": lambda arguments, memory: 0,
+            "clock": lambda arguments, memory: 0,
             "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
@@ -143,12 +191,23 @@ class ConcreteLibc:
             "malloc": self._malloc,
             "calloc": self._calloc,
             "free": lambda arguments, memory: 0,
+            "operator new": self._malloc,
+            "operator delete": lambda arguments, memory: 0,
+            "std::ios_base::Init::Init": lambda arguments, memory: 0,
+            "std::ios_base::Init::~Init": lambda arguments, memory: 0,
+            "__cxa_atexit": lambda arguments, memory: 0,
+            "__cxa_guard_acquire": self._guard_acquire,
+            "__cxa_guard_release": self._guard_release,
+            "__cxa_guard_abort": lambda arguments, memory: 0,
             "atoi": self._atoi,
             "atol": self._atol,
             "atoll": self._atol,
             "strtol": self._strtol,
             "strtoll": self._strtol,
+            "strtoul": self._strtol,
+            "strtoull": self._strtol,
             "scanf": self._scanf,
+            "fscanf": self._fscanf,
             "__errno_location": lambda arguments, memory: ERRNO_ADDRESS,
             "toupper": lambda arguments, memory: self._case(ctype.to_upper, arguments),
             "tolower": lambda arguments, memory: self._case(ctype.to_lower, arguments),
@@ -184,6 +243,26 @@ class ConcreteLibc:
 
     def _strlen(self, arguments: list[int], memory: ConcreteMemory) -> int:
         return len(self._string(memory, arguments[0]))
+
+    def _strnlen(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return len(self._string(memory, arguments[0], arguments[1]))
+
+    @staticmethod
+    def _process_id(arguments: list[int], memory: ConcreteMemory, name: str) -> int:
+        del arguments, memory
+        return PROCESS_IDS[name]
+
+    def _write_descriptor(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`write(fd, buffer, count)` to stdout or stderr; another descriptor has no model."""
+        descriptor, buffer, count = arguments[0] & 0xFFFFFFFF, arguments[1], arguments[2]
+        if descriptor not in (1, 2):
+            raise UnsupportedLibraryCallError(f"write to file descriptor {descriptor}")
+        self.io.stdout += memory.read(buffer, count)
+        return count
+
+    def _sscanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`sscanf(text, ...)`: scanf over a string in memory rather than a stream."""
+        return self._scan_into(arguments, memory, 1, self._string(memory, arguments[0]))[1]
 
     def _strcmp(self, arguments: list[int], memory: ConcreteMemory) -> int:
         left = self._string(memory, arguments[0]) + b"\0"
@@ -232,6 +311,11 @@ class ConcreteLibc:
         memory.write(arguments[0], source[:size] + b"\0" * (size - len(source[:size])))
         return arguments[0]
 
+    def _memchr(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`memchr(s, c, n)`: the first `c` in `n` bytes, NULL if there is none."""
+        found = memory.read(arguments[0], arguments[2]).find(arguments[1] & 0xFF)
+        return 0 if found < 0 else arguments[0] + found
+
     def _strchr(self, arguments: list[int], memory: ConcreteMemory) -> int:
         text = self._string(memory, arguments[0])
         wanted = arguments[1] & 0xFF
@@ -258,7 +342,7 @@ class ConcreteLibc:
 
     def _read(self, arguments: list[int], memory: ConcreteMemory) -> int:
         descriptor, buffer, count = arguments[0] & 0xFFFFFFFF, arguments[1], arguments[2]
-        if descriptor != 0:
+        if descriptor in (1, 2):
             raise UnsupportedLibraryCallError(f"read from file descriptor {descriptor}")
         data = self.io.stdin[self.io.stdin_position : self.io.stdin_position + count]
         memory.write(buffer, data)
@@ -337,6 +421,63 @@ class ConcreteLibc:
         memory.store(object_at + cxx.SIZE, len(content), 64)
         memory.write(buffer, content + b"\0")
 
+    def _string_set_data(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_M_data(p)`, and the `_Alloc_hider` constructor that is the same store."""
+        memory.store(arguments[0] + cxx.DATA, arguments[1], 64)
+        return arguments[0]
+
+    def _string_set_length(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_M_set_length(n)`: the length, and the terminator the string keeps after it."""
+        object_at, length = arguments[0], arguments[1]
+        memory.store(object_at + cxx.SIZE, length, 64)
+        memory.write(self._string_field(memory, object_at, cxx.DATA) + length, b"\0")
+        return object_at
+
+    def _string_set_capacity(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        memory.store(arguments[0] + cxx.CAPACITY, arguments[1], 64)
+        return arguments[0]
+
+    def _string_copy_chars(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_S_copy_chars(destination, first, last)`: the copy a construction ends with."""
+        destination, first, last = arguments[0], arguments[1], arguments[2]
+        memory.write(destination, memory.read(first, max(0, last - first)))
+        return destination
+
+    def _string_create(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`_M_create(capacity, old)`: a buffer for a string too long to live in the object."""
+        wanted = memory.load(arguments[1], 64)
+        buffer = self._allocate(wanted + 1)
+        if not buffer:
+            raise UnsupportedLibraryCallError("a std::string longer than the heap can hold")
+        memory.store(arguments[1], wanted, 64)
+        return buffer
+
+    def _string_append(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`s += c`: one character onto the end, moving to the heap if it no longer fits."""
+        object_at, character = arguments[0], arguments[1] & 0xFF
+        data = self._string_field(memory, object_at, cxx.DATA)
+        length = self._string_field(memory, object_at, cxx.SIZE)
+        self._store_string(memory, object_at, memory.read(data, length) + bytes([character]))
+        return object_at
+
+    def _string_assign(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`s = "text"`: the object holds what the C string holds."""
+        self._store_string(memory, arguments[0], self._string(memory, arguments[1]))
+        return arguments[0]
+
+    def _string_assign_copy(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`s = other`: the same bytes in a second object."""
+        other = arguments[1]
+        data = self._string_field(memory, other, cxx.DATA)
+        length = self._string_field(memory, other, cxx.SIZE)
+        self._store_string(memory, arguments[0], memory.read(data, length))
+        return arguments[0]
+
+    def _string_empty_new(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`std::string s;`: an empty object, whatever the registers happen to hold."""
+        self._store_string(memory, arguments[0], b"")
+        return arguments[0]
+
     def _string_new(self, arguments: list[int], memory: ConcreteMemory) -> int:
         source = arguments[1]
         content = self._string(memory, source) if source else b""
@@ -367,15 +508,58 @@ class ConcreteLibc:
         self.io.stdin_position += skipped + end
         return arguments[0]
 
+    def _istream_number(self, arguments: list[int], memory: ConcreteMemory, width: int) -> int:
+        """`in >> n`: whitespace, then a number, exactly as `scanf("%d")` reads one."""
+        directives = [
+            scanning.Directive(scanning.DirectiveKind.SPACE),
+            scanning.Directive(scanning.DirectiveKind.DECIMAL, store_size=width),
+        ]
+        scanned = scanning.scan(directives, self.io.stdin[self.io.stdin_position :])
+        self.io.stdin_position += scanned.consumed
+        for assignment in scanned.assignments:
+            if isinstance(assignment.content, int):
+                memory.store(arguments[1], assignment.content & mask(width * 8), width * 8)
+        return arguments[0]
+
     def _getline(self, arguments: list[int], memory: ConcreteMemory) -> int:
-        remaining = self.io.stdin[self.io.stdin_position :]
+        """`std::getline(in, s)`: from the terminal, or from a file the program opened."""
+        stream = arguments[0] if arguments[0] in self.io.open_files else STANDARD_STREAMS["stdin"]
+        content, position = self._stream(stream)
+        remaining = content[position:]
         if not remaining:
             return arguments[0]
         newline = remaining.find(b"\n")
-        content = remaining if newline < 0 else remaining[:newline]
-        self._store_string(memory, arguments[1], content)
-        self.io.stdin_position += len(content) + (0 if newline < 0 else 1)
+        line = remaining if newline < 0 else remaining[:newline]
+        self._store_string(memory, arguments[1], line)
+        self._advance(stream, len(line) + (0 if newline < 0 else 1))
         return arguments[0]
+
+    def _ifstream_open(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`std::ifstream file(path)`: the object stands in for the stream it opens."""
+        self.io.open_files[arguments[0]] = self._string(memory, arguments[1]).decode("latin-1")
+        self.io.file_positions[arguments[0]] = 0
+        # Optimized code reads the stream through its own vtable, as it does for `cin`.
+        memory.store(arguments[0], CXX_IOS_VTABLE, 64)
+        if memory.mapping_at(arguments[0] + cxx.IOS_FACET) is not None:
+            memory.store(arguments[0] + cxx.IOS_FACET, CXX_CTYPE, 64)
+        return arguments[0]
+
+    def _ios_eof(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """Whether the program has read everything the stream holds."""
+        del memory
+        stream = arguments[0] if arguments[0] in self.io.open_files else STANDARD_STREAMS["stdin"]
+        content, position = self._stream(stream)
+        return int(position >= len(content))
+
+    def _ifstream_is_open(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """The file opened: its contents are an input, so it exists."""
+        del arguments, memory
+        return 1
+
+    def _ifstream_close(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        del memory
+        self.io.file_positions.pop(arguments[0], None)
+        return 0
 
     def _seek(self, stream: int, offset: int, whence: int) -> int:
         content, position = self._stream(stream)
@@ -461,6 +645,12 @@ class ConcreteLibc:
         self._advance(stream, len(taken))
         return len(taken) // size if size else 0
 
+    def _time(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`time(t)`: the second this run is happening in, stored too when asked."""
+        if arguments[0]:
+            memory.store(arguments[0], self.io.clock, 64)
+        return self.io.clock
+
     def _srand(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory
         self.io.random = seeded(arguments[0] & 0xFFFFFFFF)
@@ -490,18 +680,34 @@ class ConcreteLibc:
         return byte
 
     def _scanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return self._scan(arguments, memory, format_index=0, stream=STANDARD_STREAMS["stdin"])
+
+    def _fscanf(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        return self._scan(arguments, memory, format_index=1, stream=arguments[0])
+
+    def _scan(
+        self, arguments: list[int], memory: ConcreteMemory, format_index: int, stream: int
+    ) -> int:
+        content, position = self._stream(stream)
+        consumed, result = self._scan_into(arguments, memory, format_index, content[position:])
+        self._advance(stream, consumed)
+        return result
+
+    def _scan_into(
+        self, arguments: list[int], memory: ConcreteMemory, format_index: int, data: bytes
+    ) -> tuple[int, int]:
+        """Run a scanf format over `data`; returns what it consumed and what it returns."""
         try:
-            directives = scanning.parse_format(self._string(memory, arguments[0]))
+            directives = scanning.parse_format(self._string(memory, arguments[format_index]))
         except scanning.FormatError as error:
             raise UnsupportedLibraryCallError(f"scanf: {error}") from error
-        io = self.io
-        scanned = scanning.scan(directives, io.stdin[io.stdin_position :])
-        io.stdin_position += scanned.consumed
+        scanned = scanning.scan(directives, data)
         for index, assignment in enumerate(scanned.assignments):
-            destination = self._variadic(arguments, 1 + index, memory)
+            destination = self._variadic(arguments, format_index + 1 + index, memory)
             match assignment.content:
-                case bytes() as content if (
-                    assignment.directive.kind is scanning.DirectiveKind.STRING
+                case bytes() as content if assignment.directive.kind in (
+                    scanning.DirectiveKind.STRING,
+                    scanning.DirectiveKind.SCANSET,
                 ):
                     memory.write(destination, content + b"\0")
                 case bytes() as content:
@@ -509,7 +715,7 @@ class ConcreteLibc:
                 case int() as value:
                     size = assignment.directive.store_size
                     memory.store(destination, value & mask(size * 8), size * 8)
-        return scanned.result & 0xFFFFFFFF
+        return scanned.consumed, scanned.result & 0xFFFFFFFF
 
     def _variadic(self, arguments: list[int], index: int, memory: ConcreteMemory) -> int:
         """Integer argument `index`, from its register or the caller's stack."""
@@ -529,12 +735,25 @@ class ConcreteLibc:
 
     def _strtol(self, arguments: list[int], memory: ConcreteMemory) -> int:
         text, end_pointer, base = arguments[0], arguments[1], to_signed(arguments[2], 32)
-        if base != 10:
+        if base == 10:
+            number = scanning.parse_long(self._string(memory, text))
+        elif base == 16:
+            number = scanning.parse_hex(self._string(memory, text))
+        else:
             raise UnsupportedLibraryCallError(f"strtol with base {base}")
-        number = scanning.parse_long(self._string(memory, text))
         if end_pointer:
             memory.store(end_pointer, text + number.end, 64)
         return number.value & mask(64)
+
+    def _fileno(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`fileno(stream)`: the descriptor behind a standard stream, else a generic one."""
+        del memory
+        fds = {
+            STANDARD_STREAMS["stdin"]: 0,
+            STANDARD_STREAMS["stdout"]: 1,
+            STANDARD_STREAMS["stderr"]: 2,
+        }
+        return fds.get(arguments[0], 3)
 
     @staticmethod
     def _case(mapping: Callable[[int], int], arguments: list[int]) -> int:
@@ -630,6 +849,15 @@ class ConcreteLibc:
     def _malloc(self, arguments: list[int], memory: ConcreteMemory) -> int:
         del memory
         return self._allocate(arguments[0])
+
+    def _guard_acquire(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`__cxa_guard_acquire`: whether this function-local static still needs building."""
+        return int(memory.read(arguments[0], 1)[0] == 0)
+
+    def _guard_release(self, arguments: list[int], memory: ConcreteMemory) -> int:
+        """`__cxa_guard_release`: the static is built, so the next call skips it."""
+        memory.write(arguments[0], b"\x01")
+        return 0
 
     def _calloc(self, arguments: list[int], memory: ConcreteMemory) -> int:
         size = arguments[0] * arguments[1]

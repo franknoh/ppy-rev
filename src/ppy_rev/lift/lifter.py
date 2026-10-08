@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import sys
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 
-from ppy_rev.diagnostics import Diagnostic, UnsupportedBinaryError
+from ppy_rev.diagnostics import (
+    Diagnostic,
+    DiagnosticCode,
+    Location,
+    UnsupportedBinaryError,
+)
 from ppy_rev.ghidra.schema import Function as GhidraFunction
 from ppy_rev.ghidra.schema import GhidraExport, Instruction
 from ppy_rev.ir.model import (
@@ -98,7 +105,20 @@ def lift_export(export: GhidraExport, functions: frozenset[str] | None = None) -
             resolve_call=resolve_call,
         )
         builder = FunctionBuilder(context, cfg)
-        lifted.append(builder.build())
+        try:
+            with _deep_recursion():
+                lifted.append(builder.build())
+        except RecursionError:
+            # SSA construction follows one predecessor edge per frame; a function whose
+            # branches nest deeper than that is left out rather than ending the run.
+            diagnostics.append(
+                Diagnostic(
+                    DiagnosticCode.MALFORMED_PCODE,
+                    "the control flow nests too deeply to lift",
+                    Location(function=function.name, address=function.entry),
+                )
+            )
+            continue
         diagnostics.extend(builder.diagnostics)
 
     externals: dict[str, list[int]] = {}
@@ -141,6 +161,21 @@ def lift_export(export: GhidraExport, functions: frozenset[str] | None = None) -
         ),
     )
     return LiftResult(module, tuple(diagnostics))
+
+
+RECURSION_LIMIT = 60_000
+"""Frames SSA construction may use: one predecessor edge per three, and Python's
+default of 1000 runs out on a function with a few hundred nested branches."""
+
+
+@contextmanager
+def _deep_recursion() -> Generator[None]:
+    previous = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(previous, RECURSION_LIMIT))
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(previous)
 
 
 def _liftable(

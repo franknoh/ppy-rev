@@ -266,9 +266,19 @@ class FunctionBuilder:
                 return this
             same = resolved
         if same is None:
-            # Every path into this phi runs through itself; the CFG is built from
-            # reachable code, so this indicates a lifter bug rather than input data.
-            raise AssertionError(f"phi v{phi.id} has no incoming value")
+            # Every path into this phi runs through itself: nothing in the function ever
+            # defines the variable. That happens when a loop takes in the entry block —
+            # the function is entered inside it — and then the value is the one the
+            # caller left in that register. A block this holds for without being the
+            # entry is one nothing reaches, and the same value serves there.
+            same = self._entry_value(phi.key)
+            if phi.block != 0:
+                self._diagnose(
+                    DiagnosticCode.MALFORMED_PCODE,
+                    f"block {phi.block} is only reachable from itself",
+                    phi.block,
+                    None,
+                )
         phi.removed = True
         self._replacement[phi.id] = same
         for user in self._phi_users.get(phi.id, []):

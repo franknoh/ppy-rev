@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 from ppy_rev.abi import calling_convention
 from ppy_rev.execution.interpreter import ExecutionError, Interpreter, Limits
-from ppy_rev.execution.program import enter_main, program_memory
+from ppy_rev.execution.program import DEFAULT_CLOCK, enter_main, program_memory
+from ppy_rev.execution.startup import Initialization, run_initializers
 from ppy_rev.ir.model import Function, Module
 from ppy_rev.summaries.concrete import (
     ConcreteIO,
@@ -40,6 +41,8 @@ class ProgramRun:
     outcome: str
     stdout: bytes
     steps: int
+    initialization: Initialization | None = None
+    """What running the constructors before main did, when any were found."""
 
 
 def run_program(
@@ -52,6 +55,7 @@ def run_program(
     reserve: dict[int, int] | None = None,
     traced: bool = False,
     files: dict[str, bytes] | None = None,
+    clock: int | None = None,
 ) -> ProgramRun:
     """Execute main until it returns, exits, fails, or triggers a watch.
 
@@ -59,8 +63,15 @@ def run_program(
     run sees the same addresses a symbolic one did.
     """
     memory = program_memory(module)
+    initialization = run_initializers(module, memory)
     entry = enter_main(module, memory, arguments, reserve)
-    io = ConcreteIO(stdin=stdin, traced=traced, files=dict(files or {}))
+    io = ConcreteIO(
+        stdin=stdin,
+        traced=traced,
+        files=dict(files or {}),
+        heap_next=initialization.heap_next,
+        clock=DEFAULT_CLOCK if clock is None else clock,
+    )
     libc = ConcreteLibc(calling_convention(module.target), io)
     at_instruction = {watch.address: watch for watch in watches if watch.register is None}
     at_call = [watch for watch in watches if watch.register is not None]
@@ -86,10 +97,20 @@ def run_program(
     try:
         outputs = interpreter.call(main, entry.registers, entry.return_address)
     except _Watched as watched:
-        return ProgramRun(watched.watch, watched.watch.name, bytes(io.stdout), interpreter.steps)
+        return ProgramRun(
+            watched.watch,
+            watched.watch.name,
+            bytes(io.stdout),
+            interpreter.steps,
+            initialization,
+        )
     except ProgramExitError as exited:
-        return ProgramRun(None, exited.detail, bytes(io.stdout), interpreter.steps)
+        return ProgramRun(None, exited.detail, bytes(io.stdout), interpreter.steps, initialization)
     except (ExecutionError, UnsupportedLibraryCallError) as error:
-        return ProgramRun(None, f"stopped: {error}", bytes(io.stdout), interpreter.steps)
+        return ProgramRun(
+            None, f"stopped: {error}", bytes(io.stdout), interpreter.steps, initialization
+        )
     status = outputs.get(calling_convention(module.target).integer_returns[0], 0) & 0xFF
-    return ProgramRun(None, f"main returned {status}", bytes(io.stdout), interpreter.steps)
+    return ProgramRun(
+        None, f"main returned {status}", bytes(io.stdout), interpreter.steps, initialization
+    )

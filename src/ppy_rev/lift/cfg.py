@@ -233,6 +233,11 @@ class _Recovery:
         for block in blocks:
             for successor in cfg.successors(block):
                 blocks[successor].predecessors.append(block.id)
+        if not preheader_count and blocks[0].predecessors:
+            # The code before the entry falls into it, so the entry is inside a loop. It
+            # needs the same preheader a branch back to it would have earned: without one,
+            # a value carried around that loop has nowhere to come from on the way in.
+            return self._blocks(start, leaders, branch_targets | {start})
         return cfg
 
     def _fill(self, block: PcodeBlock, leaders: set[Point]) -> None:

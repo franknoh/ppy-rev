@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from ppy_rev.abi import SYSV_X86_64
@@ -152,11 +152,14 @@ def test_output_setup_functions_do_nothing(stdin: bytes, size: int) -> None:
 def test_strchr(value: bytes, wanted: int) -> None:
     _run_both("strchr", [LEFT, wanted], value, b"")
     _run_both("strchr", [LEFT, 0x0A], value, b"")  # the usual newline search
+    _run_both("memchr", [LEFT, wanted, len(value)], value, b"")
 
 
 @settings(max_examples=60, deadline=None)
 @given(text, text)
+@example(left=b"\0" * 9 + b"\x01", right=b"\0" * 9)
 def test_string_concatenation_and_search(left: bytes, right: bytes) -> None:
+    """The `@example` is an empty source: `strncat` then writes one terminator, not `n`."""
     _run_both("strcat", [LEFT, RIGHT], left, right)
     for limit in (0, 2, 9):
         _run_both("strncat", [LEFT, RIGHT, limit], left, right)
@@ -265,11 +268,34 @@ def test_number_parsing(value: bytes) -> None:
     _run_both("atoi", [LEFT], value, b"")
     _run_both("atol", [LEFT], value, b"")
     _run_both("strtol", [LEFT, OUT, 10], value, b"")
+    _run_both("strtoul", [LEFT, OUT, 10], value, b"")
+    _run_both("strtoull", [LEFT, OUT, 10], value, b"")
 
 
 @settings(max_examples=120, deadline=None)
 @given(
-    st.sampled_from([b"%s", b"%3s", b"%d", b"%d %d", b"%c", b"x%d", b"%hhd", b"%*d %s", b"%d,%d"]),
+    st.sampled_from(
+        [
+            b"%s",
+            b"%3s",
+            b"%d",
+            b"%d %d",
+            b"%c",
+            b"x%d",
+            b"%hhd",
+            b"%*d %s",
+            b"%d,%d",
+            b"%u",
+            b"%llu",
+            b"%hu",
+            b"%[0-9]",
+            b"%[^,]",
+            b"%[a-z]",
+            b"%3[0-9]",
+            b"%[]0-9]",
+            b"%[0-9]-%[0-9]",
+        ]
+    ),
     scan_input,
 )
 def test_scanf(template: bytes, data: bytes) -> None:
@@ -327,18 +353,28 @@ def test_character_functions() -> None:
             assert evaluate(outcome.outputs["RAX"], assignment) == expected["RAX"], (name, value)
 
 
-def test_input_after_a_symbolic_length_line_is_a_hiding_approximation() -> None:
+def test_input_after_a_symbolic_length_line_is_only_lost_if_it_is_read() -> None:
+    """Where the next read starts is unknown, which costs nothing until one happens.
+
+    Most programs read their input once, so reporting the approximation at the `fgets`
+    itself would call those analyses incomplete for bytes nobody looks at.
+    """
     executor = Executor(MODULE, Z3Backend(), Goal())
     stdin = tuple(sx.symbol(f"in_{index}", 8) for index in range(8))
     state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO(stdin=stdin))
+    libc = SymbolicLibc(SYSV_X86_64)
     arguments = {
         "RDI": sx.const(OUT, 64),
         "RSI": sx.const(4, 64),
         "RDX": sx.const(STANDARD_STREAMS["stdin"], 64),
     }
-    outcomes = SymbolicLibc(SYSV_X86_64).call(executor, state, "fgets", arguments, Origin(0, 0))
+    outcomes = libc.call(executor, state, "fgets", arguments, Origin(0, 0))
     assert outcomes is not None
     assert state.io.stdin == ()
+    assert executor.statistics.hiding_approximations == set()
+
+    again = libc.call(executor, state, "fgets", arguments, Origin(0, 0))
+    assert again is not None
     assert executor.statistics.hiding_approximations == {
         "input after a symbolic-length fgets line is treated as empty"
     }
@@ -376,6 +412,146 @@ def test_rand_follows_the_seed_in_both_models() -> None:
         assert isinstance(outcome, Returned)
         values.append(outcome.outputs["RAX"].value)
     assert values == expected
-    symbolic_seed = {"RDI": sx.symbol("seed", 64)}
-    (refused,) = libc.call(executor, state, "srand", symbolic_seed, Origin(0, 0)) or []
-    assert isinstance(refused, Failed) and refused.reason is StopReason.UNSUPPORTED
+
+
+def test_a_seed_the_run_decides_is_settled_and_said_so() -> None:
+    """`srand(time(NULL))`: the generator needs a number, so one it could be is picked.
+
+    The choice is a constraint on the path and an approximation that may hide paths, so a
+    search that finds nothing after it is incomplete rather than proof of no answer.
+    """
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+    libc = SymbolicLibc(SYSV_X86_64)
+    (clock,) = libc.call(executor, state, "time", {"RDI": sx.const(0, 64)}, Origin(0, 0)) or []
+    assert isinstance(clock, Returned)
+    seed = {"RDI": clock.outputs["RAX"]}
+    (settled,) = libc.call(executor, state, "srand", seed, Origin(0, 0)) or []
+    assert isinstance(settled, Returned)
+    chosen = executor.unique_value(state, clock.outputs["RAX"])
+    assert chosen is not None
+    assert executor.statistics.hiding_approximations == {f"srand seed was settled on {chosen}"}
+    (value,) = libc.call(executor, state, "rand", {}, Origin(0, 0)) or []
+    assert isinstance(value, Returned)
+    concrete_io = ConcreteIO(clock=chosen)
+    other = ConcreteLibc(SYSV_X86_64, concrete_io)
+    other("srand", {"RDI": chosen}, _image())
+    assert value.outputs["RAX"].value == other("rand", {}, _image())["RAX"]
+
+
+def test_the_clock_is_a_second_the_solver_picks() -> None:
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    state = State(id=1, frames=[], memory=SymbolicMemory(_image()), io=SymbolicIO())
+    (outcome,) = (
+        SymbolicLibc(SYSV_X86_64).call(
+            executor, state, "time", {"RDI": sx.const(OUT, 64)}, Origin(0, 0)
+        )
+        or []
+    )
+    assert isinstance(outcome, Returned)
+    model = executor.solve_with(state, [outcome.outputs["RAX"]], [])
+    assert model is not None
+    chosen = evaluate(outcome.outputs["RAX"], model)
+    assert 0 <= chosen <= 4_102_444_800
+    assert evaluate(outcome.state.memory.load(OUT, 64), model) == chosen  # `time(&t)` stores it
+
+
+@settings(max_examples=60, deadline=None)
+@given(text, st.integers(0, 12))
+def test_strnlen_and_the_process_identity(value: bytes, limit: int) -> None:
+    _run_both("strnlen", [LEFT, limit], value, b"")
+    for name in ("getuid", "geteuid", "getgid", "getegid", "getpid"):
+        _run_both(name, [], b"", b"")
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    st.sampled_from([b"%d", b"%s", b"%d %d", b"%c%c", b"x%d"]),
+    st.sampled_from([b"12 34", b"abc", b" 7x", b"", b"-5", b"x9"]),
+)
+def test_sscanf_reads_a_string_not_a_stream(template: bytes, value: bytes) -> None:
+    """`sscanf` is `scanf` over memory: stdin must be left exactly where it was.
+
+    One leading space at most, because the symbolic scanner explores skipping a single
+    whitespace byte rather than a run of them — which keeps every answer, since a
+    shorter run reads the same fields.
+    """
+    _run_both(
+        "sscanf",
+        [LEFT, RIGHT, OUT, OUT + 0x40],
+        value,
+        template,
+        stdin=b"untouched\n",
+        concrete_right=True,
+    )
+
+
+@settings(max_examples=250, deadline=None)
+@given(
+    st.sampled_from([b"%d %d", b"%d %d %d", b"%d %d %d %d", b"%ld %ld", b"%d%d", b"%d %ld %d"]),
+    st.text(alphabet="0123456789 \t+-abx", min_size=0, max_size=16).map(str.encode),
+)
+def test_sscanf_number_sequence_parses_without_forking(template: bytes, value: bytes) -> None:
+    """A plain `%d` sequence is read in one state; it must still match `scanf` exactly.
+
+    The single-pass scanner replaces the per-number digit-count fork, so this checks the
+    return value, each field's saturated value, and that nothing beyond the successful
+    fields is written, against the concrete model over a rich mix of inputs.
+    """
+    _run_both(
+        "sscanf",
+        [LEFT, RIGHT, OUT, OUT + 0x40, OUT + 0x80, OUT + 0xC0],
+        value,
+        template,
+        stdin=b"untouched\n",
+        concrete_right=True,
+    )
+
+
+def test_write_goes_to_the_output_the_program_prints() -> None:
+    _run_both("write", [1, LEFT, 5], b"hello", b"")
+
+
+def test_os_stubs_return_sensible_defaults() -> None:
+    """Small OS calls a crackme makes in passing: both engines agree on the default."""
+    _run_both("getenv", [LEFT], b"HOME", b"")  # the variable is unset: NULL
+    _run_both("access", [LEFT, 0], b"/flag", b"")  # not accessible: -1
+    _run_both("close", [3], b"", b"")
+    _run_both("unlink", [LEFT], b"/tmp/x", b"")
+    _run_both("sigemptyset", [OUT], b"", b"")
+    _run_both("fileno", [STANDARD_STREAMS["stdin"]], b"", b"")
+    _run_both("fileno", [STANDARD_STREAMS["stderr"]], b"", b"")
+    _run_both("perror", [LEFT], b"oops", b"")
+    _run_both("sigaction", [2, OUT, 0], b"", b"")
+    _run_both("clock", [], b"", b"")
+    _run_both("dup2", [3, 1337], b"", b"")  # returns the new descriptor
+
+
+hex_input = st.lists(st.sampled_from(b" +-0123456789abcdefABCDEFxXgG"), max_size=18).map(bytes)
+
+
+@example(b"0x1f")
+@example(b"0X1F")
+@example(b"-1f")
+@example(b"+0xabc")
+@example(b"0x")
+@example(b"0")
+@example(b"0xg")
+@example(b"  1f")
+@example(b"01f")
+@example(b"ffffffffffffffff")  # 16 hex digits: the largest that fits
+@example(b"fffffffffffffffff")  # 17 digits: overflow saturates to ULONG_MAX
+@example(b"-0x10")
+@settings(max_examples=250, deadline=None)
+@given(hex_input)
+def test_strtoul_base16(value: bytes) -> None:
+    """Base-16 strtoul/strtoull: the symbolic scanner matches the concrete one exactly."""
+    _run_both("strtoul", [LEFT, OUT, 16], value, b"")
+    _run_both("strtoull", [LEFT, OUT, 16], value, b"")
+
+
+@settings(max_examples=30, deadline=None)
+@given(st.binary(min_size=1, max_size=12), st.integers(1, 16))
+def test_read_from_a_redirected_descriptor_is_input(stdin: bytes, size: int) -> None:
+    """A read from a non-standard fd (a dup2'd socket, say) reads the program's input."""
+    _run_both("read", [1337, OUT, size], b"", b"", stdin=stdin)

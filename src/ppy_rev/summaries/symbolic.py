@@ -9,17 +9,21 @@ path condition; otherwise the call stops exploration as unsupported rather than 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 
 from ppy_rev.abi import CallingConvention
 from ppy_rev.execution.memory import MemoryFaultError
 from ppy_rev.execution.program import (
     CTYPE_POINTERS,
+    CXX_CTYPE,
+    CXX_IOS_VTABLE,
     ERRNO_ADDRESS,
     FILE_HANDLE_STEP,
     FILE_HANDLES,
     HEAP_SIZE,
     HEAP_START,
+    PROCESS_IDS,
     STANDARD_STREAMS,
 )
 from ppy_rev.ir.model import Origin
@@ -28,6 +32,7 @@ from ppy_rev.solver.backend import Status
 from ppy_rev.summaries import ctype, cxx, formatting, glibc_random, scanning
 from ppy_rev.summaries.libc import canonical_name
 from ppy_rev.symbolic import expr as sx
+from ppy_rev.symbolic.bounds import unsigned_bounds
 from ppy_rev.symbolic.evaluate import evaluate
 from ppy_rev.symbolic.executor import (
     Executor,
@@ -38,6 +43,7 @@ from ppy_rev.symbolic.executor import (
     StopReason,
 )
 from ppy_rev.symbolic.expr import Expr
+from ppy_rev.symbolic.inputs import file_symbols
 from ppy_rev.symbolic.state import ConstraintKind, OpenFile, State
 
 _NEWLINE = sx.const(0x0A, 8)
@@ -45,6 +51,9 @@ _ZERO_BYTE = sx.const(0, 8)
 _PTRACE_TRACEME = 0
 _TRACED = sx.const(0xFFFF_FFFF_FFFF_FFFF, 64)
 TRACED_SYMBOL = "__traced"
+CLOCK_SYMBOL = "__clock"
+_LATEST_CLOCK = 4_102_444_800
+"""2100-01-01: past any second a challenge was written to be run in."""
 """The environment value `ptrace(PTRACE_TRACEME)` returns: 0, or -1 under a debugger."""
 
 
@@ -72,11 +81,26 @@ type _Model = Callable[[_Call], list[ExternalOutcome]]
 class SymbolicLibc:
     """`ExternalModels` for the symbolic executor."""
 
-    def __init__(self, convention: CallingConvention, string_limit: int = 4096) -> None:
+    def __init__(
+        self, convention: CallingConvention, string_limit: int = 4096, file_length: int = 64
+    ) -> None:
         self.convention = convention
         self.string_limit = string_limit
+        self.file_length = file_length
+        """Bytes offered for a file the program opens that the analysis did not foresee."""
+        self.numeric_scanf_havoc = False
+        """Hand a numeric `sscanf` fresh symbolic integers instead of parsing its buffer.
+
+        For solving a stage in isolation: the integers it reads become the unknowns the
+        checks constrain, so the arithmetic is solved directly and the answer is rendered
+        as a plain decimal line, skipping the combinatorial parse over the buffer bytes.
+        """
         self._models: dict[str, _Model] = {
             "strlen": self._strlen,
+            "strnlen": self._strnlen,
+            "sscanf": self._sscanf,
+            "write": self._write_descriptor,
+            **{name: partial(self._process_id, name=name) for name in PROCESS_IDS},
             "strcmp": self._strcmp,
             "strncmp": self._strncmp,
             "memcmp": self._memcmp,
@@ -87,8 +111,26 @@ class SymbolicLibc:
             "strncpy": self._strncpy,
             "strcspn": self._strcspn,
             "strchr": self._strchr,
+            "memchr": self._memchr,
             "std::getline": self._getline,
+            "std::ifstream::ifstream": self._ifstream_open,
+            "std::ifstream::is_open": self._ifstream_is_open,
+            "std::ifstream::close": self._ifstream_close,
+            "std::ios::fail": self._returns_zero,
+            "std::ios::good": lambda call: self._returns(call, sx.const(1, 64)),
+            "std::ios::eof": self._ios_eof,
+            "std::allocator": lambda call: self._returns(call, call.arguments[0]),
             "std::string::string": self._string_new,
+            "std::string::string()": self._string_empty_new,
+            "std::string::_M_local_data": self._string_local_data,
+            "std::string::_M_data=": self._string_set_data,
+            "std::string::_M_set_length": self._string_set_length,
+            "std::string::_M_capacity": self._string_set_capacity,
+            "std::string::_S_copy_chars": self._string_copy_chars,
+            "std::string::_M_create": self._string_create,
+            "std::string::operator+=": self._string_append,
+            "std::string::operator=": self._string_assign,
+            "std::string::operator=copy": self._string_assign_copy,
             "std::string::~string": self._returns_zero,
             "std::string::size": self._string_size,
             "std::string::data": self._string_data,
@@ -96,6 +138,10 @@ class SymbolicLibc:
             "std::ostream::operator<<": self._ostream_write,
             "std::string::at": self._string_at,
             "std::istream::operator>>": self._istream_read,
+            **{
+                name: partial(self._istream_number, width=width)
+                for name, width in cxx.NUMBER_WIDTHS.items()
+            },
             "std::endl": self._endl,
             "std::string::begin": self._string_data,
             "std::string::end": self._string_end,
@@ -118,6 +164,21 @@ class SymbolicLibc:
             "rewind": self._rewind,
             "gets": self._gets,
             "srand": self._srand,
+            "time": self._time,
+            "sleep": self._returns_zero,
+            "usleep": self._returns_zero,
+            "alarm": self._returns_zero,
+            "signal": self._returns_zero,
+            "close": self._returns_zero,
+            "unlink": self._returns_zero,
+            "sigemptyset": self._returns_zero,
+            "getenv": self._returns_zero,
+            "access": lambda call: self._returns(call, sx.const((1 << 64) - 1, 64)),
+            "fileno": self._fileno,
+            "dup2": lambda call: self._returns(call, call.arguments[1]),
+            "perror": self._returns_zero,
+            "sigaction": self._returns_zero,
+            "clock": self._returns_zero,
             "rand": self._rand,
             "getchar": self._getchar,
             "puts": self._puts,
@@ -139,12 +200,23 @@ class SymbolicLibc:
             "__errno_location": lambda call: self._returns(call, sx.const(ERRNO_ADDRESS, 64)),
             "ptrace": self._ptrace,
             "calloc": self._calloc,
+            "operator new": self._malloc,
+            "operator delete": self._returns_zero,
+            "std::ios_base::Init::Init": self._returns_zero,
+            "std::ios_base::Init::~Init": self._returns_zero,
+            "__cxa_atexit": self._returns_zero,
+            "__cxa_guard_acquire": self._guard_acquire,
+            "__cxa_guard_release": self._guard_release,
+            "__cxa_guard_abort": self._returns_zero,
             "atoi": self._atoi,
             "atol": self._atol,
             "atoll": self._atol,
             "strtol": self._strtol,
             "strtoll": self._strtol,
+            "strtoul": self._strtol,
+            "strtoull": self._strtol,
             "scanf": self._scanf,
+            "fscanf": self._fscanf,
             "toupper": lambda call: self._case(call, 0x61, 0x7A, -0x20),
             "tolower": lambda call: self._case(call, 0x41, 0x5A, 0x20),
             **{
@@ -194,6 +266,16 @@ class SymbolicLibc:
     def _returns_zero(self, call: _Call) -> list[ExternalOutcome]:
         return self._returns(call, sx.const(0, 64))
 
+    def _fileno(self, call: _Call) -> list[ExternalOutcome]:
+        """`fileno(stream)`: the descriptor behind a standard stream, else a generic one."""
+        stream = self._concrete(call, call.arguments[0], "stream")
+        fds = {
+            STANDARD_STREAMS["stdin"]: 0,
+            STANDARD_STREAMS["stdout"]: 1,
+            STANDARD_STREAMS["stderr"]: 2,
+        }
+        return self._returns(call, sx.const(fds.get(stream, 3), 64))
+
     @staticmethod
     def _concrete(call: _Call, value: Expr, what: str) -> int:
         known = call.executor.unique_value(call.state, value)
@@ -237,6 +319,32 @@ class SymbolicLibc:
             if not byte.is_const:
                 length = sx.ite(sx.equal(byte, _ZERO_BYTE), sx.const(index, 64), length)
         return self._returns(call, length)
+
+    def _strnlen(self, call: _Call) -> list[ExternalOutcome]:
+        """`strnlen(s, n)`: the length, but never more than `n`."""
+        limit = self._concrete(call, call.arguments[1], "limit")
+        address = self._concrete(call, call.arguments[0], "string")
+        text = self._string_bytes(call, address)[:limit]
+        length = sx.const(len(text), 64)
+        for index in reversed(range(len(text))):
+            byte = text[index]
+            if not byte.is_const:
+                length = sx.ite(sx.equal(byte, _ZERO_BYTE), sx.const(index, 64), length)
+        return self._returns(call, length)
+
+    def _process_id(self, call: _Call, name: str) -> list[ExternalOutcome]:
+        """What the process says it is: settled, and the same in both engines."""
+        return self._returns(call, sx.const(PROCESS_IDS[name], 64))
+
+    def _write_descriptor(self, call: _Call) -> list[ExternalOutcome]:
+        """`write(fd, buffer, count)` to stdout or stderr; another descriptor has no model."""
+        descriptor = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "descriptor")
+        if descriptor not in (1, 2):
+            raise _Unsupported(f"write to file descriptor {descriptor}")
+        buffer = self._concrete(call, call.arguments[1], "buffer")
+        count = self._concrete(call, call.arguments[2], "count")
+        call.state.io.stdout.extend(self._byte(call, buffer + index) for index in range(count))
+        return self._returns(call, sx.const(count, 64))
 
     def _compare_strings(self, call: _Call, limit: int | None) -> Expr:
         left_address = self._concrete(call, call.arguments[0], "first string")
@@ -292,9 +400,27 @@ class SymbolicLibc:
             self._write(call, destination + index, value)
 
     def _memcpy(self, call: _Call) -> list[ExternalOutcome]:
+        """`memcpy(dst, src, n)`, where `n` may be a length the input decides.
+
+        Optimized C++ copies a string that way. Each byte is then written only where it
+        is really part of the copy, for as far as the size can reach.
+        """
         destination = self._concrete(call, call.arguments[0], "destination")
         source = self._concrete(call, call.arguments[1], "source")
-        size = self._concrete(call, call.arguments[2], "size")
+        size = call.executor.unique_value(call.state, call.arguments[2])
+        if size is None:
+            count = call.arguments[2]
+            for offset in range(self._length_bound(call, count, "size")):
+                copied = sx.unsigned_less(sx.const(offset, 64), count)
+                if copied is sx.FALSE:
+                    continue
+                old_byte = self._byte(call, destination + offset)
+                self._write(
+                    call,
+                    destination + offset,
+                    sx.ite(copied, self._byte(call, source + offset), old_byte),
+                )
+            return self._returns(call, sx.const(destination, 64))
         if size > 1 << 20:
             raise _Unsupported(f"copy of {size} bytes")
         self._copy(call, destination, source, size)
@@ -354,6 +480,12 @@ class SymbolicLibc:
         self._store_string(call, call.state, object_at, bytes_)
         return self._returns(call, sx.const(object_at, 64))
 
+    def _string_empty_new(self, call: _Call) -> list[ExternalOutcome]:
+        """`std::string s;`: an empty object, whatever the registers happen to hold."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        self._store_string(call, call.state, object_at, [])
+        return self._returns(call, sx.const(object_at, 64))
+
     def _store_string(
         self,
         call: _Call,
@@ -401,6 +533,115 @@ class SymbolicLibc:
             raise _Fault(f"write to unwritable memory at {address:#x}")
         state.memory.write_byte(address, value)
 
+    def _string_local_data(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_local_data()`: the buffer inside the object, where a short string lives."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        return self._returns(call, sx.const(object_at + cxx.BUFFER, 64))
+
+    def _string_set_data(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_data(p)`, and the `_Alloc_hider` constructor that is the same store."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        self._store(call, call.state, object_at + cxx.DATA, call.arguments[1])
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_set_length(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_set_length(n)`: the length, and the terminator the string keeps after it.
+
+        A length the input decides is kept as it is; the terminator then goes wherever it
+        lands, which is one conditional write per position it could take.
+        """
+        object_at = self._concrete(call, call.arguments[0], "string")
+        length = call.arguments[1]
+        self._store(call, call.state, object_at + cxx.SIZE, length)
+        data = self._concrete(call, self._string_field(call, cxx.DATA), "string data")
+        for offset in range(self._length_bound(call, length, "length") + 1):
+            here = sx.equal(length, sx.const(offset, length.width))
+            if here is sx.FALSE:
+                continue
+            old_byte = self._byte(call, data + offset)
+            self._write(call, data + offset, sx.ite(here, _ZERO_BYTE, old_byte))
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _length_bound(self, call: _Call, length: Expr, what: str) -> int:
+        """How long a string can be, for writing one condition per byte it may hold."""
+        known = call.executor.unique_value(call.state, length)
+        if known is not None:
+            return known
+        highest = unsigned_bounds(length)[1]
+        if highest > self.string_limit:
+            raise _Unsupported(f"{what} is symbolic ({sx.render(length, 80)})")
+        return highest
+
+    def _string_set_capacity(self, call: _Call) -> list[ExternalOutcome]:
+        object_at = self._concrete(call, call.arguments[0], "string")
+        self._store(call, call.state, object_at + cxx.CAPACITY, call.arguments[1])
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_copy_chars(self, call: _Call) -> list[ExternalOutcome]:
+        """`_S_copy_chars(destination, first, last)`: the copy a construction ends with.
+
+        How much is copied may be up to the input, in which case each byte is written
+        only where it is really part of the string.
+        """
+        destination = self._concrete(call, call.arguments[0], "destination")
+        first = self._concrete(call, call.arguments[1], "source")
+        count = sx.sub(call.arguments[2], sx.const(first, 64))
+        for offset in range(self._length_bound(call, count, "end of source")):
+            copied = sx.unsigned_less(sx.const(offset, 64), count)
+            if copied is sx.FALSE:
+                continue
+            old_byte = self._byte(call, destination + offset)
+            self._write(
+                call,
+                destination + offset,
+                sx.ite(copied, self._byte(call, first + offset), old_byte),
+            )
+        return self._returns(call, sx.const(destination, 64))
+
+    def _string_create(self, call: _Call) -> list[ExternalOutcome]:
+        """`_M_create(capacity, old)`: a buffer for a string too long to live in the object.
+
+        A capacity the input decides gets the largest buffer it could ask for, which is
+        the one the real allocation would have to cover for that input.
+        """
+        capacity_at = self._concrete(call, call.arguments[1], "capacity")
+        wanted = call.state.memory.load(capacity_at, 64)
+        buffer = self._allocate(call, self._length_bound(call, wanted, "capacity") + 1)
+        if not buffer:
+            raise _Unsupported("a std::string longer than the heap can hold")
+        return self._returns(call, sx.const(buffer, 64))
+
+    def _string_append(self, call: _Call) -> list[ExternalOutcome]:
+        """`s += c`: one character onto the end, moving to the heap if it no longer fits.
+
+        Where the end is has to be known: a string whose length the input decides would
+        put the character in a place the analysis cannot name.
+        """
+        object_at = self._concrete(call, call.arguments[0], "string")
+        data = self._concrete(call, self._string_field(call, cxx.DATA), "string data")
+        length = self._concrete(call, self._string_field(call, cxx.SIZE), "string length")
+        content = [self._byte(call, data + offset) for offset in range(length)]
+        character = sx.extract(call.arguments[1], 0, 8)
+        self._store_string(call, call.state, object_at, [*content, character])
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_assign(self, call: _Call) -> list[ExternalOutcome]:
+        """`s = "text"`: the object holds what the C string holds."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        source = self._concrete(call, call.arguments[1], "text")
+        self._store_string(call, call.state, object_at, self._string_bytes(call, source))
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _string_assign_copy(self, call: _Call) -> list[ExternalOutcome]:
+        """`s = other`: the same bytes in a second object."""
+        object_at = self._concrete(call, call.arguments[0], "string")
+        other = self._concrete(call, call.arguments[1], "string")
+        data = self._concrete(call, call.state.memory.load(other + cxx.DATA, 64), "string data")
+        length = self._concrete(call, call.state.memory.load(other + cxx.SIZE, 64), "string length")
+        content = [self._byte(call, data + offset) for offset in range(length)]
+        self._store_string(call, call.state, object_at, content)
+        return self._returns(call, sx.const(object_at, 64))
+
     def _string_field(self, call: _Call, offset: int) -> Expr:
         object_at = self._concrete(call, call.arguments[0], "string")
         address = object_at + offset
@@ -447,6 +688,7 @@ class SymbolicLibc:
         io = call.state.io
         window = list(io.stdin[io.stdin_position :])
         if not window:
+            self._at_end(call)
             return self._returns(call, call.arguments[0])
         options: list[tuple[Expr, tuple[int, int]]] = []
         for skipped in (0, 1):
@@ -471,12 +713,29 @@ class SymbolicLibc:
             outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
         return outcomes
 
+    def _istream_number(self, call: _Call, width: int) -> list[ExternalOutcome]:
+        """`in >> n`: whitespace, then a number, exactly as `scanf("%d")` reads one."""
+        destination = self._concrete(call, call.arguments[1], "number")
+        directives = [
+            scanning.Directive(scanning.DirectiveKind.SPACE),
+            scanning.Directive(scanning.DirectiveKind.DECIMAL, store_size=width),
+        ]
+        scanner = _Scanner(self, call, directives, [destination], STANDARD_STREAMS["stdin"])
+        scanner.result = call.arguments[0]  # the stream, so `in >> a >> b` chains
+        return scanner.run()
+
     def _getline(self, call: _Call) -> list[ExternalOutcome]:
-        """`std::getline(in, s)`: a line without its newline, into a std::string."""
+        """`std::getline(in, s)`: a line without its newline, into a std::string.
+
+        `in` is the terminal or a file the program opened; an `ifstream` stands in for
+        its own stream, so which it is comes from the object the call is given.
+        """
         object_at = self._concrete(call, call.arguments[1], "string")
-        io = call.state.io
-        taken = list(io.stdin[io.stdin_position :])
+        stream = self._reading_stream(call)
+        content, position = self._stream(call, stream)
+        taken = list(content[position:])
         if not taken:
+            self._at_end(call, stream)
             return self._returns(call, call.arguments[0])
         # The line ends at the first newline; where that is may be up to the input.
         length = sx.const(len(taken), 64)
@@ -490,22 +749,83 @@ class SymbolicLibc:
             options = [(sx.TRUE, True)]
         outcomes: list[ExternalOutcome] = []
         for state, is_short in _split(call, call.state, options, "a std::string holds 15 bytes"):
-            content = taken[: cxx.SMALL] if is_short else taken
-            self._store_string(call, state, object_at, content, length, in_object=is_short)
-            read_to = state.io.stdin_position + len(content)
-            state.io.stdin_reads.append((state.io.stdin_position, read_to, True))
+            kept = taken[: cxx.SMALL] if is_short else taken
+            self._store_string(call, state, object_at, kept, length, in_object=is_short)
+            item = state.io.files.get(stream)
+            if stream == STANDARD_STREAMS["stdin"]:
+                state.io.stdin_reads.append((position, position + len(kept), True))
+            elif item is not None:
+                state.io.line_read.add(item.name)
             consumed = call.executor.unique_value(state, length)
+            branch = replace(call, state=state)
             if consumed is None:
-                state.io.stdin = state.io.stdin[: state.io.stdin_position]
-                call.executor.approximate(
-                    state,
-                    "stdin after a symbolic-length getline is treated as empty",
-                    may_hide_paths=True,
-                )
+                note = "input after a symbolic-length getline is treated as empty"
+                if item is not None:
+                    # Where the line ends is up to the file, so all of it was looked at.
+                    state.io.read_to[item.name] = len(content)
+                self._truncate(branch, stream, position, note)
             else:
-                state.io.stdin_position += consumed + (1 if consumed < len(taken) else 0)
+                self._advance(branch, stream, consumed + (1 if consumed < len(taken) else 0))
             outcomes.append(Returned(state, self._outputs(call, call.arguments[0])))
         return outcomes
+
+    def _reading_stream(self, call: _Call) -> int:
+        """Which stream a C++ read is on: a file the program opened, or the terminal."""
+        stream = call.executor.unique_value(call.state, call.arguments[0])
+        if stream is not None and stream in call.state.io.files:
+            return stream
+        return STANDARD_STREAMS["stdin"]
+
+    def _ifstream_open(self, call: _Call) -> list[ExternalOutcome]:
+        """`std::ifstream file(path)`: the object stands in for the stream it opens."""
+        object_at = self._concrete(call, call.arguments[0], "stream")
+        path = self._string_bytes(call, self._concrete(call, call.arguments[1], "path"))
+        if not path or any(not byte.is_const for byte in path):
+            raise _Unsupported("std::ifstream of a path the program computes")
+        name = bytes(byte.value for byte in path).decode("latin-1")
+        io = call.state.io
+        content = io.contents.get(name)
+        if content is None:
+            content = file_symbols(name, self.file_length)
+            io.contents[name] = content
+        io.files[object_at] = OpenFile(name, content)
+        io.positions[object_at] = 0
+        # Optimized code reads the stream through its own vtable, as it does for `cin`.
+        self._store(call, call.state, object_at, sx.const(CXX_IOS_VTABLE, 64))
+        if call.state.memory.accessible(object_at + cxx.IOS_FACET, 8, write=True):
+            self._store(call, call.state, object_at + cxx.IOS_FACET, sx.const(CXX_CTYPE, 64))
+        return self._returns(call, sx.const(object_at, 64))
+
+    def _ios_eof(self, call: _Call) -> list[ExternalOutcome]:
+        """Whether the program has read everything the stream holds."""
+        stream = self._reading_stream(call)
+        content, position = self._stream(call, stream)
+        return self._returns(call, sx.const(int(position >= len(content)), 64))
+
+    def _ifstream_is_open(self, call: _Call) -> list[ExternalOutcome]:
+        """Whether the file opened: it did, since its contents are an input.
+
+        Optimized code asks the file object inside the stream rather than the stream, so
+        an address this does not know is still a file the program opened.
+        """
+        return self._returns(call, sx.const(1, 64))
+
+    def _ifstream_close(self, call: _Call) -> list[ExternalOutcome]:
+        stream = call.executor.unique_value(call.state, call.arguments[0])
+        if stream is not None:
+            call.state.io.positions.pop(stream, None)
+        return self._returns_zero(call)
+
+    def _memchr(self, call: _Call) -> list[ExternalOutcome]:
+        """`memchr(s, c, n)`: the first `c` in `n` bytes, NULL if there is none."""
+        address = self._concrete(call, call.arguments[0], "buffer")
+        wanted = sx.extract(call.arguments[1], 0, 8)
+        count = self._concrete(call, call.arguments[2], "count")
+        result = sx.const(0, 64)
+        for index in reversed(range(count)):
+            found = sx.equal(self._byte(call, address + index), wanted)
+            result = sx.ite(found, sx.const(address + index, 64), result)
+        return self._returns(call, result)
 
     def _strchr(self, call: _Call) -> list[ExternalOutcome]:
         """`strchr(s, c)`: the first `c` in `s`, NULL if there is none.
@@ -546,12 +866,16 @@ class SymbolicLibc:
 
     def _read(self, call: _Call) -> list[ExternalOutcome]:
         descriptor = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "descriptor")
-        if descriptor != 0:
+        if descriptor in (1, 2):
             raise _Unsupported(f"read from file descriptor {descriptor}")
+        # stdin, or an input redirected onto another descriptor (a `dup2` of it to a socket,
+        # say): either way the bytes read are the program's input.
         buffer = self._concrete(call, call.arguments[1], "buffer")
         count = self._concrete(call, call.arguments[2], "count")
         io = call.state.io
         available = io.stdin[io.stdin_position : io.stdin_position + count]
+        if not available:
+            self._at_end(call)
         for index, byte in enumerate(available):
             self._write(call, buffer + index, byte)
         io.stdin_reads.append((io.stdin_position, io.stdin_position + len(available), False))
@@ -561,16 +885,18 @@ class SymbolicLibc:
     # -- files -----------------------------------------------------------------------------
 
     def _fopen(self, call: _Call) -> list[ExternalOutcome]:
-        """The file's contents are an input, so its name has to be one the analysis planned."""
-        name = bytes(
-            byte.value
-            for byte in self._string_bytes(call, self._concrete(call, call.arguments[0], "path"))
-            if byte.is_const
-        ).decode("latin-1")
+        """Whatever the program opens is an input: the analysis plans the paths it can read
+        statically, and a path it only learns here becomes an input too. A path the program
+        computes is refused, since the answer could not name the file it belongs in."""
+        path = self._string_bytes(call, self._concrete(call, call.arguments[0], "path"))
+        if not path or any(not byte.is_const for byte in path):
+            raise _Unsupported("fopen of a path the program computes")
+        name = bytes(byte.value for byte in path).decode("latin-1")
         io = call.state.io
         content = io.contents.get(name)
         if content is None:
-            raise _Unsupported(f"fopen of {name!r}, which no input was planned for")
+            content = file_symbols(name, self.file_length)
+            io.contents[name] = content
         for handle, item in io.files.items():
             if item.name == name:
                 io.positions[handle] = 0
@@ -584,18 +910,26 @@ class SymbolicLibc:
         """What a stream still holds, and how far it has been read."""
         io = call.state.io
         if stream == STANDARD_STREAMS["stdin"]:
-            return io.stdin, io.stdin_position
-        item = io.files.get(stream)
-        if item is None:
-            raise _Unsupported(f"stream {stream:#x} was not opened here")
-        return item.content, io.positions.get(stream, 0)
+            content, position = io.stdin, io.stdin_position
+        else:
+            item = io.files.get(stream)
+            if item is None:
+                raise _Unsupported(f"stream {stream:#x} was not opened here")
+            content, position = item.content, io.positions.get(stream, 0)
+        if position >= len(content):
+            self._at_end(call, stream)
+        return content, position
 
     def _advance(self, call: _Call, stream: int, count: int) -> None:
         io = call.state.io
         if stream == STANDARD_STREAMS["stdin"]:
             io.stdin_position += count
-        else:
-            io.positions[stream] = io.positions.get(stream, 0) + count
+            return
+        position = io.positions.get(stream, 0) + count
+        io.positions[stream] = position
+        item = io.files.get(stream)
+        if item is not None:
+            io.read_to[item.name] = max(io.read_to.get(item.name, 0), position)
 
     def _feof(self, call: _Call) -> list[ExternalOutcome]:
         stream = self._concrete(call, call.arguments[0], "stream")
@@ -697,8 +1031,10 @@ class SymbolicLibc:
                 self._write(call, destination + start + offset, sx.ite(copying, byte, old))
                 copying = sx.bool_and(copying, sx.bool_not(sx.equal(byte, _ZERO_BYTE)))
             if terminated:
+                # `strncat` terminates after the bytes it copied, which is `limit` of them
+                # only when none of them was itself the terminator: `copying` says so.
                 end = destination + start + len(appended)
-                self._write(call, end, sx.ite(ends_here, _ZERO_BYTE, self._byte(call, end)))
+                self._write(call, end, sx.ite(copying, _ZERO_BYTE, self._byte(call, end)))
         return self._returns(call, sx.const(destination, 64))
 
     def _strstr(self, call: _Call) -> list[ExternalOutcome]:
@@ -757,29 +1093,87 @@ class SymbolicLibc:
         consumed = call.executor.unique_value(call.state, count)
         if consumed is None:
             # What follows is only meaningful once the line's length is known.
-            self._truncate(call, stream, position)
-            call.executor.approximate(
-                call.state,
-                "input after a symbolic-length fgets line is treated as empty",
-                may_hide_paths=True,
-            )
+            note = "input after a symbolic-length fgets line is treated as empty"
+            self._truncate(call, stream, position, note)
         else:
             self._advance(call, stream, consumed)
         return self._returns(call, sx.const(buffer, 64))
 
-    def _truncate(self, call: _Call, stream: int, position: int) -> None:
-        """Forget what a stream holds past `position`, where the model cannot follow it."""
+    def _truncate(self, call: _Call, stream: int, position: int, note: str) -> None:
+        """Forget what a stream holds past `position`, where the model cannot follow it.
+
+        `note` is what to say if the program reads this stream again; until it does, the
+        bytes nobody looks at cost nothing, so nothing is reported.
+        """
         io = call.state.io
+        io.unknown_from[stream] = note
         if stream == STANDARD_STREAMS["stdin"]:
             io.stdin = io.stdin[:position]
             return
         item = io.files[stream]
         io.files[stream] = OpenFile(item.name, item.content[:position])
 
+    @staticmethod
+    def _at_end(call: _Call, stream: int = STANDARD_STREAMS["stdin"]) -> None:
+        """A read found nothing left: say so when the model is the reason there is nothing."""
+        note = call.state.io.unknown_from.get(stream)
+        if note is not None:
+            call.executor.approximate(call.state, note, may_hide_paths=True)
+
+    def _time(self, call: _Call) -> list[ExternalOutcome]:
+        """`time(t)`: the second this run happens in, which the solver chooses.
+
+        A program that reads the clock is solved for a time it could have been run at,
+        and the answer says which one — rather than a constant assumed here.
+        """
+        state = call.state
+        if state.io.clock is None:
+            clock = sx.symbol(CLOCK_SYMBOL, 64)
+            call.executor.add_constraint(
+                state,
+                sx.unsigned_less_equal(clock, sx.const(_LATEST_CLOCK, 64)),
+                ConstraintKind.ENVIRONMENT,
+                call.origin,
+                "the clock reads a second in this century",
+            )
+            state.io.clock = clock
+        destination = call.executor.unique_value(state, call.arguments[0])
+        if destination:
+            for index in range(8):
+                self._write(call, destination + index, sx.extract(state.io.clock, index * 8, 8))
+        return self._returns(call, state.io.clock)
+
     def _srand(self, call: _Call) -> list[ExternalOutcome]:
-        seed = self._concrete(call, sx.extract(call.arguments[0], 0, 32), "srand seed")
+        """`srand(seed)`: the generator is modeled exactly, so the seed has to be a number.
+
+        A seed the input or the clock decides is settled here by picking one it could be
+        and saying so: the rest of the run then follows that choice, and a search that
+        finds nothing is reported as incomplete rather than as no answer existing.
+        """
+        wanted = sx.extract(call.arguments[0], 0, 32)
+        seed = call.executor.unique_value(call.state, wanted)
+        if seed is None:
+            seed = self._choose(call, wanted, "srand seed")
         call.state.io.random = glibc_random.seeded(seed)
         return self._returns_zero(call)
+
+    def _choose(self, call: _Call, value: Expr, what: str) -> int:
+        """Settle `value` on one of the values it could take, and record the choice."""
+        model = call.executor.solve_with(call.state, sx.symbols(value), [])
+        chosen = None if model is None else evaluate(value, model)
+        if chosen is None:
+            raise _Unsupported(f"{what} is symbolic ({sx.render(value, 80)})")
+        call.executor.add_constraint(
+            call.state,
+            sx.equal(value, sx.const(chosen, value.width)),
+            ConstraintKind.ENVIRONMENT,
+            call.origin,
+            f"{what} is {chosen}",
+        )
+        call.executor.approximate(
+            call.state, f"{what} was settled on {chosen}", may_hide_paths=True
+        )
+        return chosen
 
     def _rand(self, call: _Call) -> list[ExternalOutcome]:
         call.state.io.random, value = glibc_random.advance(call.state.io.random)
@@ -791,6 +1185,7 @@ class SymbolicLibc:
         io = call.state.io
         remaining = io.stdin[io.stdin_position :]
         if not remaining:
+            self._at_end(call)
             return self._returns(call, sx.const(0, 64))
         length = sx.const(len(remaining), 64)
         for index in reversed(range(len(remaining))):
@@ -817,12 +1212,8 @@ class SymbolicLibc:
         io.stdin_reads.append((io.stdin_position, io.stdin_position + len(remaining), True))
         consumed = call.executor.unique_value(call.state, length)
         if consumed is None:
-            io.stdin = io.stdin[: io.stdin_position]
-            call.executor.approximate(
-                call.state,
-                "stdin after a symbolic-length gets line is treated as empty",
-                may_hide_paths=True,
-            )
+            note = "stdin after a symbolic-length gets line is treated as empty"
+            self._truncate(call, STANDARD_STREAMS["stdin"], io.stdin_position, note)
         else:
             io.stdin_position += consumed + (consumed < len(remaining))
         return self._returns(call, sx.const(buffer, 64))
@@ -830,6 +1221,7 @@ class SymbolicLibc:
     def _getchar(self, call: _Call) -> list[ExternalOutcome]:
         io = call.state.io
         if io.stdin_position >= len(io.stdin):
+            self._at_end(call)
             return self._returns(call, sx.const(0xFFFFFFFF, 64))
         byte = io.stdin[io.stdin_position]
         io.stdin_reads.append((io.stdin_position, io.stdin_position + 1, False))
@@ -998,6 +1390,14 @@ class SymbolicLibc:
 
     # -- numbers ---------------------------------------------------------------------------
 
+    def _parse_hex(self, call: _Call) -> list[tuple[State, Expr, Expr]]:
+        """strtoul(text, &end, 16): one state whose value is the exact hex scanner's."""
+        text = self._string_bytes(call, self._concrete(call, call.arguments[0], "string"))
+        if not text:
+            return [(call.state, sx.const(0, 64), sx.const(0, 64))]
+        result, end, any_digit = _strtoul_hex_expression(text)
+        return [(call.state, result, sx.ite(any_digit, end, sx.const(0, 64)))]
+
     def _parse(self, call: _Call) -> list[tuple[State, Expr, Expr]]:
         """strtol(text, &end, 10), split by the shape of the number.
 
@@ -1058,12 +1458,13 @@ class SymbolicLibc:
 
     def _strtol(self, call: _Call) -> list[ExternalOutcome]:
         base = self._concrete(call, sx.extract(call.arguments[2], 0, 32), "base")
-        if base != 10:
+        if base not in (10, 16):
             raise _Unsupported(f"base {base}")
         end_pointer = self._concrete(call, call.arguments[1], "end pointer")
         address = self._concrete(call, call.arguments[0], "string")
+        parses = self._parse(call) if base == 10 else self._parse_hex(call)
         outcomes: list[ExternalOutcome] = []
-        for state, result, end in self._parse(call):
+        for state, result, end in parses:
             if end_pointer:
                 stored = sx.add(sx.const(address, 64), end)
                 for index in range(8):
@@ -1122,6 +1523,12 @@ class SymbolicLibc:
 
     # -- scanf -----------------------------------------------------------------------------
 
+    def _fscanf(self, call: _Call) -> list[ExternalOutcome]:
+        """`fscanf(stream, ...)`: scanf reading whatever that stream holds."""
+        stream = self._concrete(call, call.arguments[0], "stream")
+        self._stream(call, stream)  # refuses a stream this program never opened
+        return self._scan(call, format_index=1, stream=stream)
+
     def _scanf(self, call: _Call) -> list[ExternalOutcome]:
         """scanf over the symbolic stdin stream, forking where the input's shape decides.
 
@@ -1131,7 +1538,20 @@ class SymbolicLibc:
         skips several whitespace bytes behaves exactly like one that skips a single byte
         of it, so only zero or one skipped byte is explored.
         """
-        template = self._string_bytes(call, self._concrete(call, call.arguments[0], "format"))
+        return self._scan(call, format_index=0, stream=0)
+
+    def _sscanf(self, call: _Call) -> list[ExternalOutcome]:
+        """`sscanf(text, ...)`: scanf over a string in memory rather than a stream."""
+        address = self._concrete(call, call.arguments[0], "text")
+        data = tuple(self._string_bytes(call, address))
+        return self._scan(call, format_index=1, stream=0, data=data)
+
+    def _scan(
+        self, call: _Call, format_index: int, stream: int, data: tuple[Expr, ...] | None = None
+    ) -> list[ExternalOutcome]:
+        template = self._string_bytes(
+            call, self._concrete(call, call.arguments[format_index], "format")
+        )
         if any(not byte.is_const for byte in template):
             raise _Unsupported("the format string is symbolic")
         try:
@@ -1142,11 +1562,10 @@ class SymbolicLibc:
             1 for directive in directives if directive.assigns and _converts(directive)
         )
         destinations = [
-            self._concrete(call, self._variadic(call, 1 + index), "pointer")
+            self._concrete(call, self._variadic(call, format_index + 1 + index), "pointer")
             for index in range(assignments)
         ]
-        scanner = _Scanner(self, call, directives, destinations)
-        return scanner.run()
+        return _Scanner(self, call, directives, destinations, stream, data).run()
 
     def _variadic(self, call: _Call, index: int) -> Expr:
         registers = self.convention.integer_parameters
@@ -1205,6 +1624,18 @@ class SymbolicLibc:
     def _malloc(self, call: _Call) -> list[ExternalOutcome]:
         size = self._concrete(call, call.arguments[0], "size")
         return self._returns(call, sx.const(self._allocate(call, size), 64))
+
+    def _guard_acquire(self, call: _Call) -> list[ExternalOutcome]:
+        """`__cxa_guard_acquire`: whether this function-local static still needs building."""
+        guard = self._concrete(call, call.arguments[0], "guard")
+        done = sx.equal(self._byte(call, guard), _ZERO_BYTE)
+        return self._returns(call, sx.flag(done, 64))
+
+    def _guard_release(self, call: _Call) -> list[ExternalOutcome]:
+        """`__cxa_guard_release`: the static is built, so the next call skips it."""
+        guard = self._concrete(call, call.arguments[0], "guard")
+        self._write(call, guard, sx.const(1, 8))
+        return self._returns(call, sx.const(0, 64))
 
     def _calloc(self, call: _Call) -> list[ExternalOutcome]:
         count = self._concrete(call, call.arguments[0], "count")
@@ -1271,6 +1702,67 @@ def _strtol_expression(text: list[Expr]) -> tuple[Expr, Expr, Expr]:
     )
     saturated = sx.ite(negative, limit, sx.const((1 << 63) - 1, 64))
     result = sx.ite(too_large, saturated, sx.ite(negative, sx.negate(value), value))
+    return result, end, any_digit
+
+
+def _strtoul_hex_expression(text: list[Expr]) -> tuple[Expr, Expr, Expr]:
+    """strtoul(text, &end, 16) over possibly symbolic bytes, exactly.
+
+    A small state machine carried in if-then-else expressions: leading whitespace, a sign,
+    an optional `0x` prefix consumed only when a hex digit follows it, then hex digits. The
+    magnitude saturates at ULONG_MAX and a `-` wraps modulo 2**64, as glibc does.
+    """
+    skipping, signed, zero, prefix, digits, done = (
+        sx.TRUE,
+        sx.FALSE,
+        sx.FALSE,
+        sx.FALSE,
+        sx.FALSE,
+        sx.FALSE,
+    )
+    negative, overflow, any_digit = sx.FALSE, sx.FALSE, sx.FALSE
+    value = sx.const(0, 64)
+    end = sx.const(0, 64)
+    cutoff = sx.const(1 << 60, 64)  # a value this large overflows when shifted by a hex digit
+    for index, byte in enumerate(text):
+        active = sx.bool_not(done)
+        space = sx.bool_or(*(sx.equal(byte, sx.const(code, 8)) for code in ctype.WHITESPACE))
+        sign = sx.bool_or(sx.equal(byte, sx.const(0x2B, 8)), sx.equal(byte, sx.const(0x2D, 8)))
+        minus = sx.equal(byte, sx.const(0x2D, 8))
+        hexd = _is_radix_digit(byte, 16)
+        is_zero = sx.equal(byte, sx.const(0x30, 8))
+        is_x = sx.bool_or(sx.equal(byte, sx.const(0x78, 8)), sx.equal(byte, sx.const(0x58, 8)))
+        digit = _radix_digit_value(byte, 16)
+        start = sx.bool_or(skipping, signed)
+        stay_skip = sx.bool_and(active, skipping, space)
+        take_sign = sx.bool_and(active, skipping, sign)
+        take_zero = sx.bool_and(active, start, is_zero)
+        take_first = sx.bool_and(active, start, hexd, sx.bool_not(is_zero))
+        to_prefix = sx.bool_and(active, zero, is_x)
+        take_after0 = sx.bool_and(active, zero, hexd)
+        take_pfirst = sx.bool_and(active, prefix, hexd)
+        take_more = sx.bool_and(active, digits, hexd)
+        took_digit = sx.bool_or(take_zero, take_first, take_after0, take_pfirst, take_more)
+        accumulate = sx.bool_or(take_after0, take_more)
+        overflow = sx.bool_or(
+            overflow, sx.bool_and(accumulate, sx.bool_not(sx.unsigned_less(value, cutoff)))
+        )
+        shifted = sx.add(sx.mul(value, sx.const(16, 64)), digit)
+        value = sx.ite(
+            sx.bool_or(take_first, take_pfirst),
+            digit,
+            sx.ite(take_zero, sx.const(0, 64), sx.ite(accumulate, shifted, value)),
+        )
+        end = sx.ite(took_digit, sx.const(index + 1, 64), end)
+        any_digit = sx.bool_or(any_digit, took_digit)
+        negative = sx.ite(take_sign, minus, negative)
+        done = sx.bool_or(
+            done, sx.bool_not(sx.bool_or(stay_skip, take_sign, took_digit, to_prefix))
+        )
+        skipping, signed, zero, prefix = stay_skip, take_sign, take_zero, to_prefix
+        digits = sx.bool_or(take_first, take_after0, take_pfirst, take_more)
+    magnitude = sx.ite(overflow, sx.const((1 << 64) - 1, 64), value)
+    result = sx.ite(negative, sx.negate(magnitude), magnitude)
     return result, end, any_digit
 
 
@@ -1433,6 +1925,61 @@ def _is_digit(byte: Expr) -> Expr:
     return _in_range(byte, 0x30, 0x39)
 
 
+def _is_radix_digit(byte: Expr, base: int) -> Expr:
+    """Whether `byte` is a digit in the given radix (16 or 8; 10 as a fallback)."""
+    if base == 16:
+        return sx.bool_or(
+            _in_range(byte, 0x30, 0x39), _in_range(byte, 0x41, 0x46), _in_range(byte, 0x61, 0x66)
+        )
+    if base == 8:
+        return _in_range(byte, 0x30, 0x37)
+    return _in_range(byte, 0x30, 0x39)
+
+
+def _radix_digit_value(byte: Expr, base: int) -> Expr:
+    """The 0..base-1 value of a digit byte, as a 64-bit expression."""
+    decimal = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+    if base != 16:
+        return decimal
+    return sx.ite(
+        _in_range(byte, 0x30, 0x39),
+        decimal,
+        sx.ite(
+            _in_range(byte, 0x41, 0x46),
+            sx.zero_extend(sx.sub(byte, sx.const(0x37, 8)), 64),
+            sx.zero_extend(sx.sub(byte, sx.const(0x57, 8)), 64),
+        ),
+    )
+
+
+def _radix_value(digits: list[Expr], base: int) -> Expr:
+    """The value of a run of `digits` in `base`, wrapping at 64 bits."""
+    value = sx.const(0, 64)
+    for byte in digits:
+        value = sx.add(sx.mul(value, sx.const(base, 64)), _radix_digit_value(byte, base))
+    return value
+
+
+def _scanset_ranges(charset: frozenset[int]) -> list[tuple[int, int]]:
+    """The scanset's bytes as contiguous ranges, so the predicate stays compact."""
+    ranges: list[tuple[int, int]] = []
+    for value in sorted(charset):
+        if ranges and value == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], value)
+        else:
+            ranges.append((value, value))
+    return ranges
+
+
+def _in_scanset(byte: Expr, directive: scanning.Directive) -> Expr:
+    """Whether `byte` is matched by a `%[` scanset, honouring its negation."""
+    ranges = _scanset_ranges(directive.charset)
+    inside = (
+        sx.bool_or(*(_in_range(byte, low, high) for low, high in ranges)) if ranges else sx.FALSE
+    )
+    return sx.bool_not(inside) if directive.negated else inside
+
+
 def _converts(directive: scanning.Directive) -> bool:
     return directive.kind not in (scanning.DirectiveKind.SPACE, scanning.DirectiveKind.LITERAL)
 
@@ -1455,15 +2002,40 @@ class _Scanner:
         call: _Call,
         directives: list[scanning.Directive],
         destinations: list[int],
+        stream: int = 0,
+        data: tuple[Expr, ...] | None = None,
     ) -> None:
         self.libc = libc
         self.call = call
         self.directives = directives
         self.destinations = destinations
+        self.stream = stream or STANDARD_STREAMS["stdin"]
+        self.data = data
+        """Bytes to scan instead of a stream's, for `sscanf`: nothing is consumed."""
+        self.result: Expr | None = None
+        """What to return instead of the number of conversions, for `in >> n`."""
+
+    def content(self, state: State) -> tuple[Expr, ...]:
+        """What the stream being scanned holds."""
+        if self.data is not None:
+            return self.data
+        if self.stream == STANDARD_STREAMS["stdin"]:
+            return state.io.stdin
+        item = state.io.files.get(self.stream)
+        return item.content if item is not None else ()
+
+    def position(self, state: State) -> int:
+        if self.data is not None:
+            return 0
+        if self.stream == STANDARD_STREAMS["stdin"]:
+            return state.io.stdin_position
+        return state.io.positions.get(self.stream, 0)
 
     def run(self) -> list[ExternalOutcome]:
-        io = self.call.state.io
-        pending = [_Scan(self.call.state, io.stdin_position)]
+        numeric = self._numeric_sequence()
+        if numeric is not None:
+            return [self._scan_numbers(numeric)]
+        pending = [_Scan(self.call.state, self.position(self.call.state))]
         outcomes: list[ExternalOutcome] = []
         while pending:
             scan = pending.pop()
@@ -1479,19 +2051,24 @@ class _Scanner:
 
     def _finish(self, scan: _Scan) -> ExternalOutcome:
         io = scan.state.io
-        if scan.position > io.stdin_position:
-            io.stdin_reads.append((io.stdin_position, scan.position, False))
-            io.stdin_position = scan.position
+        read_from = self.position(scan.state)
+        if self.data is None and scan.position > read_from:
+            if self.stream == STANDARD_STREAMS["stdin"]:
+                io.stdin_reads.append((read_from, scan.position, False))
+                io.stdin_position = scan.position
+            else:
+                io.positions[self.stream] = scan.position
         outputs = dict(self.call.registers)
         result = (scan.result or 0) & 0xFFFFFFFF
-        outputs[self.libc.convention.integer_returns[0]] = sx.const(result, 64)
+        returns = self.result if self.result is not None else sx.const(result, 64)
+        outputs[self.libc.convention.integer_returns[0]] = returns
         return Returned(scan.state, outputs)
 
     # -- stream ------------------------------------------------------------------------------
 
     def _byte(self, scan: _Scan, index: int) -> Expr | None:
-        stdin = scan.state.io.stdin
-        return stdin[index] if index < len(stdin) else None
+        content = self.content(scan.state)
+        return content[index] if index < len(content) else None
 
     def _fork[T](self, scan: _Scan, options: list[tuple[Expr, T]]) -> list[tuple[_Scan, T]]:
         """Split `scan` by mutually exclusive conditions, keeping the feasible ones."""
@@ -1534,6 +2111,8 @@ class _Scanner:
                 result.extend(self._literal(branch, directive, byte))
             elif kind is scanning.DirectiveKind.STRING:
                 result.extend(self._string(branch, directive))
+            elif kind is scanning.DirectiveKind.SCANSET:
+                result.extend(self._scanset(branch, directive))
             elif kind is scanning.DirectiveKind.CHARACTERS:
                 result.append(self._characters(branch, directive))
             else:
@@ -1563,38 +2142,121 @@ class _Scanner:
 
     def _string(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
         start = scan.position
-        stdin = scan.state.io.stdin
-        longest = len(stdin) - start
+        data = self.content(scan.state)
+        longest = len(data) - start
         if directive.width is not None:
             longest = min(longest, directive.width)
         options: list[tuple[Expr, int]] = []
         prefix = sx.TRUE
         for length in range(1, longest + 1):
-            prefix = sx.bool_and(prefix, sx.bool_not(_is_space(stdin[start + length - 1])))
+            prefix = sx.bool_and(prefix, sx.bool_not(_is_space(data[start + length - 1])))
             after = self._byte(scan, start + length)
             ends = sx.TRUE if length == directive.width or after is None else _is_space(after)
             options.append((sx.bool_and(prefix, ends), length))
         branches = self._fork(scan, options)
         for branch, length in branches:
-            content = list(stdin[start : start + length])
+            content = list(data[start : start + length])
+            self._store(branch, directive, [*content, _ZERO_BYTE])
+            branch.position = start + length
+        return [branch for branch, _ in branches]
+
+    def _scanset(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        """`%[set]`: a maximal run of bytes in the set, with no leading whitespace skipped.
+
+        A first byte outside the set is a matching failure that assigns nothing and leaves
+        the byte unread, exactly as `%d` fails on a non-digit.
+        """
+        start = scan.position
+        data = self.content(scan.state)
+        longest = len(data) - start
+        if directive.width is not None:
+            longest = min(longest, directive.width)
+        options: list[tuple[Expr, int]] = [(sx.bool_not(_in_scanset(data[start], directive)), 0)]
+        prefix = sx.TRUE
+        for length in range(1, longest + 1):
+            prefix = sx.bool_and(prefix, _in_scanset(data[start + length - 1], directive))
+            after = self._byte(scan, start + length)
+            ends = (
+                sx.TRUE
+                if length == directive.width or after is None
+                else sx.bool_not(_in_scanset(after, directive))
+            )
+            options.append((sx.bool_and(prefix, ends), length))
+        branches = self._fork(scan, options)
+        for branch, length in branches:
+            if length == 0:
+                branch.result = branch.assigned  # nothing matched: a matching failure
+                continue
+            content = list(data[start : start + length])
             self._store(branch, directive, [*content, _ZERO_BYTE])
             branch.position = start + length
         return [branch for branch, _ in branches]
 
     def _characters(self, scan: _Scan, directive: scanning.Directive) -> _Scan:
-        stdin = scan.state.io.stdin
+        data = self.content(scan.state)
         start = scan.position
-        content = list(stdin[start : start + (directive.width or 1)])
+        content = list(data[start : start + (directive.width or 1)])
         self._store(scan, directive, content)
         scan.position = start + len(content)
         return scan
 
-    def _decimal(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
-        stdin = scan.state.io.stdin
+    def _radix(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        """`%x`/`%o`: a hex or octal token, read like `%d` but over the radix's digits.
+
+        The value wraps at 64 bits rather than saturating; a crackme's hex fits, and only
+        the low `store_size` bytes are kept anyway.
+        """
+        data = self.content(scan.state)
         start = scan.position
-        available = len(stdin) - start
+        available = len(data) - start
         limit = available if directive.width is None else min(available, directive.width)
-        first = stdin[start]
+        base = directive.base
+        first = data[start]
+        sign = sx.bool_or(sx.equal(first, sx.const(0x2B, 8)), sx.equal(first, sx.const(0x2D, 8)))
+        options: list[tuple[Expr, tuple[int, int]]] = []
+        for signed in (0, 1):
+            head = sign if signed else sx.bool_not(sign)
+            if signed + 1 > limit:
+                options.append((head, (signed, 0)))
+                continue
+            here = _is_radix_digit(data[start + signed], base)
+            options.append((sx.bool_and(head, sx.bool_not(here)), (signed, 0)))
+            digits = sx.TRUE
+            for count in range(1, limit - signed + 1):
+                seen = _is_radix_digit(data[start + signed + count - 1], base)
+                digits = sx.bool_and(digits, seen)
+                after = self._byte(scan, start + signed + count)
+                if signed + count == directive.width or after is None:
+                    ends = sx.TRUE
+                else:
+                    ends = sx.bool_not(_is_radix_digit(after, base))
+                options.append((sx.bool_and(head, digits, ends), (signed, count)))
+        result: list[_Scan] = []
+        for branch, (signed, count) in self._fork(scan, options):
+            if count == 0:
+                branch.position = start + signed
+                branch.result = branch.assigned
+                result.append(branch)
+                continue
+            negative = sx.equal(first, sx.const(0x2D, 8)) if signed else sx.FALSE
+            value = _radix_value(list(data[start + signed : start + signed + count]), base)
+            value = sx.ite(negative, sx.negate(value), value)
+            size = directive.store_size
+            self._store(
+                branch, directive, [sx.extract(value, 8 * index, 8) for index in range(size)]
+            )
+            branch.position = start + signed + count
+            result.append(branch)
+        return result
+
+    def _decimal(self, scan: _Scan, directive: scanning.Directive) -> list[_Scan]:
+        if directive.base != 10:
+            return self._radix(scan, directive)
+        data = self.content(scan.state)
+        start = scan.position
+        available = len(data) - start
+        limit = available if directive.width is None else min(available, directive.width)
+        first = data[start]
         sign = sx.bool_or(sx.equal(first, sx.const(0x2B, 8)), sx.equal(first, sx.const(0x2D, 8)))
         # (sign bytes, digit count): no digits is a matching failure, after which a sign
         # that was read stays consumed.
@@ -1606,10 +2268,10 @@ class _Scanner:
                 continue
             digits = sx.TRUE
             options.append(
-                (sx.bool_and(head, sx.bool_not(_is_digit(stdin[start + signed]))), (signed, 0))
+                (sx.bool_and(head, sx.bool_not(_is_digit(data[start + signed]))), (signed, 0))
             )
             for count in range(1, limit - signed + 1):
-                digits = sx.bool_and(digits, _is_digit(stdin[start + signed + count - 1]))
+                digits = sx.bool_and(digits, _is_digit(data[start + signed + count - 1]))
                 after = self._byte(scan, start + signed + count)
                 if signed + count == directive.width or after is None:
                     ends = sx.TRUE
@@ -1626,9 +2288,7 @@ class _Scanner:
                 continue
             if signed not in values:
                 negative = sx.equal(first, sx.const(0x2D, 8)) if signed else sx.FALSE
-                values[signed] = _token_values(
-                    list(stdin[start + signed : start + limit]), negative
-                )
+                values[signed] = _token_values(list(data[start + signed : start + limit]), negative)
             value = values[signed][count - 1]
             size = directive.store_size
             self._store(
@@ -1637,6 +2297,191 @@ class _Scanner:
             branch.position = start + signed + count
             result.append(branch)
         return result
+
+    # -- the non-forking number sequence -----------------------------------------------------
+
+    def _numeric_sequence(self) -> list[scanning.Directive] | None:
+        """The `%d` conversions when the whole format is a plain base-10 number sequence.
+
+        Used only for `sscanf`, where nothing is consumed from a stream, so the symbolic
+        end position that a single pass computes never has to become a concrete stream
+        offset. Two or more unmodified `%d`/`%u` conversions are the case `_decimal` would
+        fork on per number, multiplying combinatorially; here they are read in one state.
+        """
+        if self.data is None or self.result is not None:
+            return None
+        numeric: list[scanning.Directive] = []
+        for directive in self.directives:
+            if directive.kind is scanning.DirectiveKind.SPACE:
+                continue
+            if (
+                directive.kind is scanning.DirectiveKind.DECIMAL
+                and directive.base == 10
+                and directive.width is None
+                and directive.assigns
+            ):
+                numeric.append(directive)
+                continue
+            return None
+        return numeric if len(numeric) >= 2 else None
+
+    def _scan_numbers(self, numeric: list[scanning.Directive]) -> ExternalOutcome:
+        """Parse a plain sequence of base-10 numbers in one pass, without forking.
+
+        A small state machine, carried in if-then-else expressions over every byte, counts
+        the conversions that succeed and accumulates each number's saturated value, exactly
+        as `scanning.scan` does (the differential tests check this against `_decimal`). One
+        state replaces the `L**N` the per-number digit-count fork would make for `N`
+        numbers over `L` bytes, which is what lets the solver reach past a `scanf`.
+        """
+        state = self.call.state
+        if self.libc.numeric_scanf_havoc:
+            return self._havoc_numbers(state, numeric)
+        data = self.content(state)
+        start = self.position(state)
+        count = len(numeric)
+        zero, one = sx.const(0, 64), sx.const(1, 64)
+        cutoff = sx.const((1 << 64) // 10, 64)
+        last_digit = sx.const(((1 << 64) - 1) % 10, 64)
+
+        done, field, in_digits, pend_sign = sx.FALSE, zero, sx.FALSE, sx.FALSE
+        magnitude = [sx.const(0, 64) for _ in range(count)]
+        overflow = [sx.FALSE for _ in range(count)]
+        negative = [sx.FALSE for _ in range(count)]
+
+        def at(which: Expr, index: int) -> Expr:
+            return sx.equal(which, sx.const(index, 64))
+
+        for byte in data[start:]:
+            active = sx.bool_not(done)
+            digit = _is_digit(byte)
+            space = _is_space(byte)
+            sign = sx.bool_or(sx.equal(byte, sx.const(0x2B, 8)), sx.equal(byte, sx.const(0x2D, 8)))
+            minus = sx.equal(byte, sx.const(0x2D, 8))
+            value = sx.zero_extend(sx.sub(byte, sx.const(0x30, 8)), 64)
+
+            digit_cont = sx.bool_and(active, in_digits, digit)
+            num_end = sx.bool_and(active, in_digits, sx.bool_not(digit))
+            field_after = sx.add(field, one)
+            all_done = sx.bool_and(num_end, at(field_after, count))
+            # Start processing (leading whitespace, a sign, the first digit) happens while
+            # not in digits, or on the same byte that ends a number before the last one.
+            do_start = sx.bool_or(
+                sx.bool_and(active, sx.bool_not(in_digits)),
+                sx.bool_and(num_end, sx.bool_not(all_done)),
+            )
+            sfield = sx.ite(num_end, field_after, field)  # field the start acts on
+            spend = sx.bool_and(sx.bool_not(num_end), pend_sign)  # a fresh field has no sign
+            awaited = sx.bool_and(do_start, spend)
+            take_after_sign = sx.bool_and(awaited, digit)
+            fail_after_sign = sx.bool_and(awaited, sx.bool_not(digit))
+            # A leading space (not awaiting a sign) is skipped: it stays out of digits and
+            # starts nothing, so only a non-space fresh byte can begin or fail a number.
+            fresh = sx.bool_and(do_start, sx.bool_not(spend), sx.bool_not(space))
+            take_sign = sx.bool_and(fresh, sign)
+            take_first = sx.bool_and(fresh, sx.bool_not(sign), digit)
+            fail_start = sx.bool_and(fresh, sx.bool_not(sign), sx.bool_not(digit))
+            started = sx.bool_or(take_after_sign, take_first)
+
+            for index in range(count):
+                here = sx.bool_and(digit_cont, at(field, index))
+                starts_here = sx.bool_and(started, at(sfield, index))
+                too_big = sx.bool_or(
+                    sx.unsigned_less(cutoff, magnitude[index]),
+                    sx.bool_and(
+                        sx.equal(magnitude[index], cutoff), sx.unsigned_less(last_digit, value)
+                    ),
+                )
+                overflow[index] = sx.bool_or(overflow[index], sx.bool_and(here, too_big))
+                grown = sx.add(sx.mul(magnitude[index], sx.const(10, 64)), value)
+                magnitude[index] = sx.ite(
+                    starts_here,
+                    value,
+                    sx.ite(sx.bool_and(here, sx.bool_not(too_big)), grown, magnitude[index]),
+                )
+                takes_sign = sx.bool_and(take_sign, at(sfield, index))
+                negative[index] = sx.bool_or(
+                    sx.bool_and(takes_sign, minus),
+                    sx.bool_and(sx.bool_not(takes_sign), negative[index]),
+                )
+
+            done = sx.bool_or(done, all_done, fail_after_sign, fail_start)
+            field = sx.ite(num_end, field_after, field)
+            in_digits = sx.bool_or(
+                sx.bool_and(active, sx.bool_or(digit_cont, started)),
+                sx.bool_and(sx.bool_not(active), in_digits),
+            )
+            pend_sign = sx.bool_or(take_sign, sx.bool_and(sx.bool_not(do_start), pend_sign))
+
+        ongoing = sx.bool_not(done)
+        ends_at_eof = sx.bool_and(ongoing, in_digits)  # the last number ran to end of input
+        field_final = sx.ite(ends_at_eof, sx.add(field, one), field)
+        # Only running out of input while still skipping toward a number is an input
+        # failure; a bare sign or a non-digit is a matching failure that returns the count.
+        input_failure = sx.bool_and(ongoing, sx.bool_not(in_digits), sx.bool_not(pend_sign))
+        for index, directive in enumerate(numeric):
+            guard = sx.unsigned_less(sx.const(index, 64), field_final)  # this field succeeded
+            value = _saturated(magnitude[index], negative[index], overflow[index])
+            self._store_guarded(state, self.destinations[index], directive, guard, value)
+        result = sx.ite(
+            sx.bool_and(input_failure, at(field_final, 0)),
+            sx.const(0xFFFFFFFF, 64),  # EOF, masked to 32 bits as a conversion count would be
+            sx.zero_extend(sx.extract(field_final, 0, 32), 64),
+        )
+        outputs = dict(self.call.registers)
+        outputs[self.libc.convention.integer_returns[0]] = result
+        return Returned(state, outputs)
+
+    def _havoc_numbers(self, state: State, numeric: list[scanning.Directive]) -> ExternalOutcome:
+        """Hand each `%d` a fresh symbol and return the count, skipping the buffer parse.
+
+        The integers become the unknowns the stage's checks constrain, so solving is pure
+        arithmetic; the answer line is rendered from their solved values later. Recorded on
+        the state so the path that reaches the goal carries exactly the numbers it read.
+        """
+        address = self.call.origin.address
+        for index, directive in enumerate(numeric):
+            symbol = sx.symbol(f"scanf_{address:x}_{index}", directive.store_size * 8)
+            destination = self.destinations[index]
+            for offset in range(directive.store_size):
+                where = destination + offset
+                if not state.memory.accessible(where, 1, write=True):
+                    raise _Fault(f"scanf writes to unwritable memory at {where:#x}")
+                state.memory.write_byte(where, sx.extract(symbol, 8 * offset, 8))
+            state.io.scanf_values.append((symbol, directive.store_size))
+        outputs = dict(self.call.registers)
+        outputs[self.libc.convention.integer_returns[0]] = sx.const(len(numeric), 64)
+        return Returned(state, outputs)
+
+    def _store_guarded(
+        self,
+        state: State,
+        destination: int,
+        directive: scanning.Directive,
+        guard: Expr,
+        value: Expr,
+    ) -> None:
+        """Write a field's saturated value only where `guard` holds, else leave memory."""
+        for offset in range(directive.store_size):
+            address = destination + offset
+            if not state.memory.accessible(address, 1, write=True):
+                raise _Fault(f"scanf writes to unwritable memory at {address:#x}")
+            existing = state.memory.read_byte(address)
+            state.memory.write_byte(
+                address, sx.ite(guard, sx.extract(value, 8 * offset, 8), existing)
+            )
+
+
+def _saturated(magnitude: Expr, negative: Expr, overflow: Expr) -> Expr:
+    """strtol's saturated signed value for a magnitude, its sign, and an overflow flag."""
+    limit = sx.const(1 << 63, 64)
+    too_large = sx.bool_or(
+        overflow,
+        sx.bool_and(negative, sx.unsigned_less(limit, magnitude)),
+        sx.bool_and(sx.bool_not(negative), sx.unsigned_less_equal(limit, magnitude)),
+    )
+    saturated = sx.ite(negative, limit, sx.const((1 << 63) - 1, 64))
+    return sx.ite(too_large, saturated, sx.ite(negative, sx.negate(magnitude), magnitude))
 
 
 def _hex_digit(nibble: Expr, upper: bool) -> Expr:

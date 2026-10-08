@@ -66,8 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     lift.add_argument("-o", "--output", type=Path, help="write output here instead of stdout")
     lift.add_argument("--function", action="append", help="limit output to these functions")
     lift.add_argument(
-        "--no-simplify", action="store_true", help="show RevIR exactly as lifted from p-code"
+        "--mode",
+        choices=("raw", "simplified", "vm", "solved"),
+        default="simplified",
+        help="how much of what ppy-rev works out the output carries: raw p-code, "
+        "simplified (default), plus a lifted bytecode VM, or plus the answer solving found",
     )
+    lift.add_argument("--no-simplify", action="store_true", help="the same as --mode raw")
     lift.set_defaults(handler=commands.lift)
 
     analyze = subcommands.add_parser(
@@ -121,6 +126,26 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
     inputs.add_argument("--stdin", type=int, metavar="LENGTH", help="solve for LENGTH stdin bytes")
     goals = solve.add_argument_group("goals (default: discovered from output strings)")
     goals.add_argument("--goal-address", type=_address, metavar="ADDRESS")
+    goals.add_argument(
+        "--from",
+        dest="from_function",
+        type=_address,
+        metavar="ADDRESS",
+        help="solve this function in isolation with a symbolic input buffer",
+    )
+    goals.add_argument(
+        "--chain",
+        action="store_true",
+        help="detect a staged driver (a bomb's phases) and solve each phase, chaining the "
+        "answers into one input",
+    )
+    goals.add_argument(
+        "--scanf-havoc",
+        dest="havoc_scanf",
+        action="store_true",
+        help="with --from, hand a numeric sscanf fresh symbolic integers instead of parsing "
+        "its buffer, and render the answer as a decimal line (for number-heavy stages)",
+    )
     goals.add_argument("--goal-string", metavar="TEXT")
     goals.add_argument("--avoid-address", type=_address, action="append", metavar="ADDRESS")
     goals.add_argument("--avoid-string", action="append", metavar="TEXT")

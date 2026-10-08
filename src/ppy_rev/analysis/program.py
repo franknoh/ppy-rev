@@ -10,6 +10,7 @@ from ppy_rev.abi import calling_convention
 from ppy_rev.diagnostics import PpyRevError
 from ppy_rev.ir.model import (
     Call,
+    CallTarget,
     Const,
     DirectTarget,
     ExternalTarget,
@@ -76,17 +77,33 @@ def find_main(module: Module) -> Function:
 
 
 def reachable_functions(module: Module, root: Function) -> list[Function]:
-    """Functions reachable from `root` through direct calls, in discovery order."""
+    """Functions reachable from `root` through its calls, in discovery order.
+
+    A call through a function pointer counts when the target was recovered: a program
+    that dispatches through a table — a menu, a VM, an obfuscated checker — reaches most
+    of itself that way, and nothing it does there would otherwise be seen.
+    """
     seen = {root.entry}
     order = [root]
     for function in order:
         for call, _ in calls(function):
-            if isinstance(call.target, DirectTarget):
-                callee = module.function_at(call.target.address)
+            for address in callee_addresses(call.target):
+                callee = module.function_at(address)
                 if callee is not None and callee.entry not in seen:
                     seen.add(callee.entry)
                     order.append(callee)
     return order
+
+
+def callee_addresses(target: CallTarget) -> tuple[int, ...]:
+    """Where a call can go: the one place it names, or the places it was resolved to."""
+    match target:
+        case DirectTarget(address=address):
+            return (address,)
+        case IndirectTarget(candidates=candidates):
+            return candidates
+        case _:
+            return ()
 
 
 _BEFORE_MAIN = frozenset(
@@ -126,35 +143,77 @@ class Initializer:
     library_calls: tuple[str, ...]
 
 
-def initializers(module: Module) -> tuple[Initializer, ...]:
-    """Constructors in `.init_array` that could decide the outcome before main runs.
-
-    Solving starts at main, so anything these do — reading the input themselves, checking for a
-    debugger, exiting — is not modeled. Only initializers that reach such a call are reported;
-    the ones every compiler emits reach none.
-    """
+def initializer_functions(module: Module) -> tuple[Function, ...]:
+    """The lifted constructors the loader runs before main, in the order it runs them."""
     width = module.target.pointer_width // 8
     order: Literal["little", "big"] = module.target.endianness.value
-    found: list[Initializer] = []
-    for region in module.memory:
-        if region.name not in (".init_array", ".preinit_array") or region.data is None:
-            continue
-        for offset in range(0, len(region.data) - width + 1, width):
-            address = int.from_bytes(region.data[offset : offset + width], order)
-            function = module.function_at(address)
-            if function is None or any(item.address == function.entry for item in found):
+    found: list[Function] = []
+    for name in (".preinit_array", ".init_array"):
+        for region in module.memory:
+            if region.name != name or region.data is None:
                 continue
-            names = sorted(
-                {
-                    name
-                    for reached in reachable_functions(module, function)
-                    for call, _ in calls(reached)
-                    if (name := external_name(module, call)) is not None and name in _BEFORE_MAIN
-                }
-            )
-            if names:
-                found.append(Initializer(function.name, function.entry, tuple(names)))
+            for offset in range(0, len(region.data) - width + 1, width):
+                address = int.from_bytes(region.data[offset : offset + width], order)
+                function = module.function_at(address)
+                if function is not None and function not in found:
+                    found.append(function)
     return tuple(found)
+
+
+def deferred_initializers(module: Module) -> tuple[Initializer, ...]:
+    """Constructors whose behaviour depends on something only solving could decide.
+
+    Reading the input, checking for a debugger, exiting: running such a constructor
+    concretely before main would fix an answer to a guess. They are reported instead;
+    the ones every compiler emits reach none of these calls and simply run.
+    """
+    found: list[Initializer] = []
+    for function in initializer_functions(module):
+        names = sorted(
+            {
+                name
+                for reached in reachable_functions(module, function)
+                for call, _ in calls(reached)
+                if (name := external_name(module, call)) is not None and name in _BEFORE_MAIN
+            }
+        )
+        if names:
+            found.append(Initializer(function.name, function.entry, tuple(names)))
+    return tuple(found)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalObjects:
+    """Where an import's *data* object lives: an address the program image does not hold.
+
+    Ghidra gives every imported symbol an address in a block of its own, outside the
+    sections the loader would map, and code reaching `std::cin` or `environ` through the
+    GOT ends up reading there. Such a read faults, but the program is not wrong — the
+    model is missing — so those addresses are recognized rather than called a crash.
+    """
+
+    names: dict[int, str]
+    start: int
+    end: int
+
+    def __contains__(self, address: int) -> bool:
+        return self.start <= address < self.end
+
+    def name_at(self, address: int) -> str | None:
+        return self.names.get(address)
+
+
+def external_objects(module: Module) -> ExternalObjects:
+    """The labels that fall outside every mapped region, and the span they occupy."""
+    names = {
+        label.address: label.name
+        for label in module.labels
+        if not any(region.start <= label.address < region.end for region in module.memory)
+    }
+    if not names:
+        return ExternalObjects({}, 0, 0)
+    step = module.target.pointer_width // 8
+    return ExternalObjects(names, min(names), max(names) + step)
 
 
 def executable_address(module: Module, address: int) -> int:
@@ -207,6 +266,30 @@ def read_c_string(module: Module, address: int, limit: int = 512) -> bytes | Non
             return None
         return text
     return None
+
+
+def read_slice(module: Module, address: int, length: int) -> bytes | None:
+    """A string of exactly `length` printable bytes, with no terminator after it.
+
+    Rust and Go hand a pointer and a length together, and pack their messages one after
+    another with nothing between: reading to the next zero byte there gives a run of
+    several messages, or nothing at all.
+    """
+    if not 1 <= length <= _SLICE_LIMIT:
+        return None
+    for region in module.memory:
+        if region.data is None or region.executable or not region.start <= address < region.end:
+            continue
+        offset = address - region.start
+        text = region.data[offset : offset + length]
+        if len(text) != length or any(byte not in _PRINTABLE for byte in text):
+            return None
+        return text
+    return None
+
+
+_SLICE_LIMIT = 256
+"""Longest message read from a pointer and a length; beyond this it is data, not a word."""
 
 
 def string_references(
@@ -263,13 +346,51 @@ class _FunctionStrings:
                 text, value, self.function.name, instruction, call, register, external
             )
 
+    def add_slice(
+        self,
+        call: Call,
+        register: str,
+        argument: Operand,
+        passed: dict[str, Operand],
+        parameters: tuple[str, ...],
+        receiver: str | None,
+        library: str | None,
+    ) -> None:
+        """A message given as a pointer and the length beside it, as Rust and Go give one."""
+        if register not in parameters:
+            return
+        index = parameters.index(register)
+        if index + 1 >= len(parameters):
+            return
+        beside = passed.get(parameters[index + 1])
+        if not isinstance(beside, Const):
+            return
+        for value in self.constants(argument):
+            if read_c_string(self.module, value) is not None:
+                continue  # an ordinary C string; the length beside it decides nothing
+            text = read_slice(self.module, value, beside.value)
+            key = (call.origin.address, value, register)
+            if text is not None and key not in self.found:
+                self.found[key] = StringReference(
+                    text,
+                    value,
+                    self.function.name,
+                    call.origin.address,
+                    receiver,
+                    register,
+                    library is not None,
+                )
+
     def collect(self) -> None:
+        parameters = calling_convention(self.module.target).integer_parameters
         for call, _ in calls(self.function):
             library = external_name(self.module, call)
             receiver = library or _callee_name(self.module, call)
+            passed = dict(zip(call.argument_registers, call.arguments, strict=True))
             for register, argument in zip(call.argument_registers, call.arguments, strict=True):
                 for value in self.constants(argument):
                     self.add(value, call.origin.address, receiver, register, library is not None)
+                self.add_slice(call, register, argument, passed, parameters, receiver, library)
         for block in self.function.blocks:
             for operation in block.operations:
                 if isinstance(operation, Call):

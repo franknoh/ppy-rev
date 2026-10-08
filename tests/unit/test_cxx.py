@@ -17,6 +17,7 @@ from ppy_rev.summaries.symbolic import SymbolicLibc
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.evaluate import evaluate
 from ppy_rev.symbolic.executor import Executor, Goal, Returned
+from ppy_rev.symbolic.expr import Expr
 from ppy_rev.symbolic.memory import SymbolicMemory
 from ppy_rev.symbolic.state import State, SymbolicIO
 from support.revir import module_for
@@ -171,3 +172,220 @@ def test_a_token_is_read_up_to_whitespace() -> None:
 
     state, assignment, _ = _symbolic("std::istream::operator>>", [STREAM, OBJECT], b"hi there\n")
     assert _stored(state, assignment, OBJECT + cxx.SIZE) == 2
+
+
+def test_the_runtime_helpers_a_constructor_calls() -> None:
+    """`operator new`, the iostream setup, and a function-local static's guard.
+
+    A C++ program runs all of these before it reaches anything a challenge is about, so
+    both engines have to agree on them or the answer is checked against a program that
+    starts differently.
+    """
+    assert from_symbol("_Znwm") == "operator new"
+    assert from_symbol("_ZdlPvm") == "operator delete"
+    assert from_symbol("_ZNSt8ios_base4InitC1Ev") == "std::ios_base::Init::Init"
+
+    guard = OBJECT + 0x80
+    allocated, memory, _ = _concrete("operator new", [32], b"")
+    assert memory.mapping_at(allocated) is not None
+    assert _concrete("std::ios_base::Init::Init", [STREAM], b"")[0] == 0
+
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO())
+    registers = dict(zip(SYSV_X86_64.integer_parameters, [guard], strict=False))
+    assert libc("__cxa_guard_acquire", dict(registers), memory)["RAX"] == 1
+    assert libc("__cxa_guard_release", dict(registers), memory)["RAX"] == 0
+    assert libc("__cxa_guard_acquire", dict(registers), memory)["RAX"] == 0
+
+    state, model, returned = _symbolic("__cxa_guard_acquire", [guard], b"")
+    assert evaluate(returned.outputs["RAX"], model) == 1
+    assert evaluate(state.memory.read_byte(guard), model) == 0
+
+
+def test_the_string_members_a_construction_is_made_of() -> None:
+    """`std::string s = "text"` at -O0 is a chain of these, one call each.
+
+    Both engines have to end with the same object: a `data` pointer at the buffer, the
+    length, and a terminator after it — the layout optimized code reads directly.
+    """
+    assert from_symbol(
+        "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE13_M_local_dataEv"
+    ) == ("std::string::_M_local_data")
+    assert from_symbol(
+        "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE13_M_set_lengthEm"
+    ) == ("std::string::_M_set_length")
+
+    memory = _memory()
+    memory.write(TEXT, b"six!!!\0")
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO())
+
+    def call(name: str, *arguments: int) -> int:
+        registers = dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False))
+        return libc(name, registers, memory)["RAX"]
+
+    buffer = call("std::string::_M_local_data", OBJECT)
+    assert buffer == OBJECT + cxx.BUFFER
+    call("std::string::_M_data=", OBJECT, buffer)
+    call("std::string::_S_copy_chars", buffer, TEXT, TEXT + 6)
+    call("std::string::_M_set_length", OBJECT, 6)
+    assert call("std::string::size", OBJECT) == 6
+    assert memory.read_c_string(call("std::string::data", OBJECT)) == b"six!!!"
+    call("std::string::operator+=", OBJECT, ord("?"))
+    assert call("std::string::size", OBJECT) == 7
+    assert memory.read_c_string(call("std::string::data", OBJECT)) == b"six!!!?"
+
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _memory()
+    image.write(TEXT, b"six!!!\0")
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO())
+    symbolic = SymbolicLibc(SYSV_X86_64)
+
+    def call_symbolic(name: str, *arguments: int) -> int:
+        outcomes = symbolic.call(
+            executor,
+            state,
+            name,
+            {
+                register: sx.const(value, 64)
+                for register, value in zip(SYSV_X86_64.integer_parameters, arguments, strict=False)
+            },
+            Origin(0, 0),
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned), outcome
+        return evaluate(outcome.outputs["RAX"], {})
+
+    buffer = call_symbolic("std::string::_M_local_data", OBJECT)
+    call_symbolic("std::string::_M_data=", OBJECT, buffer)
+    call_symbolic("std::string::_S_copy_chars", buffer, TEXT, TEXT + 6)
+    call_symbolic("std::string::_M_set_length", OBJECT, 6)
+    assert call_symbolic("std::string::size", OBJECT) == 6
+    call_symbolic("std::string::operator+=", OBJECT, ord("?"))
+    assert call_symbolic("std::string::size", OBJECT) == 7
+    data = call_symbolic("std::string::data", OBJECT)
+    for offset in range(8):
+        assert (
+            evaluate(state.memory.read_byte(data + offset), {})
+            == memory.read(OBJECT + cxx.BUFFER + offset, 1)[0]
+        ), offset
+
+
+@settings(max_examples=40, deadline=None)
+@given(
+    st.integers(-99999, 99999),
+    st.sampled_from([b"", b" "]),
+    st.sampled_from([b"", b" x", b"\n"]),
+)
+def test_a_number_read_from_cin(value: int, before: bytes, after: bytes) -> None:
+    """`std::cin >> n` reads a number the way scanf does, in both engines.
+
+    Only one leading space is tried, because the symbolic scanner explores skipping one
+    whitespace byte rather than a run of them — which keeps every answer, since a shorter
+    run of spaces reads the same number.
+    """
+    assert from_symbol("_ZNSirsERi") == "std::istream::operator>>(int)"
+    assert from_symbol("_ZNSirsERm") == "std::istream::operator>>(long)"
+    assert from_symbol("_ZNSirsERd") is None  # a double reads by rules of its own
+
+    stdin = before + str(value).encode() + after
+    name = "std::istream::operator>>(int)"
+    result, memory, _ = _concrete(name, [STREAM, OBJECT], stdin)
+    assert result == STREAM
+    assert memory.load(OBJECT, 32) == value & 0xFFFFFFFF
+
+    state, assignment, outcome = _symbolic(name, [STREAM, OBJECT], stdin)
+    assert evaluate(outcome.outputs["RAX"], assignment) == STREAM
+    assert evaluate(state.memory.load(OBJECT, 32), assignment) == value & 0xFFFFFFFF
+
+
+def test_assigning_a_string_keeps_both_engines_in_step() -> None:
+    """`s = "text"` and `s = other`, which is how a flag gets built up piece by piece."""
+    assert from_symbol("_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEaSEPKc") == (
+        "std::string::operator="
+    )
+    assert from_symbol("_ZNSaIcEC1Ev") == "std::allocator"
+
+    memory = _memory()
+    memory.write(TEXT, b"assigned\0")
+    libc = ConcreteLibc(SYSV_X86_64, ConcreteIO())
+
+    def call(name: str, *arguments: int) -> int:
+        registers = dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False))
+        return libc(name, registers, memory)["RAX"]
+
+    other = OBJECT + 0x40
+    call("std::string::operator=", OBJECT, TEXT)
+    assert memory.read_c_string(call("std::string::data", OBJECT)) == b"assigned"
+    call("std::string::operator=copy", other, OBJECT)
+    assert memory.read_c_string(call("std::string::data", other)) == b"assigned"
+    assert call("std::string::size", other) == 8
+
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _memory()
+    image.write(TEXT, b"assigned\0")
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO())
+    symbolic = SymbolicLibc(SYSV_X86_64)
+
+    def call_symbolic(name: str, *arguments: int) -> int:
+        outcomes = symbolic.call(
+            executor,
+            state,
+            name,
+            {
+                register: sx.const(value, 64)
+                for register, value in zip(SYSV_X86_64.integer_parameters, arguments, strict=False)
+            },
+            Origin(0, 0),
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned), outcome
+        return evaluate(outcome.outputs["RAX"], {})
+
+    call_symbolic("std::string::operator=", OBJECT, TEXT)
+    call_symbolic("std::string::operator=copy", other, OBJECT)
+    assert call_symbolic("std::string::size", other) == 8
+    data = call_symbolic("std::string::data", other)
+    assert bytes(evaluate(state.memory.read_byte(data + i), {}) for i in range(8)) == b"assigned"
+
+
+@settings(max_examples=40, deadline=None)
+@given(st.binary(min_size=0, max_size=5).map(lambda data: data.replace(b"\0", b"?")))
+def test_a_string_whose_length_the_input_decides(value: bytes) -> None:
+    """`std::string s(argv[1])`: strlen gives a length no number is known for.
+
+    The copy that follows then writes each byte only where it is really part of the
+    string, which has to leave memory exactly as a concrete run would.
+    """
+    executor = Executor(MODULE, Z3Backend(), Goal())
+    image = _memory()
+    image.write(OBJECT, b"\xff" * 16)
+    state = State(id=1, frames=[], memory=SymbolicMemory(image), io=SymbolicIO())
+    libc = SymbolicLibc(SYSV_X86_64)
+    symbols = [sx.symbol(f"in_{index}", 8) for index in range(6)]
+    for offset, symbol in enumerate(symbols):
+        state.memory.write_byte(TEXT + offset, symbol)
+    assignment = {
+        symbol.name: byte for symbol, byte in zip(symbols, (value + b"\0" * 6)[:6], strict=True)
+    }
+
+    def call(name: str, *arguments: Expr) -> Returned:
+        outcomes = libc.call(
+            executor,
+            state,
+            name,
+            dict(zip(SYSV_X86_64.integer_parameters, arguments, strict=False)),
+            Origin(0, 0),
+        )
+        assert outcomes is not None
+        (outcome,) = outcomes
+        assert isinstance(outcome, Returned), outcome
+        return outcome
+
+    length = call("strlen", sx.const(TEXT, 64)).outputs["RAX"]
+    assert evaluate(length, assignment) == len(value)
+    call("memcpy", sx.const(OBJECT, 64), sx.const(TEXT, 64), length)
+    copied = bytes(
+        evaluate(state.memory.read_byte(OBJECT + offset), assignment) for offset in range(6)
+    )
+    assert copied == value + b"\xff" * (6 - len(value))

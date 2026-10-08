@@ -8,6 +8,7 @@ from ppy_rev.execution.process import enter_call, standard_memory
 from ppy_rev.ir.model import Module
 from ppy_rev.lift.lifter import lift_export
 from ppy_rev.simplify.pipeline import simplify_module
+from ppy_rev.solver.backend import CheckResult, Status
 from ppy_rev.solver.z3_backend import Z3Backend
 from ppy_rev.symbolic import expr as sx
 from ppy_rev.symbolic.concolic import concolic_search
@@ -150,6 +151,24 @@ def test_wide_symbolic_pointers_are_unsupported_not_guessed() -> None:
     solution = _solve(_module(program), _rax_is(1))
     (stop,) = solution.exploration.incomplete
     assert stop.code is DiagnosticCode.SYMBOLIC_POINTER_REQUIRED
+
+
+def test_reading_an_imported_object_is_unsupported_not_a_crash() -> None:
+    """Ghidra gives `std::cin` an address no section holds, and optimized C++ reads it.
+
+    Reading there faults, but the program is not the one at fault: no model put anything
+    in that object. Treating the path as dead would let a whole search end in `unsat`.
+    """
+    program = ProgramBuilder()
+    program.symbol("cin", 0x500000)
+    after = program.code(0x1000, [op("LOAD", [const(0x500000, 8)], reg("RAX"))])
+    program.code(after, ret(), length=1)
+    program.function("f", 0x1000)
+    solution = _solve(_module(program), _rax_is(1))
+    assert solution.model is None
+    (stop,) = solution.exploration.incomplete
+    assert stop.reason is StopReason.UNSUPPORTED
+    assert stop.detail == "no model for the library object cin"
 
 
 def test_a_pointer_chosen_between_constants_is_read_without_the_solver() -> None:
@@ -366,3 +385,106 @@ def test_concolic_search_flips_its_way_to_the_goal() -> None:
     assert (result.runs, result.flips) == (2, 1)
     (reached,) = result.exploration.reached
     assert search.solve(reached.state, [x]) == {"x": 0x53}
+
+
+def _nested_equality(inner: int) -> Module:
+    """`rax = 0; if (x == 5) { if (x == inner) rax = 1 /* 0x1010 */; } return rax;`"""
+    program = ProgramBuilder()
+    program.code(
+        0x1000,
+        [
+            op("INT_EQUAL", [reg("RDI"), const(5, 8)], reg("ZF")),
+            op("COPY", [const(0, 8)], reg("RAX")),
+            op("CBRANCH", [ram(0x1008), reg("ZF")]),
+        ],
+    )
+    program.code(0x1004, [op("BRANCH", [ram(0x1014)])])
+    program.code(
+        0x1008,
+        [
+            op("INT_EQUAL", [reg("RDI"), const(inner, 8)], reg("ZF")),
+            op("CBRANCH", [ram(0x1010), reg("ZF")]),
+        ],
+    )
+    program.code(0x100C, [op("BRANCH", [ram(0x1014)])])
+    program.code(0x1010, [op("COPY", [const(1, 8)], reg("RAX"))])
+    program.code(0x1014, ret(), length=1)
+    program.function("f", 0x1000)
+    return _module(program)
+
+
+def test_a_goal_inside_a_merged_region_is_reached_only_on_a_possible_path() -> None:
+    """Forks inside a region go unchecked until the join; what stops there is checked then.
+
+    `x == 5` and then `x == 6` cannot both hold, so reaching 0x1010 would be a goal on a
+    path that cannot happen: it must be dropped, not reported.
+    """
+    impossible = _solve(_nested_equality(6), Goal(addresses=frozenset({0x1010})))
+    assert impossible.model is None
+    assert impossible.exploration.reached == []
+    assert impossible.exploration.statistics.stops[StopReason.INFEASIBLE] >= 1
+    assert impossible.exploration.statistics.merges >= 1  # the region did run, and merge
+    possible = _solve(_nested_equality(5), Goal(addresses=frozenset({0x1010})))
+    assert possible.model == {"x": 5}
+
+
+class _TimeoutBackend:
+    """A solver that never settles: every check times out.
+
+    It stands in for a real solver giving up on a hard query, which is what a deferred
+    region's join check can do. A path it cannot disprove must be kept, not dropped.
+    """
+
+    name = "timeout"
+
+    def session(self) -> _TimeoutSession:
+        return _TimeoutSession()
+
+
+class _TimeoutSession:
+    def add(self, constraint: object) -> None:
+        del constraint
+
+    def push(self) -> None:
+        pass
+
+    def pop(self) -> None:
+        pass
+
+    def check(
+        self,
+        assumptions: object = (),
+        symbols: object = (),
+        timeout_ms: int | None = None,
+    ) -> CheckResult:
+        del assumptions, symbols, timeout_ms
+        return CheckResult(Status.TIMEOUT, {}, "timeout")
+
+    def smt2(self, assumptions: object = ()) -> str:
+        del assumptions
+        return ""
+
+
+def test_a_merged_path_the_solver_cannot_disprove_is_not_dropped() -> None:
+    """A join check that times out must not turn a reachable goal into no goal at all.
+
+    The two sides of the branch merge, then the goal sits past the join. With a solver
+    that gives up on every query, the merged path cannot be shown feasible - but it also
+    cannot be shown impossible, so it is kept and the goal is still reached.
+    """
+    program = ProgramBuilder()
+    _xor_check(program)
+    program.function("f", 0x1000)
+    module = _module(program)
+    function = module.function_named("f")
+    assert function is not None
+    solution = solve_function(
+        module,
+        function,
+        {"RDI": sx.symbol("x", 64)},
+        Goal(addresses=frozenset({0x100C})),
+        _TimeoutBackend(),
+    )
+    assert solution.exploration.reached, "the merged path was dropped as if impossible"
+    assert solution.exploration.statistics.stops[StopReason.INFEASIBLE] == 0
+    assert solution.exploration.statistics.merges == 1

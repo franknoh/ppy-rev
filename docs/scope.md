@@ -24,12 +24,19 @@ it rather than guessing.
   is where the solver struggles: those queries can exceed `--solver-timeout`.
 - **Loops and per-character checks**, including ones with several hundred constraints:
   [csaw_beleaf](../examples/csaw_beleaf/README.md) takes about three minutes,
-  [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds.
+  [tscctf_link_start](../examples/tscctf_link_start/README.md) under twenty seconds. When
+  each character is checked through a helper that validates it and calls `exit` on a bad
+  one, the two sides of that check meet again and are merged, so the loop costs one path
+  per character instead of one per combination of them — the difference between solving in
+  a minute and never finishing.
 - **Bytecode VMs**, when a dispatcher is recognized: `ppy-rev vm` lifts the bytecode and
   solving continues through it ([thjcc_pocketvm](../examples/thjcc_pocketvm/README.md)).
-- **A file the program reads**: `fopen` of a path the binary spells out makes that file's
-  contents an input like any other, recovered and printed as `flag.txt: ...`; `fgets`,
-  `fread`, `fgetc`, `fseek`, `ftell` and `rewind` read it, and what the program writes to a
+- **A file the program reads**: `fopen`, or `std::ifstream` of a path the binary spells
+  out, makes that file's contents an input like any other, recovered and printed as
+  `flag.txt: ...` (and written by `--output`). `std::getline(file, line)` reads that file
+  rather than the terminal, and what a file has to contain runs to the last byte the
+  program looked at — a file is not a C string, so a zero byte in the middle of it is
+  part of the answer. `fgets`, `fread`, `fgetc`, `fseek`, `ftell` and `rewind` read it, and what the program writes to a
   file it opened becomes that file's contents. The answer is checked by re-running the
   program against those contents; the sandboxed native run is skipped, since it would need
   the file written for it.
@@ -39,13 +46,41 @@ it rather than guessing.
 - **Anti-debugging in `main`**: `ptrace(PTRACE_TRACEME)` is an environment the solver picks
   rather than an assumption, so a challenge that only reveals its answer under a debugger is
   solved, and the answer says it needs one.
-- **Simple C++**: input read with `std::getline` or `std::cin >>` into a `std::string`,
-  indexed, sized, compared, and printed through `std::cout`. `std::string` uses libstdc++'s
-  own layout, so code that reads the object directly agrees with code that calls `size()`
-  and `data()`, and which overload an import is comes from its mangled symbol rather than
-  from a demangled name a C program could share. This covers C++ compiled without
-  optimization; `-O2` inlines the iostream machinery, which is not modeled and is reported
-  as unsupported rather than guessed.
+- **C++, optimized or not**: input read with `std::getline` or `std::cin >>` into a
+  `std::string` or a number, indexed, sized, compared, transformed, pushed into a
+  `std::vector`, and printed through `std::cout`. `std::string` uses libstdc++'s own
+  layout, so code that reads the object directly agrees with code that calls `size()` and
+  `data()`, and which overload an import is comes from its mangled symbol rather than from
+  a demangled name a C program could share. At `-O2` the library is inlined into loads of
+  those same fields, and `std::cin` and `std::cout` are objects the code reads rather than
+  calls, so they are laid out too: a stream in good state, with the `ctype` facet that
+  inlined `getline` widens its delimiter with. The 14 C++ fixtures in `tests/fixtures/src`
+  are solved under `g++` and `clang++`, at `-O0` and `-O2`, and every answer is checked
+  against the compiled binary. A string whose length the input decides — `std::string
+  s(argv[1])` — is built as such: the copy that follows writes each byte only where it is
+  really part of the string, so nothing has to be assumed about how long the input is.
+- **Code that runs before main**: the constructors in `.init_array` are executed on the
+  image before solving starts, so a key table built by a global object, or a global
+  `std::string`, is what main really reads. A constructor that would need the input — it
+  reads, exits, or looks for a debugger — is not run, and is reported instead.
+- **Programs that read the clock**: `time` returns a second the solver picks, reported with
+  the answer (`needs the clock to read ...`) rather than assumed here, and `sleep`,
+  `usleep` and `alarm` pass. A seed the clock decides — `srand(time(NULL))` — is settled
+  on one value it could take, which is said in a note and turns a fruitless search into
+  `analysis incomplete` rather than `unsat`. `signal` installs a handler that is never
+  called, since nothing here raises one.
+- **An outcome with nothing to read in it**: when no message ranks as success, the goal
+  is looked for by shape instead — a call that prints, or a success status the program
+  leaves with, that the input decides it reaches. Plenty of checkers say nothing at all:
+  passing is returning zero. The input is followed across calls and through a call table,
+  since the deciding usually happens in a function `main` handed the buffer to. That is language-independent, so it
+  covers a flag spelled out with `putc`, a message built while running, and the runtimes
+  of Rust, Go and Nim, whose strings a C-string reader cannot see. The evidence is
+  printed with the candidate, and an answer that turns out to reach the goal without
+  reading the input at all says so.
+- **Messages given as a pointer and a length**, as Rust and Go give them: read to that
+  length rather than to the next zero byte, which in those binaries runs through several
+  messages at once.
 - **Stripped binaries** at any optimization level: `main` is found through
   `__libc_start_main` when there is no symbol.
 
@@ -53,19 +88,63 @@ The 60 challenges in [`examples/`](../examples/README.md) are all of this kind; 
 are solved with no options at all, and the other five need one hint each (a flag format, a
 length, or a goal address).
 
+
+## Merging per-character checks that branch
+
+A common crackme shape checks the input one character at a time, and after each character
+takes a branch — a compare against a table, a helper that rejects bytes out of range by
+calling `exit`. Explored naively, the branches multiply: a 29-character check is half a
+billion paths. Diamonds like these, whose sides meet again with no loop of their own, are
+now explored to that meeting point and merged into a single state, and the merge sees
+through a branch side that ends the program and through the two loops clang emits at `-O2`
+for a check that must keep running after one character fails. Values live only earlier in
+the loop no longer keep the merge apart. A path the solver cannot settle at the join — the
+whole check at once is a hard query — is kept rather than dropped, so a slow query never
+turns into a false "no input works".
+
+Measured against the commit before this work, on a hundred variants of one such challenge
+(GreyCat's *AngryRobot*, a 29-byte per-character modular check), none solved before and all
+hundred solve now, every answer accepted by the program's own re-execution. On a
+40-binary sample of unrelated challenges the change is neutral: the same outcomes, nothing
+lost.
+
+## Reading several numbers with one `sscanf`
+
+A phase that reads a handful of integers at once — `sscanf(line, "%d %d %d %d %d %d", …)`,
+the shape every *Bomb Lab* number phase uses — would otherwise fork on how many digits each
+number has, and those counts multiply: six numbers over a short line is tens of thousands of
+states, and the search runs out of budget before the comparison that follows is ever
+reached. A plain sequence of unmodified `%d`/`%u` conversions handed to `sscanf` is now read
+in a single state instead, a small digit-by-digit machine carried in if-then-else
+expressions that counts the conversions that succeed and accumulates each number, saturating
+exactly as `strtol` does. The solver then works out the numbers from the comparison against
+them. A three-number check that exhausted 77k states before solves in five. The form is
+checked field-for-field against the plain C library on thousands of mixed inputs. Reading
+numbers straight from stdin with `scanf` still forks — the single pass leaves the stream
+position symbolic, which a later read could not use — so a program that scans stdin directly
+rather than a line it already read is the remaining case.
+
+Six numbers in a recurrence are different: one state, but one heavy query, and the solver
+can time out on it. So when a stage is solved on its own — `--chain`, or `--from
+--scanf-havoc` — a numeric `sscanf` is not parsed at all. It hands the stage fresh symbolic
+integers and returns the count, the checks constrain those integers directly as arithmetic,
+and the answer is rendered as a plain decimal line that the real `sscanf` reads back to the
+same values. A *Bomb Lab* number phase then solves in a moment instead of timing out, and
+re-running the whole program on the line confirms it. This skips the buffer, so a stage that
+also inspects the raw string it read is the case it does not cover; the re-run catches it.
+
 ## It does not solve
 
 | Not solved | What you see |
 |---|---|
-| C++ built with optimization | the inlined iostream internals dereference objects with no model, reported as `unsupported semantics` — unoptimized C++ that calls the library is solved (see above) |
-| Rust | the same: ten in the survey below, none solved |
-| Go | not represented in the survey; its runtime does not reach `main` the way this expects |
+| Rust | its `fmt::Arguments` machinery is not modeled, so a message assembled from pieces is not read; the outcome can still be found by its shape (see above) |
+| Go | its runtime does not reach `main` the way this expects |
 | Input from a socket | `unsupported semantics` at the first call — there is no model |
-| `sleep`/`signal`/`alarm`/`setjmp`, `time`-dependent behaviour | `unsupported semantics`; nondeterminism is not modeled |
+| `setjmp`, and a signal actually being delivered | `unsupported semantics`; a handler that is installed but never runs is fine (see above), one the program raises is not |
 | Self-modifying code, packers, `mprotect` tricks | no static call site to rank, or an unsupported operation |
 | x87 80-bit long double | `unsupported semantics`; binary32 and binary64 are modeled exactly |
 | Programs that only print (no check) | `no likely success output found`: there is no input to recover |
-| Anti-debug or environment checks *before* `main` | reported as `runs before main`, and not modeled — see [crewctf_ez_rev](../examples/crewctf_ez_rev/README.md) |
+| Anti-debug or environment checks *before* `main` | reported as `runs before main`: a constructor that reads input, exits, or calls `ptrace` is not executed, since running it would decide for the input — see [crewctf_ez_rev](../examples/crewctf_ez_rev/README.md) |
 
 A missing C library model is the cheapest of these to hit and the cheapest to fix: one
 beginner challenge in the survey below stops only because `getegid` has no model.
@@ -96,8 +175,8 @@ aimed at a string that turned out to be a prompt or a usage line rather than a s
 message. Today's goal ranking rejects prompts and negations, so that last group is smaller
 now, but the honest figure to quote from this survey is **55 of 1,796**. All 55 are plain C;
 there is not one C++, Go, or Rust solve, and not one where the input came from a file or a
-socket. That survey predates the `std::string` and `std::ostream` models, so its C++ figure
-is a floor, not a ceiling.
+socket. That survey predates every C++ model here, so its C++ figure is a floor, not a
+ceiling; the section after next measures a fresh sample instead.
 
 Time, wall clock including Ghidra: median 14 s, 90th percentile 37 s, longest 170 s. The
 tool's own analysis is a fraction of that — median 0.8 s — so most of a short solve is
@@ -109,6 +188,71 @@ only that the answer re-runs to the goal on the RevIR interpreter; of the 60 exa
 divergence above. And the outcome is not perfectly stable across versions: of 200 binaries
 re-attempted after changes to the tool, 38 changed category — 4 became solvable, and 9 that
 had been solved were not solved again.
+
+## Measured again on 452 binaries
+
+The survey above is from before the C++ work, and the binaries it ran on are gone, so the
+measurement was repeated on a fresh sample from the same archive: every blob in a
+reversing category between 5 KB and 400 KB with no file extension (553 of them), of which
+452 are x86-64 ELF and 57 link libstdc++. Same method as before — a 90-second budget, no
+options, and nothing executed.
+
+| share | outcome |
+|---|---|
+| 55.8% (252) | no success string could be ranked, and no outcome found by its shape |
+| 11.9% (54) | unsupported semantics |
+| 9.5% (43) | an answer |
+| 6.2% (28) | `main` not found |
+| 4.4% (20) | ran out of time |
+| 4.0% (18) | no input source found |
+| 3.8% (17) | analysis incomplete |
+| 2.2% (10) | `unsat` |
+| 2.2% (10) | ran out of budget, or something else |
+
+Nothing crashed: the 8 crashes the first run of this sample hit are fixed, as described
+below, and each of those binaries now reports why it stopped.
+
+Of the 43 answers, 38 pass `ppy-rev`'s own re-execution check and 8 of those recovered
+nothing, because the goal turned out to be reachable with no input at all — which the
+output now says. That leaves **31 answers worth the name**, against 27 before outcomes
+could be found by their shape, and 55 of 1,796 (55 of 692 distinct challenges) in the
+first survey. The two samples are not the same binaries, and this one has no challenge
+shipping a thousand variants, so the per-binary rates are not directly comparable; the
+per-challenge rate of the first survey, 8%, is the closer comparison.
+
+Finding outcomes by shape moved 30 binaries out of the largest bucket: 11 of them to an
+answer — among them `BITSCTF{w3lc0me_t0_r3v}` and `TooEasyForTheFirstFlag`, which no
+keyword would have reached — and the rest to a reason the analysis can name, such as an
+unsupported call or a search that ran out of time. It also costs something: `unsat` went
+from 6 to 10, and those are about a goal chosen by how it is reached rather than by what
+it says, which the output says when it reports one.
+
+What this says about the C++ work is narrower than the fixtures suggest. Of the 57 C++
+binaries, 2 are solved — before this, none were — and the C++ *semantics* are no longer
+what stops most of them: 32 of the 57 stop because nothing they print ranks as a success
+message. That is the same wall the whole sample hits, and it is now the first thing worth
+working on. Behind it, the models still missing most often are `std::ifstream` (5 of the
+12 unsupported C++ runs), `std::string::erase`, `atof`, and C++ exceptions.
+
+The 8 crashes were the other actionable result, and every cause is fixed. The image setup
+wrote a stream pointer into read-only data, which is a relocation and so does not need the
+program's permission. Six were a function *entered inside its own loop*: the code before
+the entry falls into it, so the entry block had a predecessor, and a value carried around
+that loop had nowhere to come from on the way in. The entry now gets an empty block of its
+own, as it already did when a branch targeted it — without one, the phi for such a value is
+replaced by a definition that reads it, which is both wrong and unbounded work for the
+simplifier, so a 15 KB binary took minutes. Should a phi still turn up with no incoming
+value at all, it is the value the caller left rather than an assertion, and following an
+address through a value defined from itself now stops. The last crash was a function whose
+branches nested deeper than Python's recursion limit, which lifting now raises, reporting
+the function as unliftable if it ever runs out anyway. Re-running the whole sample
+afterwards changed nothing else: seven of the eight now report `main` not found and one
+reports unsupported semantics, and every other binary landed where it had before.
+
+The other side of the same coin: the 16 C++ fixtures in `tests/fixtures/src` — `getline`,
+`cin >>`, indexing, sizing, comparison, `std::vector`, `std::array`, `std::transform`,
+lambdas, global constructors, a string built from `argv[1]` — are all solved under `g++`
+and `clang++`, at `-O0` and `-O2`, with every answer accepted by the compiled binary.
 
 ## What a failure is worth
 
@@ -137,5 +281,21 @@ had been solved were not solved again.
 3. No input found? `--stdin LENGTH` or `--argv 1`.
 4. Know the flag shape? `--flag-format 'ctf{*}'`, or `--prefix`/`--suffix`/`--length`.
 5. Slow? Watch it work with `--progress`, raise `--timeout`, or try `--strategy concolic`.
-6. Unsupported semantics on a path that matters is a missing model, not a wall: the name of
-   the function is in the message.
+   For a small input a check keeps opaque to the solver — a hash against a constant, a
+   table it cannot invert — `--strategy brute` runs every value concretely instead;
+   bound it with `--charset` and `--length` (four hex digits is 65k tries, a second or
+   two), since blind printable brute force only reaches two or three bytes in the budget.
+6. A multi-stage check - a bomb's phases, a function reached only past input parsing -
+   solves one stage at a time with `--from ADDRESS`: execution starts at that function
+   with a symbolic buffer in its first argument, so the stage's condition is solved on
+   its own. Pair it with `--avoid-address` for the failure handler (the `explode_bomb`).
+   `--chain` does the whole thing on its own: it finds the driver's phases and the shared
+   failure sink they all call, solves each phase the `--from` way (keeping every answer to
+   one line), and joins the lines into the input the program reads, then re-runs the whole
+   program on that input to confirm it reaches the success message. A phase the solver
+   cannot crack stops the chain, and the phases solved before it are still reported. It
+   expects the bomb shape — one line read per phase, phases sharing a sink that ends the
+   program — and treats the phases as independent, so a phase that depends on a global a
+   previous phase set is out of scope.
+7. Unsupported semantics on a path that matters is a missing model, not a wall: the name
+   of the function is in the message.

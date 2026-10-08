@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Container
 from dataclasses import dataclass
 
 from ppy_rev.ir.model import Function, successors
@@ -43,11 +44,18 @@ def control_flow(function: Function) -> ControlFlow:
     )
 
 
-def immediate_post_dominators(function: Function) -> tuple[int | None, ...]:
+def immediate_post_dominators(
+    function: Function, ignore: Container[int] = ()
+) -> tuple[int | None, ...]:
     """Each block's nearest strict post-dominator.
 
     None when only the virtual exit post-dominates a block (paths leave the function
     separately) or when the block cannot reach an exit at all.
+
+    Blocks in `ignore` are left out of the graph entirely. A branch whose one side calls
+    `exit` has no post-dominator among the blocks that follow it, because that side never
+    follows anything; ignoring it says what the two sides have in common when they do
+    both come back.
     """
     count = len(function.blocks)
     # Node 0 of the reversed graph is a virtual exit following every exiting block; node
@@ -55,7 +63,9 @@ def immediate_post_dominators(function: Function) -> tuple[int | None, ...]:
     reversed_successors: list[list[int]] = [[] for _ in range(count + 1)]
     reversed_predecessors: list[list[int]] = [[] for _ in range(count + 1)]
     for block in function.blocks:
-        targets = successors(block.terminator)
+        if block.id in ignore:
+            continue
+        targets = [target for target in successors(block.terminator) if target not in ignore]
         if not targets:
             reversed_successors[0].append(block.id + 1)
             reversed_predecessors[block.id + 1].append(0)

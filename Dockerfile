@@ -13,6 +13,7 @@ RUN apt-get update \
         ca-certificates \
         clang \
         curl \
+        g++ \
         gcc \
         libc6-dev \
         openjdk-21-jdk-headless \

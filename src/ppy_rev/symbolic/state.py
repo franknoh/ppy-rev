@@ -62,11 +62,38 @@ class SymbolicIO:
     """Streams `fopen` returned, by the handle the program holds."""
     positions: dict[int, int] = field(default_factory=dict[int, int])
     """How far each open file has been read."""
+    read_to: dict[str, int] = field(default_factory=dict[str, int])
+    """How far the program read into each file it opened, by name.
+
+    A file is not a C string: what it has to contain runs to the last byte the program
+    looked at, including any terminator or newline in the middle of it.
+    """
+    line_read: set[str] = field(default_factory=set[str])
+    """Files the program read a line at a time, so the answer ends at that line."""
+    unknown_from: dict[int, str] = field(default_factory=dict[int, str])
+    """Streams cut short where a model lost track, and what to say if one is read again.
+
+    A line whose length the input decides leaves the next read's position unknown. That
+    costs nothing while nothing reads the stream again — most programs read once — so the
+    approximation is recorded here and only reported when a later read runs into it.
+    """
+    clock: Expr | None = None
+    """What `time(NULL)` returned, once something asked: a second the solver picks.
+
+    A challenge that reads the clock is answered for the time it was run at, and which
+    time that was is part of the answer rather than a constant chosen here.
+    """
     traced: Expr | None = None
     """`ptrace(PTRACE_TRACEME)`'s result: 0, or -1 when a debugger already traces us.
 
     One value per run, chosen by the solver rather than assumed, because challenges exist
     that only reveal their answer under a debugger.
+    """
+    scanf_values: list[tuple[Expr, int]] = field(default_factory=list[tuple[Expr, int]])
+    """Integers a numeric `sscanf` was handed as fresh symbols, in read order, with the
+
+    width (in bytes) each was stored at. Only set when solving a stage in isolation asked
+    for it; the answer line is rendered from these instead of from the buffer bytes.
     """
 
     def copy(self) -> SymbolicIO:
@@ -81,7 +108,12 @@ class SymbolicIO:
             contents=dict(self.contents),
             files=dict(self.files),
             positions=dict(self.positions),
+            read_to=dict(self.read_to),
+            line_read=set(self.line_read),
+            unknown_from=dict(self.unknown_from),
+            clock=self.clock,
             traced=self.traced,
+            scanf_values=list(self.scanf_values),
         )
 
 
