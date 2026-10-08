@@ -18,8 +18,9 @@ from ppy_rev.cli.render import (
     render_solve,
     solution_bytes,
 )
-from ppy_rev.config import AnalyzerConfig, CacheOptions, GhidraOptions
+from ppy_rev.config import GHIDRA_HOME_VARIABLE, AnalyzerConfig, CacheOptions, GhidraOptions
 from ppy_rev.diagnostics import PpyRevError, Severity
+from ppy_rev.doctor import diagnose
 from ppy_rev.ir.model import Module
 from ppy_rev.ir.text import format_module
 from ppy_rev.ppy.check import check_ppy
@@ -35,6 +36,7 @@ from ppy_rev.solve import (
 )
 from ppy_rev.symbolic.executor import Budget
 from ppy_rev.symbolic.inputs import Charset
+from ppy_rev.userconfig import save_ghidra_home
 from ppy_rev.verify.sandbox import SandboxOptions
 from ppy_rev.vm.detect import LIKELY_DISPATCHER, detect_dispatchers
 from ppy_rev.vm.lift import isa_description, lift_vm, patch_interpreter
@@ -280,6 +282,39 @@ def vm_solve(arguments: argparse.Namespace, out: TextIO) -> int:
         *result.notes,
     )
     return _report_solution(arguments, replace(result, notes=notes), out)
+
+
+def _confirm(prompt: str) -> bool:
+    """Ask on a terminal; when input is not interactive, treat it as no."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        answer = input(prompt)
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("", "y", "yes")
+
+
+def doctor(arguments: argparse.Namespace, out: TextIO) -> int:
+    diagnosis = diagnose()
+    out.write("ppy-rev doctor\n\n")
+    for check in diagnosis.checks:
+        out.write(f"  [{'ok' if check.ok else '!!'}]  {check.name:11} {check.detail}\n")
+        if check.hint:
+            out.write(f"         {'->' if not check.ok else 'note:'} {check.hint}\n")
+    out.write("\n")
+    if diagnosis.can_save and diagnosis.ghidra is not None:
+        home = diagnosis.ghidra.home
+        origin = "found" if diagnosis.source == "discovered" else f"from {GHIDRA_HOME_VARIABLE}"
+        out.write(f"Ghidra {diagnosis.ghidra.version} {origin} at {home}.\n")
+        if arguments.yes or _confirm("Save it as ppy-rev's default? [Y/n] "):
+            out.write(f"  saved to {save_ghidra_home(home)}\n")
+        else:
+            out.write(f"  not saved; set {GHIDRA_HOME_VARIABLE} or re-run with --yes\n")
+        out.write("\n")
+    done = "All set.\n" if diagnosis.ok else "Some tools are missing; see the hints above.\n"
+    out.write(done)
+    return 0 if diagnosis.ok else EXIT_ERROR
 
 
 def cache_clear(arguments: argparse.Namespace, out: TextIO) -> int:

@@ -32,9 +32,20 @@ def test_explicit_home_overrides_environment(tmp_path: Path) -> None:
     assert installation.version == "12.0"
 
 
-def test_missing_configuration_is_reported() -> None:
-    with pytest.raises(ConfigurationError, match="PPY_REV_GHIDRA_HOME"):
-        locate_ghidra(None, {})
+def test_missing_configuration_is_reported(tmp_path: Path) -> None:
+    # An empty config home, so no Ghidra a previous `doctor` saved is picked up.
+    with pytest.raises(ConfigurationError, match="ppy-rev doctor"):
+        locate_ghidra(None, {"PPY_REV_HOME": str(tmp_path)})
+
+
+def test_falls_back_to_saved_config(tmp_path: Path) -> None:
+    from ppy_rev.userconfig import save_ghidra_home
+
+    home = _fake_installation(tmp_path / "ghidra")
+    environ = {"PPY_REV_HOME": str(tmp_path / "home")}
+    save_ghidra_home(home, environ)
+    installation = locate_ghidra(None, environ)
+    assert installation.home == home.resolve()
 
 
 def test_directory_without_ghidra_is_rejected(tmp_path: Path) -> None:

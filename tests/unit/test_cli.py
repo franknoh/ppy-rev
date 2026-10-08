@@ -24,6 +24,25 @@ def test_version_flag_prints_version(capsys: pytest.CaptureFixture[str]) -> None
     assert capsys.readouterr().out.strip() == f"ppy-rev {__version__}"
 
 
+def test_doctor_reports_a_saved_ghidra(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ppy_rev import userconfig
+
+    home = tmp_path / "ghidra"
+    (home / "Ghidra").mkdir(parents=True)
+    (home / "Ghidra" / "application.properties").write_text("application.version=12.1.3\n")
+    (home / "support").mkdir()
+    (home / "support" / "analyzeHeadless").write_text("#!/bin/sh\n")
+    monkeypatch.setenv(userconfig.HOME_VARIABLE, str(tmp_path / "home"))
+    monkeypatch.setenv("PPY_REV_GHIDRA_HOME", str(home))
+    assert main(["doctor", "--yes"]) in (0, 1)  # 0/1 depends on java and z3 being present
+    output = capsys.readouterr().out
+    assert "ppy-rev doctor" in output
+    assert str(home) in output and "12.1.3" in output
+    assert userconfig.cached_ghidra_home({userconfig.HOME_VARIABLE: str(tmp_path / "home")}) == home
+
+
 def test_cache_clear_removes_cached_exports(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

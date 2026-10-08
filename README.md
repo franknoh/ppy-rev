@@ -30,16 +30,17 @@ git clone https://github.com/franknoh/ppy-rev
 cd ppy-rev && uv sync --frozen
 ```
 
-Either way, point `ppy-rev` at Ghidra (`--ghidra-home PATH` sets it for a single run
-instead). `ppy-rev` never downloads Ghidra itself; the Docker image (`docker compose build`)
-contains a checksum-verified one and every tool the test suite needs.
+Then run `ppy-rev doctor` once: it finds a Ghidra installation on the machine, asks before
+saving it to `~/.ppy-rev`, and checks the other tools it needs (a JDK 21, Z3), so later runs
+need nothing set up.
 
 ```bash
-export PPY_REV_GHIDRA_HOME=/path/to/ghidra_12.1.3_PUBLIC
-# on Linux, find an installation already on the machine:
-launcher=$(find /opt /usr/share /usr/local "$HOME" -name analyzeHeadless -type f 2>/dev/null | head -1)
-export PPY_REV_GHIDRA_HOME=$(dirname "$(dirname "$launcher")")
+ppy-rev doctor          # find Ghidra, confirm, and save it; -y skips the prompt
 ```
+
+`$PPY_REV_GHIDRA_HOME` overrides the saved path, and `--ghidra-home PATH` sets it for a
+single run. `ppy-rev` never downloads Ghidra itself; the Docker image (`docker compose
+build`) contains a checksum-verified one and every tool the test suite needs.
 
 ## Usage
 

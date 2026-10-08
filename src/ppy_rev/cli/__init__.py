@@ -87,6 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
     _solve_options(solve)
     solve.set_defaults(handler=commands.solve)
 
+    doctor = subcommands.add_parser(
+        "doctor", help="check the tools ppy-rev needs and save where Ghidra is"
+    )
+    doctor.add_argument(
+        "-y", "--yes", action="store_true", help="save a Ghidra it finds without asking first"
+    )
+    doctor.set_defaults(handler=commands.doctor)
+
     cache = subcommands.add_parser("cache", help="manage cached Ghidra exports")
     cache_commands = cache.add_subparsers(dest="cache_command", metavar="command")
     clear = cache_commands.add_parser("clear", parents=[common], help="delete every cached export")

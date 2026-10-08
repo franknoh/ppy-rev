@@ -17,9 +17,12 @@ from pathlib import Path
 from ppy_rev.config import GHIDRA_HOME_VARIABLE, GhidraOptions
 from ppy_rev.diagnostics import ConfigurationError, GhidraError
 from ppy_rev.progress import Progress
+from ppy_rev.userconfig import cached_ghidra_home
 
 BRIDGE_DIRECTORY = Path(__file__).with_name("bridge")
 EXPORT_SCRIPT = "PpyRevExport.java"
+EXPECTED_GHIDRA_VERSION = "12.1.3"
+"""The Ghidra the export bridge is written against; others may export differently."""
 _LOG_TAIL_LINES = 40
 _POLL_SECONDS = 0.5
 """How often a running Ghidra process is checked, so progress can be reported."""
@@ -38,10 +41,16 @@ class GhidraInstallation:
 def locate_ghidra(
     explicit: Path | None, environ: Mapping[str, str] = os.environ
 ) -> GhidraInstallation:
-    configured = explicit if explicit is not None else environ.get(GHIDRA_HOME_VARIABLE)
+    """The Ghidra to use: `--ghidra-home`, then the environment, then what `doctor` saved."""
+    configured = (
+        explicit
+        if explicit is not None
+        else environ.get(GHIDRA_HOME_VARIABLE) or cached_ghidra_home(environ)
+    )
     if not configured:
         raise ConfigurationError(
-            f"Ghidra installation not configured: set {GHIDRA_HOME_VARIABLE} or pass --ghidra-home"
+            f"Ghidra installation not configured: run `ppy-rev doctor` to find and save one, "
+            f"set {GHIDRA_HOME_VARIABLE}, or pass --ghidra-home"
         )
     home = Path(configured).expanduser().resolve()
     properties = home / "Ghidra" / "application.properties"
@@ -51,6 +60,25 @@ def locate_ghidra(
             f"{home} is not a Ghidra installation (no support/analyzeHeadless)"
         )
     return installation
+
+
+def installation_at(home: Path) -> GhidraInstallation | None:
+    """A valid Ghidra installation at `home`, or None when it is not one.
+
+    The non-raising form `doctor` uses while searching: a candidate directory either has
+    `support/analyzeHeadless` and a readable version, or it is passed over.
+    """
+    try:
+        resolved = home.expanduser().resolve()
+    except OSError:
+        return None
+    if not (resolved / "support" / "analyzeHeadless").is_file():
+        return None
+    try:
+        version = _read_version(resolved / "Ghidra" / "application.properties")
+    except ConfigurationError:
+        return None
+    return GhidraInstallation(home=resolved, version=version)
 
 
 def _read_version(properties: Path) -> str:
