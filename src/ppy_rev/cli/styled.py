@@ -27,14 +27,18 @@ from ppy_rev.solve import SolveResult, SolveStatus
 from ppy_rev.vm.detect import Dispatcher
 from ppy_rev.vm.lift import LiftedVm
 
-BANNER = r""" _ __  _ __  _   _   _ __ _____   __
-| '_ \| '_ \| | | | | '__/ _ \ \ / /
-| |_) | |_) | |_| | | | |  __/\ V /
-| .__/| .__/ \__, | |_|  \___| \_/
-|_|   |_|    |___/"""
+BANNER = (
+    "██████╗ ██████╗ ██╗   ██╗      ██████╗ ███████╗██╗   ██╗\n"
+    "██╔══██╗██╔══██╗╚██╗ ██╔╝      ██╔══██╗██╔════╝██║   ██║\n"
+    "██████╔╝██████╔╝ ╚████╔╝ █████╗██████╔╝█████╗  ██║   ██║\n"
+    "██╔═══╝ ██╔═══╝   ╚██╔╝  ╚════╝██╔══██╗██╔══╝  ╚██╗ ██╔╝\n"
+    "██║     ██║        ██║         ██║  ██║███████╗ ╚████╔╝ \n"
+    "╚═╝     ╚═╝        ╚═╝         ╚═╝  ╚═╝╚══════╝  ╚═══╝  "
+)
+_BANNER_SHADES = ("red1", "red1", "red3", "red3", "dark_red", "dark_red")
 
 _PRINTABLE = frozenset(range(0x20, 0x7F))
-_ACCENT = "bright_cyan"
+_ACCENT = "bright_red"
 _MUTED = "grey62"
 _STATUS = {
     SolveStatus.SAT: ("bold green", "●"),
@@ -55,8 +59,9 @@ def console_for(out: TextIO) -> Console | None:
 
 def banner(console: Console, tagline: str = "lift · solve · defuse") -> None:
     console.print()
-    console.print(Text(BANNER, style=f"bold {_ACCENT}"))
-    console.print(Text(f"  {tagline}", style=_MUTED))
+    for line, shade in zip(BANNER.splitlines(), _BANNER_SHADES, strict=False):
+        console.print(Text(line, style=f"bold {shade}"))
+    console.print(Text(f"  {tagline}", style=_ACCENT))
     console.print()
 
 
