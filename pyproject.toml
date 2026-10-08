@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "ppy-lang==0.3.5",
+    "rich>=13.7",
     "z3-solver>=4.15",
 ]
 

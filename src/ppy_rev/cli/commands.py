@@ -296,13 +296,19 @@ def _confirm(prompt: str) -> bool:
 
 
 def doctor(arguments: argparse.Namespace, out: TextIO) -> int:
+    from ppy_rev.cli import styled
+
     diagnosis = diagnose()
-    out.write("ppy-rev doctor\n\n")
-    for check in diagnosis.checks:
-        out.write(f"  [{'ok' if check.ok else '!!'}]  {check.name:11} {check.detail}\n")
-        if check.hint:
-            out.write(f"         {'->' if not check.ok else 'note:'} {check.hint}\n")
-    out.write("\n")
+    console = styled.console_for(out)
+    if console is not None:
+        styled.doctor(diagnosis, console)
+    else:
+        out.write("ppy-rev doctor\n\n")
+        for check in diagnosis.checks:
+            out.write(f"  [{'ok' if check.ok else '!!'}]  {check.name:11} {check.detail}\n")
+            if check.hint:
+                out.write(f"         {'->' if not check.ok else 'note:'} {check.hint}\n")
+        out.write("\n")
     if diagnosis.can_save and diagnosis.ghidra is not None:
         home = diagnosis.ghidra.home
         origin = "found" if diagnosis.source == "discovered" else f"from {GHIDRA_HOME_VARIABLE}"

@@ -23,6 +23,11 @@ _ALWAYS_SHOWN = (
 
 
 def render_info(info: ProgramInfo, out: TextIO) -> None:
+    from ppy_rev.cli import styled
+
+    if (console := styled.console_for(out)) is not None:
+        styled.info(info, console)
+        return
     kind = f"{info.format} {info.elf_type}"
     out.write(f"Target: {info.architecture} {info.endianness}-endian {kind}\n")
     if info.sha256:
@@ -80,6 +85,11 @@ def _escaped(data: bytes) -> str:
 
 
 def render_solve(result: SolveResult, out: TextIO, verbose: int) -> None:
+    from ppy_rev.cli import styled
+
+    if (console := styled.console_for(out)) is not None:
+        styled.solve(result, console, verbose)
+        return
     out.write(f"Target: {result.target}\n\nInput:\n")
     first = result.solutions[0] if result.solutions else None
     for item in result.inputs:
@@ -169,6 +179,11 @@ def _opcodes(values: tuple[int, ...]) -> str:
 def render_dispatchers(
     target: str, dispatchers: list[Dispatcher], hidden: int, out: TextIO
 ) -> None:
+    from ppy_rev.cli import styled
+
+    if (console := styled.console_for(out)) is not None:
+        styled.dispatchers(target, dispatchers, hidden, console)
+        return
     out.write(f"Target: {target}\n")
     if not dispatchers:
         out.write("\nNo VM dispatcher found.\n")
@@ -202,6 +217,11 @@ def render_dispatchers(
 
 
 def render_lifted_vm(target: str, lifted: LiftedVm, out: TextIO) -> None:
+    from ppy_rev.cli import styled
+
+    if (console := styled.console_for(out)) is not None:
+        styled.lifted_vm(target, lifted, console)
+        return
     dispatcher = lifted.dispatcher
     out.write(
         f"Target: {target}\n\n"
@@ -253,6 +273,11 @@ def _outcome(candidate: GoalCandidate) -> str:
 
 
 def render_analysis(report: AnalysisReport, out: TextIO, verbose: int) -> None:
+    from ppy_rev.cli import styled
+
+    if (console := styled.console_for(out)) is not None:
+        styled.analysis(report, console, verbose)
+        return
     out.write(f"Target: {report.target}\n")
     out.write(f"Entry: {report.main or 'main not found'}\n")
     out.write("\nInputs:\n")

@@ -98,6 +98,23 @@ def test_empty_solutions_are_named() -> None:
     assert "Solution 3:\n  key\n" in text
 
 
+def test_styled_output_is_only_for_a_terminal() -> None:
+    """Piped output stays plain; a terminal gets the rich rendering with the same facts."""
+    from ppy_rev.cli import styled
+
+    assert styled.console_for(io.StringIO()) is None  # not a terminal
+    plain = io.StringIO()
+    render_solve(_result(Solution(b"key", None, True, "reaches the goal")), plain, 0)
+    assert plain.getvalue().startswith("Target: x86-64 Linux ELF\n")  # unchanged plain path
+
+    from rich.console import Console
+
+    console = Console(force_terminal=True, width=80, record=True)
+    styled.solve(_result(Solution(b"key", None, True, "reaches the goal")), console, verbose=1)
+    text = console.export_text()
+    assert "sat" in text and "key" in text and "target" in text
+
+
 def test_lift_modes_carry_more_of_the_analysis() -> None:
     """`--mode` says how much of what ppy-rev worked out the output carries."""
     parser = build_parser()
