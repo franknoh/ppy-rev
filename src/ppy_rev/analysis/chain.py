@@ -9,6 +9,7 @@ the whole program through its input parsing at once.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from ppy_rev.analysis.inputs import STDIN_READERS
@@ -53,8 +54,17 @@ def _ends_program(module: Module, function: Function) -> bool:
     return any(external_name(module, call) in ENDS_PROGRAM for call, _ in calls(function))
 
 
-def _is_reader(module: Module, function: Function) -> bool:
+def _reads_stdin(module: Module, function: Function) -> bool:
     return any(external_name(module, call) in STDIN_READERS for call, _ in calls(function))
+
+
+def _is_reader(module: Module, function: Function) -> bool:
+    """Reads a line of input, directly or through a helper.
+
+    A bomb's `read_line` reads through `skip`, which calls `fgets`, so the reader is found
+    transitively, not only when the driver's own callee calls `fgets` itself.
+    """
+    return any(_reads_stdin(module, reached) for reached in reachable_functions(module, function))
 
 
 def _reaches(module: Module, function: Function, target: int) -> bool:
@@ -104,6 +114,15 @@ def detect_chain(module: Module) -> ChainPlan | None:
     sink_function = module.function_at(sink)
     if sink_function is None:
         return None
+    # How many times the driver calls each internal function. A phase is called once, for
+    # its own line; the reader and a per-phase helper like `phase_defused` are called once
+    # per phase, so counting the calls tells a real phase from the scaffolding around it.
+    once = Counter(
+        address
+        for call, _ in calls(main)
+        for address in callee_addresses(call.target)
+        if module.function_at(address) is not None
+    )
     reader: int | None = None
     reader_name: str | None = None
     stages: list[Stage] = []
@@ -117,7 +136,9 @@ def detect_chain(module: Module) -> ChainPlan | None:
                 if reader is None:
                     reader, reader_name = address, function.name
                 continue
-            if address not in chosen and _reaches(module, function, sink):
+            if address in chosen or once[address] != 1:
+                continue
+            if _reaches(module, function, sink):
                 chosen.add(address)
                 stages.append(Stage(function.name, address, call.origin.address))
     if not stages:
