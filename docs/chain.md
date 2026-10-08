@@ -72,3 +72,8 @@ phase independent of the others. A phase that depends on a global an earlier pha
 `secret_phase` reached only after the rest) is out of scope, and so is a phase that inspects
 its raw line beyond the numbers it parsed; the whole-program re-run at the end is what tells
 you when a stage fell outside what the chain modeled.
+
+---
+
+The bomb example here was worked out against [qwoqLab](https://github.com/Aplace0927/qwoqLab)
+— thanks for the reference.
