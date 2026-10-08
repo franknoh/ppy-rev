@@ -4,7 +4,7 @@
 representation (RevIR), emits readable [PPy](https://github.com/franknoh/PPy),
 and solves reversing challenges with purpose-built symbolic execution over Z3.
 
-<p align="center"><img src="docs/images/banner.svg" alt="ppy-rev" width="640"></p>
+<p align="center"><img src="docs/images/banner.png" alt="ppy-rev" width="640"></p>
 
 ## Supported targets
 
@@ -40,7 +40,7 @@ need nothing set up.
 ppy-rev doctor          # find Ghidra, confirm, and save it; -y skips the prompt
 ```
 
-<img src="docs/images/doctor.svg" alt="ppy-rev doctor" width="640">
+<img src="docs/images/doctor.png" alt="ppy-rev doctor" width="640">
 
 `$PPY_REV_GHIDRA_HOME` overrides the saved path, and `--ghidra-home PATH` sets it for a
 single run. `ppy-rev` never downloads Ghidra itself; the Docker image (`docker compose
@@ -80,7 +80,7 @@ uv run ppy-rev solve examples/ais3_crackme/ais3_crackme  # prints ais3{I_tak3_g0
 **A crackme** — symbolic execution finds the input and re-runs the lifted program to check
 it:
 
-<img src="docs/images/solve.svg" alt="ppy-rev solve" width="640">
+<img src="docs/images/solve.png" alt="ppy-rev solve" width="640">
 
 **A bytecode VM** — recover the bytecode and solve against it, not the dispatch loop
 ([docs/vm.md](docs/vm.md)):
@@ -90,7 +90,7 @@ ppy-rev vm detect ./chall    # confirm an interpreter, with evidence
 ppy-rev vm solve ./chall     # solve over the lifted bytecode; verified on the interpreter
 ```
 
-<img src="docs/images/vm.svg" alt="ppy-rev vm lift" width="640">
+<img src="docs/images/vm.png" alt="ppy-rev vm lift" width="640">
 
 **A binary bomb** — detect the phases and the failure sink, solve each, and chain the
 answers into one input that defuses the whole thing ([docs/chain.md](docs/chain.md)):
@@ -100,7 +100,7 @@ ppy-rev solve ./bomb --chain --output solution
 ./bomb < solution            # Congratulations! You've defused the bomb!
 ```
 
-<img src="docs/images/bomb.svg" alt="ppy-rev solve --chain" width="640">
+<img src="docs/images/bomb.png" alt="ppy-rev solve --chain" width="640">
 
 **Runnable PPy** — emit source that reproduces the program, optionally carrying the answer
 ([docs/emit-ppy.md](docs/emit-ppy.md)):

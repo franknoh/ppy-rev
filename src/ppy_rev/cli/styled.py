@@ -27,7 +27,17 @@ from ppy_rev.solve import SolveResult, SolveStatus
 from ppy_rev.vm.detect import Dispatcher
 from ppy_rev.vm.lift import LiftedVm
 
-BANNER = (
+_PRINTABLE = frozenset(range(0x20, 0x7F))
+_ACCENT = "bright_red"
+_MUTED = "grey62"
+_STATUS = {
+    SolveStatus.SAT: ("bold green", "●"),
+    SolveStatus.UNSAT: ("bold red", "○"),
+}
+_CERTAINTY = {"proven": "green", "inferred": "yellow", "heuristic": _MUTED}
+
+# An ANSI-shadow "PPY-REV": shown once by `doctor`, not on the commands run day to day.
+_BANNER = (
     "██████╗ ██████╗ ██╗   ██╗      ██████╗ ███████╗██╗   ██╗\n"
     "██╔══██╗██╔══██╗╚██╗ ██╔╝      ██╔══██╗██╔════╝██║   ██║\n"
     "██████╔╝██████╔╝ ╚████╔╝ █████╗██████╔╝█████╗  ██║   ██║\n"
@@ -37,14 +47,13 @@ BANNER = (
 )
 _BANNER_SHADES = ("red1", "red1", "red3", "red3", "dark_red", "dark_red")
 
-_PRINTABLE = frozenset(range(0x20, 0x7F))
-_ACCENT = "bright_red"
-_MUTED = "grey62"
-_STATUS = {
-    SolveStatus.SAT: ("bold green", "●"),
-    SolveStatus.UNSAT: ("bold red", "○"),
-}
-_CERTAINTY = {"proven": "green", "inferred": "yellow", "heuristic": _MUTED}
+
+def banner(console: Console) -> None:
+    console.print()
+    for line, shade in zip(_BANNER.splitlines(), _BANNER_SHADES, strict=False):
+        console.print(Text(line, style=f"bold {shade}"))
+    console.print(Text("  lift · solve · defuse", style=_ACCENT))
+    console.print()
 
 
 def console_for(out: TextIO) -> Console | None:
@@ -55,14 +64,6 @@ def console_for(out: TextIO) -> Console | None:
     if not callable(isatty) or not isatty():
         return None
     return Console(file=out, highlight=False, emoji=False)
-
-
-def banner(console: Console, tagline: str = "lift · solve · defuse") -> None:
-    console.print()
-    for line, shade in zip(BANNER.splitlines(), _BANNER_SHADES, strict=False):
-        console.print(Text(line, style=f"bold {shade}"))
-    console.print(Text(f"  {tagline}", style=_ACCENT))
-    console.print()
 
 
 def _field_table(rows: list[tuple[str, RenderableType]]) -> Table:
@@ -91,7 +92,6 @@ def _bytes_text(data: bytes) -> Text:
 
 
 def solve(result: SolveResult, console: Console, verbose: int) -> None:
-    banner(console, "solve")
     goal = result.goal
     first = result.solutions[0] if result.solutions else None
     rows: list[tuple[str, RenderableType]] = [("target", Text(result.target))]
@@ -186,7 +186,6 @@ def _solve_stats(result: SolveResult, console: Console) -> None:
 
 
 def dispatchers(target: str, items: list[Dispatcher], hidden: int, console: Console) -> None:
-    banner(console, "vm detect")
     console.print(Text.assemble(("target  ", _MUTED), target))
     if not items:
         console.print(Text("\nNo VM dispatcher found.", style="yellow"))
@@ -235,7 +234,6 @@ def _opcodes(values: tuple[int, ...]) -> str:
 
 
 def lifted_vm(target: str, lifted: LiftedVm, console: Console) -> None:
-    banner(console, "vm lift")
     dispatcher = lifted.dispatcher
     counters = {item.counter for item in lifted.instructions}
     rows: list[tuple[str, RenderableType]] = [
@@ -291,7 +289,6 @@ def lifted_vm(target: str, lifted: LiftedVm, console: Console) -> None:
 
 
 def analysis(report: AnalysisReport, console: Console, verbose: int) -> None:
-    banner(console, "analyze")
     console.print(
         _field_table(
             [("target", Text(report.target)), ("entry", Text(report.main or "main not found"))]
@@ -353,7 +350,6 @@ def _outcome_table(
 
 
 def info(program: ProgramInfo, console: Console) -> None:
-    banner(console, "info")
     kind = f"{program.format} {program.elf_type}"
     target = f"{program.architecture} {program.endianness}-endian {kind}"
     rows: list[tuple[str, RenderableType]] = [
@@ -391,7 +387,7 @@ def info(program: ProgramInfo, console: Console) -> None:
 
 
 def doctor(diagnosis: Diagnosis, console: Console) -> None:
-    banner(console, "doctor")
+    banner(console)
     table = Table.grid(padding=(0, 2))
     table.add_column(justify="center")
     table.add_column(style=_MUTED)
