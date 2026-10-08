@@ -329,21 +329,25 @@ def test_chain_defuses_a_staged_driver(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """`--chain` finds a bomb's phases and the sink, solves each, and chains the lines."""
+    """`--chain` finds a bomb's phases and the sink, solves each, and chains the lines.
+
+    The last phase reads six numbers in a recurrence: the single-pass parser would make one
+    heavy query for it, so the chain hands it fresh symbolic integers and renders a decimal
+    line instead, and the whole chain still has to drive the real program to its success.
+    """
     del analyzer
     binary = compile_fixture.build("staged_phases", "gcc", "O0")
     output = tmp_path / "chain"
-    code, text = _solve(
-        binary, "--chain", "-v", "--max-length", "16", "--output", str(output), capsys=capsys
-    )
+    code, text = _solve(binary, "--chain", "-v", "--output", str(output), capsys=capsys)
     assert code == 0, text
     assert "result: sat" in text
-    assert "staged driver: 3 phases" in text
-    assert "phase_1" in text and "phase_2" in text and "phase_3" in text
+    assert "staged driver: 4 phases" in text
+    assert all(f"phase_{index}" in text for index in (1, 2, 3, 4))
     assert "RevIR execution: passed (reaches the goal)" in text
     combined = output.read_bytes()
     assert combined.startswith(b"open sesame\n") and combined.endswith(b"\n")
-    assert combined.count(b"\n") == 3  # one line per phase, nothing merged
+    assert combined.count(b"\n") == 4  # one line per phase, nothing merged
+    assert b"2 4 8 16 32 64\n" in combined  # the recurrence phase, solved as arithmetic
     completed = subprocess.run(
         [str(binary)], input=combined, capture_output=True, timeout=30, check=False
     )

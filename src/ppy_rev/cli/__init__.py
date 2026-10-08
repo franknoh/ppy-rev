@@ -139,6 +139,13 @@ def _solve_options(solve: argparse.ArgumentParser) -> None:
         help="detect a staged driver (a bomb's phases) and solve each phase, chaining the "
         "answers into one input",
     )
+    goals.add_argument(
+        "--scanf-havoc",
+        dest="havoc_scanf",
+        action="store_true",
+        help="with --from, hand a numeric sscanf fresh symbolic integers instead of parsing "
+        "its buffer, and render the answer as a decimal line (for number-heavy stages)",
+    )
     goals.add_argument("--goal-string", metavar="TEXT")
     goals.add_argument("--avoid-address", type=_address, action="append", metavar="ADDRESS")
     goals.add_argument("--avoid-string", action="append", metavar="TEXT")

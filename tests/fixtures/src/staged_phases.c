@@ -51,6 +51,22 @@ static void phase_3(const char *line) {
     puts("Phase 3 defused.");
 }
 
+static void phase_4(const char *line) {
+    int n[6];
+    if (sscanf(line, "%d %d %d %d %d %d", &n[0], &n[1], &n[2], &n[3], &n[4], &n[5]) != 6) {
+        explode();
+    }
+    if (n[0] != 2) {
+        explode();
+    }
+    for (int i = 1; i < 6; i++) {
+        if (n[i] != n[i - 1] * 2) {
+            explode();
+        }
+    }
+    puts("Phase 4 defused.");
+}
+
 int main(void) {
     char line[128];
     read_line(line, sizeof line);
@@ -59,6 +75,8 @@ int main(void) {
     phase_2(line);
     read_line(line, sizeof line);
     phase_3(line);
+    read_line(line, sizeof line);
+    phase_4(line);
     puts("Congratulations! All phases defused.");
     return 0;
 }

@@ -88,6 +88,13 @@ class SymbolicLibc:
         self.string_limit = string_limit
         self.file_length = file_length
         """Bytes offered for a file the program opens that the analysis did not foresee."""
+        self.numeric_scanf_havoc = False
+        """Hand a numeric `sscanf` fresh symbolic integers instead of parsing its buffer.
+
+        For solving a stage in isolation: the integers it reads become the unknowns the
+        checks constrain, so the arithmetic is solved directly and the answer is rendered
+        as a plain decimal line, skipping the combinatorial parse over the buffer bytes.
+        """
         self._models: dict[str, _Model] = {
             "strlen": self._strlen,
             "strnlen": self._strnlen,
@@ -2328,6 +2335,8 @@ class _Scanner:
         numbers over `L` bytes, which is what lets the solver reach past a `scanf`.
         """
         state = self.call.state
+        if self.libc.numeric_scanf_havoc:
+            return self._havoc_numbers(state, numeric)
         data = self.content(state)
         start = self.position(state)
         count = len(numeric)
@@ -2421,6 +2430,27 @@ class _Scanner:
         )
         outputs = dict(self.call.registers)
         outputs[self.libc.convention.integer_returns[0]] = result
+        return Returned(state, outputs)
+
+    def _havoc_numbers(self, state: State, numeric: list[scanning.Directive]) -> ExternalOutcome:
+        """Hand each `%d` a fresh symbol and return the count, skipping the buffer parse.
+
+        The integers become the unknowns the stage's checks constrain, so solving is pure
+        arithmetic; the answer line is rendered from their solved values later. Recorded on
+        the state so the path that reaches the goal carries exactly the numbers it read.
+        """
+        address = self.call.origin.address
+        for index, directive in enumerate(numeric):
+            symbol = sx.symbol(f"scanf_{address:x}_{index}", directive.store_size * 8)
+            destination = self.destinations[index]
+            for offset in range(directive.store_size):
+                where = destination + offset
+                if not state.memory.accessible(where, 1, write=True):
+                    raise _Fault(f"scanf writes to unwritable memory at {where:#x}")
+                state.memory.write_byte(where, sx.extract(symbol, 8 * offset, 8))
+            state.io.scanf_values.append((symbol, directive.store_size))
+        outputs = dict(self.call.registers)
+        outputs[self.libc.convention.integer_returns[0]] = sx.const(len(numeric), 64)
         return Returned(state, outputs)
 
     def _store_guarded(

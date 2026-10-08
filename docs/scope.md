@@ -118,12 +118,20 @@ reached. A plain sequence of unmodified `%d`/`%u` conversions handed to `sscanf`
 in a single state instead, a small digit-by-digit machine carried in if-then-else
 expressions that counts the conversions that succeed and accumulates each number, saturating
 exactly as `strtol` does. The solver then works out the numbers from the comparison against
-them. A three-number check that exhausted 77k states before solves in five; isolating a
-six-number phase with `--from` (below) now reaches its recurrence. The form is checked
-field-for-field against the plain C library on thousands of mixed inputs. Reading numbers
-straight from stdin with `scanf` still forks — the single pass leaves the stream position
-symbolic, which a later read could not use — so a program that scans stdin directly rather
-than a line it already read is the remaining case.
+them. A three-number check that exhausted 77k states before solves in five. The form is
+checked field-for-field against the plain C library on thousands of mixed inputs. Reading
+numbers straight from stdin with `scanf` still forks — the single pass leaves the stream
+position symbolic, which a later read could not use — so a program that scans stdin directly
+rather than a line it already read is the remaining case.
+
+Six numbers in a recurrence are different: one state, but one heavy query, and the solver
+can time out on it. So when a stage is solved on its own — `--chain`, or `--from
+--scanf-havoc` — a numeric `sscanf` is not parsed at all. It hands the stage fresh symbolic
+integers and returns the count, the checks constrain those integers directly as arithmetic,
+and the answer is rendered as a plain decimal line that the real `sscanf` reads back to the
+same values. A *Bomb Lab* number phase then solves in a moment instead of timing out, and
+re-running the whole program on the line confirms it. This skips the buffer, so a stage that
+also inspects the raw string it read is the case it does not cover; the re-run catches it.
 
 ## It does not solve
 

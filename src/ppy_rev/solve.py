@@ -96,6 +96,10 @@ class SolveRequest:
     line_input: bool = False
     """When solving a function in isolation, forbid a newline in the symbolic buffer, so
     its answer is a single line that a line-at-a-time driver keeps whole."""
+    havoc_scanf: bool = False
+    """When solving a function in isolation, hand a numeric `sscanf` fresh symbolic
+    integers rather than parsing its buffer, and render the answer as a decimal line -
+    so a stage that reads several numbers is solved as arithmetic, not a byte search."""
     avoid_addresses: tuple[int, ...] = ()
     avoid_strings: tuple[str, ...] = ()
     length: int | None = None
@@ -616,11 +620,13 @@ def _solve_from_function(
         on_return=None if target is not None else (lambda outputs: sx.TRUE),
     )
     reachability = GoalReachability(module, goal.addresses) if goal.addresses else None
+    libc = SymbolicLibc(convention)
+    libc.numeric_scanf_havoc = request.havoc_scanf
     executor = Executor(
         module,
         backend,
         goal,
-        SymbolicLibc(convention),
+        libc,
         request.budget,
         reachability,
         None,
@@ -667,9 +673,13 @@ def _solve_from_function(
     exploration = executor.explore(state, max_reached=max(1, request.solutions))
     solutions: list[Solution] = []
     if exploration.reached:
-        model = executor.solve(exploration.reached[0].state, list(buffer))
+        reached = exploration.reached[0].state
+        numbers = reached.io.scanf_values
+        model = executor.solve(reached, [*buffer, *(symbol for symbol, _ in numbers)])
         if model is not None:
-            answer = argv_solution(terminated, model)
+            answer = (
+                _render_numbers(numbers, model) if numbers else argv_solution(terminated, model)
+            )
             solutions.append(Solution(None, answer, False, "a function solved in isolation"))
     status = SolveStatus.SAT if solutions else _status(exploration, solutions, None)
     goal_candidate = GoalCandidate(
@@ -703,6 +713,20 @@ def _solve_from_function(
             *_incomplete_notes(exploration),
         ),
     )
+
+
+def _render_numbers(values: list[tuple[Expr, int]], model: dict[str, int]) -> bytes:
+    """A decimal line for the integers a numeric `sscanf` was handed, in read order.
+
+    Space-separated so any `%d` sequence parses it back, each read as signed at its width,
+    so re-running the real program on the line reproduces exactly the values solved for.
+    """
+    parts: list[str] = []
+    for symbol, store_size in values:
+        raw = model.get(symbol.name, 0)
+        bits = store_size * 8
+        parts.append(str(raw - (1 << bits) if raw >> (bits - 1) else raw))
+    return " ".join(parts).encode("ascii")
 
 
 def _solve_chain(
@@ -740,6 +764,7 @@ def _solve_chain(
             chain=False,
             from_function=stage.entry,
             line_input=True,
+            havoc_scanf=True,
             goal_address=None,
             goal_string=None,
             avoid_addresses=(plan.sink, *request.avoid_addresses),

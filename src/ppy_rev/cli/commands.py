@@ -160,6 +160,7 @@ def _solve_request(arguments: argparse.Namespace) -> SolveRequest:
         goal_string=arguments.goal_string,
         from_function=arguments.from_function,
         chain=arguments.chain,
+        havoc_scanf=arguments.havoc_scanf,
         avoid_addresses=tuple(avoid_address or ()),
         avoid_strings=tuple(avoid_string or ()),
         length=arguments.length,

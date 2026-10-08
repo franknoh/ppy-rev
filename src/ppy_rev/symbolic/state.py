@@ -89,6 +89,12 @@ class SymbolicIO:
     One value per run, chosen by the solver rather than assumed, because challenges exist
     that only reveal their answer under a debugger.
     """
+    scanf_values: list[tuple[Expr, int]] = field(default_factory=list[tuple[Expr, int]])
+    """Integers a numeric `sscanf` was handed as fresh symbols, in read order, with the
+
+    width (in bytes) each was stored at. Only set when solving a stage in isolation asked
+    for it; the answer line is rendered from these instead of from the buffer bytes.
+    """
 
     def copy(self) -> SymbolicIO:
         return SymbolicIO(
@@ -107,6 +113,7 @@ class SymbolicIO:
             unknown_from=dict(self.unknown_from),
             clock=self.clock,
             traced=self.traced,
+            scanf_values=list(self.scanf_values),
         )
 
 
